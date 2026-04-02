@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-identity-associations
+  namespace: kube-system
+data:
+  # Format: "cluster-name:namespace:serviceaccount" -> "role-arn"
+  # Exact match
+  "my-cluster:default:my-app": "arn:aws:iam::123456789012:role/my-app-role"
+  # Wildcard - all service accounts in a namespace
+  "my-cluster:ci-cd:*": "arn:aws:iam::123456789012:role/ci-cd-role"
