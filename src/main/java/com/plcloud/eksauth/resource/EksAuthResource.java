@@ -33,8 +33,8 @@ public class EksAuthResource {
     AwsCredentialService awsCredentialService;
     
     @POST
-    @Counted(name = "eks_auth_requests_total", description = "Total number of EKS Auth requests")
-    @Timed(name = "eks_auth_request_duration", description = "EKS Auth request duration")
+    @Counted(value = "eks_auth_requests_total", description = "Total number of EKS Auth requests")
+    @Timed(value = "eks_auth_request_duration", description = "EKS Auth request duration")
     public Response assumeRoleForPodIdentity(AssumeRoleForPodIdentityRequest request) {
         try {
             LOG.infof("Processing AssumeRoleForPodIdentity request for cluster: %s", request.getClusterName());
