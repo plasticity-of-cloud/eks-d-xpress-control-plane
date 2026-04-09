@@ -23,7 +23,16 @@ class PodIdentityAssociationServiceTest {
 
     @BeforeEach
     void setUp() {
+        // Stub EksClient to throw so tests exercise the ConfigMap fallback path
+        software.amazon.awssdk.services.eks.EksClient stubEks =
+            org.mockito.Mockito.mock(software.amazon.awssdk.services.eks.EksClient.class);
+        org.mockito.Mockito.when(stubEks.listPodIdentityAssociations(
+            org.mockito.ArgumentMatchers.any(
+                software.amazon.awssdk.services.eks.model.ListPodIdentityAssociationsRequest.class)))
+            .thenThrow(new RuntimeException("EKS API not available in unit tests"));
+
         service = new PodIdentityAssociationService();
+        service.setEksClient(stubEks);
         service.setKubernetesClient(kubernetesClient);
         service.configMapName = "pod-identity-associations";
         service.configMapNamespace = "kube-system";

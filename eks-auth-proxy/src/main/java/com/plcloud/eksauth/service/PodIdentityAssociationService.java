@@ -26,6 +26,10 @@ public class PodIdentityAssociationService {
     @Inject
     KubernetesClient kubernetesClient;
 
+    // For testing
+    void setEksClient(EksClient eksClient) { this.eksClient = eksClient; }
+    void setKubernetesClient(KubernetesClient kubernetesClient) { this.kubernetesClient = kubernetesClient; }
+
     @ConfigProperty(name = "eks.pod-identity.configmap.name", defaultValue = "pod-identity-associations")
     String configMapName;
 
