@@ -2,29 +2,46 @@ package com.plcloud.eksauth;
 
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static io.restassured.RestAssured.given;
-import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.*;
 
 @QuarkusTest
 public class EksAuthResourceTest {
 
     @Test
-    public void testHealthEndpoint() {
+    @DisplayName("Health check endpoints should return UP status")
+    public void testHealthEndpoints() {
         given()
           .when().get("/health/live")
+          .then()
+             .statusCode(200)
+             .body("status", is("UP"));
+
+        given()
+          .when().get("/health/ready")
           .then()
              .statusCode(200)
              .body("status", is("UP"));
     }
 
     @Test
-    public void testAssumeRoleEndpoint() {
+    @DisplayName("Metrics endpoint should be accessible")
+    public void testMetricsEndpoint() {
+        given()
+          .when().get("/metrics")
+          .then()
+             .statusCode(200);
+    }
+
+    @Test
+    @DisplayName("Should reject request with missing ClusterName")
+    public void testMissingClusterName() {
         String requestBody = """
             {
-                "ClusterName": "test-cluster",
-                "Token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.eyJpc3MiOiJrdWJlcm5ldGVzL3NlcnZpY2VhY2NvdW50Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9uYW1lc3BhY2UiOiJkZWZhdWx0Iiwia3ViZXJuZXRlcy5pby9zZXJ2aWNlYWNjb3VudC9zZWNyZXQubmFtZSI6InRlc3QtdG9rZW4iLCJrdWJlcm5ldGVzLmlvL3NlcnZpY2VhY2NvdW50L3NlcnZpY2UtYWNjb3VudC5uYW1lIjoidGVzdC1zYSIsInN1YiI6InN5c3RlbTpzZXJ2aWNlYWNjb3VudDpkZWZhdWx0OnRlc3Qtc2EifQ.test"
+                "Token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.test"
             }
             """;
         
@@ -33,6 +50,88 @@ public class EksAuthResourceTest {
           .body(requestBody)
           .when().post("/")
           .then()
-             .statusCode(200);
+             .statusCode(400)
+             .body("error", equalTo("InvalidRequestException"));
+    }
+
+    @Test
+    @DisplayName("Should reject request with missing Token")
+    public void testMissingToken() {
+        String requestBody = """
+            {
+                "ClusterName": "test-cluster"
+            }
+            """;
+        
+        given()
+          .contentType(ContentType.JSON)
+          .body(requestBody)
+          .when().post("/")
+          .then()
+             .statusCode(400)
+             .body("error", equalTo("InvalidRequestException"));
+    }
+
+    @Test
+    @DisplayName("Should reject request with empty body")
+    public void testEmptyRequestBody() {
+        given()
+          .contentType(ContentType.JSON)
+          .body("{}")
+          .when().post("/")
+          .then()
+             .statusCode(400)
+             .body("error", equalTo("InvalidRequestException"));
+    }
+
+    @Test
+    @DisplayName("Should reject request with invalid JSON")
+    public void testInvalidJson() {
+        given()
+          .contentType(ContentType.JSON)
+          .body("{invalid json")
+          .when().post("/")
+          .then()
+             .statusCode(400);
+    }
+
+    @Test
+    @DisplayName("Should reject request with wrong content type")
+    public void testWrongContentType() {
+        given()
+          .contentType(ContentType.TEXT)
+          .body("test")
+          .when().post("/")
+          .then()
+             .statusCode(415);
+    }
+
+    @Test
+    @DisplayName("Should handle GET request to root endpoint")
+    public void testGetRequestToRoot() {
+        given()
+          .when().get("/")
+          .then()
+             .statusCode(405); // Method Not Allowed
+    }
+
+    @Test
+    @DisplayName("Should handle PUT request to root endpoint")
+    public void testPutRequestToRoot() {
+        given()
+          .contentType(ContentType.JSON)
+          .body("{}")
+          .when().put("/")
+          .then()
+             .statusCode(405); // Method Not Allowed
+    }
+
+    @Test
+    @DisplayName("Should handle DELETE request to root endpoint")
+    public void testDeleteRequestToRoot() {
+        given()
+          .when().delete("/")
+          .then()
+             .statusCode(405); // Method Not Allowed
     }
 }

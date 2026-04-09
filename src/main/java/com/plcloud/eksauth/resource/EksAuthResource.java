@@ -12,9 +12,11 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 import io.micrometer.core.annotation.Counted;
 import io.micrometer.core.annotation.Timed;
 import java.util.Map;
+import java.util.Optional;
 
 @Path("/")
 @Produces(MediaType.APPLICATION_JSON)
@@ -32,16 +34,27 @@ public class EksAuthResource {
     @Inject
     AwsCredentialService awsCredentialService;
     
+    @ConfigProperty(name = "eks.auth.skip-audience-check", defaultValue = "false")
+    boolean skipAudienceCheck;
+    
     @POST
     @Counted(value = "eks_auth_requests_total", description = "Total number of EKS Auth requests")
     @Timed(value = "eks_auth_request_duration", description = "EKS Auth request duration")
     public Response assumeRoleForPodIdentity(AssumeRoleForPodIdentityRequest request) {
         try {
+            // Validate request
+            if (request == null || request.getToken() == null || request.getToken().isEmpty()) {
+                throw new IllegalArgumentException("Token is required");
+            }
+            if (request.getClusterName() == null || request.getClusterName().isEmpty()) {
+                throw new IllegalArgumentException("ClusterName is required");
+            }
+            
             LOG.infof("Processing AssumeRoleForPodIdentity request for cluster: %s", request.getClusterName());
             
             // 1. Validate service account token
             TokenValidationService.TokenClaims claims = tokenValidationService.validateToken(
-                request.getToken(), request.getClusterName());
+                request.getToken(), request.getClusterName(), skipAudienceCheck);
             
             // 2. Look up pod identity association
             String roleArn = podIdentityAssociationService.getRoleArnForServiceAccount(
@@ -51,8 +64,9 @@ public class EksAuthResource {
             String sessionName = awsCredentialService.generateSessionName(
                 claims.getNamespace(), claims.getServiceAccount());
             
-            // 4. Assume the role via STS
-            Credentials awsCredentials = awsCredentialService.assumeRole(roleArn, sessionName);
+            // 4. Assume the role via STS with session tags
+            Credentials awsCredentials = awsCredentialService.assumeRole(
+                roleArn, sessionName, request.getClusterName(), claims.getSessionTags());
             
             // 5. Build response
             AssumeRoleForPodIdentityResponse response = new AssumeRoleForPodIdentityResponse();
@@ -73,6 +87,7 @@ public class EksAuthResource {
             
             // Set pod identity association
             AssumeRoleForPodIdentityResponse.PodIdentityAssociation association = new AssumeRoleForPodIdentityResponse.PodIdentityAssociation();
+            association.setArn(roleArn);
             association.setAssociationId(podIdentityAssociationService.generateAssociationId(
                 request.getClusterName(), claims.getNamespace(), claims.getServiceAccount()));
             response.setPodIdentityAssociation(association);
@@ -83,8 +98,8 @@ public class EksAuthResource {
             subject.setServiceAccount(claims.getServiceAccount());
             response.setSubject(subject);
             
-            // Set audience
-            response.setAudience("sts.amazonaws.com");
+            // Set audience (EKS Pod Identity standard)
+            response.setAudience(TokenValidationService.EKS_POD_IDENTITY_AUDIENCE);
             
             LOG.infof("Successfully processed request for %s/%s -> %s", 
                 claims.getNamespace(), claims.getServiceAccount(), roleArn);

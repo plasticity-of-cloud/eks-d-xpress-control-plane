@@ -64,8 +64,14 @@ public class AssumeRoleForPodIdentityResponse {
     }
     
     public static class PodIdentityAssociation {
+        @JsonProperty("Arn")
+        private String arn;
+        
         @JsonProperty("AssociationId")
         private String associationId;
+        
+        public String getArn() { return arn; }
+        public void setArn(String arn) { this.arn = arn; }
         
         public String getAssociationId() { return associationId; }
         public void setAssociationId(String associationId) { this.associationId = associationId; }
