@@ -76,7 +76,9 @@ public class PodIdentityAssociationService {
     
     private String getDefaultRoleArn(String namespace, String serviceAccount) {
         // For CI/CD use case, generate a predictable role ARN
-        String accountId = Optional.ofNullable(System.getenv("AWS_ACCOUNT_ID")).orElse("123456789012");
+        String accountId = Optional.ofNullable(System.getenv("AWS_ACCOUNT_ID"))
+                .or(() -> Optional.ofNullable(System.getProperty("AWS_ACCOUNT_ID")))
+                .orElse("123456789012");
         return String.format("arn:aws:iam::%s:role/eks-pod-identity-%s-%s", accountId, namespace, serviceAccount);
     }
     
