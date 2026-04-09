@@ -52,7 +52,8 @@ class WebhookEndpointTest {
         .then()
             .statusCode(200)
             .body("response.allowed", is(true))
-            .body("response.patch", nullValue());
+            // JOSDK returns empty patch array (base64 "[]") when no mutation needed
+            .body("response.patch", anyOf(nullValue(), equalTo("W10=")));
     }
 
     private AdmissionReview buildAdmissionReview(String namespace, String serviceAccount) {

@@ -48,15 +48,18 @@
       <artifactId>quarkus-smallrye-health</artifactId>
     </dependency>
 
-    <!-- JOSDK Webhooks Framework - excluded due to Fabric8 7.x requirement;
-         admission controller logic implemented directly against Fabric8 6.x -->
-    <!--
+    <!-- JOSDK Webhooks Framework -->
     <dependency>
       <groupId>io.javaoperatorsdk</groupId>
       <artifactId>kubernetes-webhooks-framework-core</artifactId>
       <version>${josdk-webhooks.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>io.fabric8</groupId>
+          <artifactId>kubernetes-client</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
-    -->
 
     <!-- Test -->
     <dependency>
