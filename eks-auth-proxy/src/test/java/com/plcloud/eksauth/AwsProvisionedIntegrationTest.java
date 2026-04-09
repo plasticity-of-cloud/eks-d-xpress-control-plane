@@ -50,6 +50,8 @@ class AwsProvisionedIntegrationTest {
 
     static final IamClient iam = IamClient.builder().build();
     static final EksClient eks = EksClient.builder().build();
+    static final software.amazon.awssdk.services.sts.StsClient sts =
+        software.amazon.awssdk.services.sts.StsClient.builder().build();
 
     static String clusterName;
     static String roleArn;
@@ -64,15 +66,17 @@ class AwsProvisionedIntegrationTest {
         clusterName = System.getProperty("integration.cluster");
         if (clusterName == null) throw new IllegalStateException("Required: -Dintegration.cluster=<name>");
 
-        // 1. IAM role with EKS Pod Identity trust policy
+        // 1. IAM role — trust both EKS Pod Identity and the current caller (for local testing)
+        String callerArn = sts.getCallerIdentity().arn();
         roleArn = iam.createRole(CreateRoleRequest.builder()
             .roleName(ROLE_NAME)
-            .assumeRolePolicyDocument("""
-                {"Version":"2012-10-17","Statement":[{
-                  "Effect":"Allow",
-                  "Principal":{"Service":"pods.eks.amazonaws.com"},
-                  "Action":["sts:AssumeRole","sts:TagSession"]
-                }]}""")
+            .assumeRolePolicyDocument(String.format("""
+                {"Version":"2012-10-17","Statement":[
+                  {"Effect":"Allow","Principal":{"Service":"pods.eks.amazonaws.com"},
+                   "Action":["sts:AssumeRole","sts:TagSession"]},
+                  {"Effect":"Allow","Principal":{"AWS":"%s"},
+                   "Action":["sts:AssumeRole","sts:TagSession"]}
+                ]}""", callerArn))
             .build()
         ).role().arn();
 
