@@ -8,13 +8,21 @@ import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import uk.org.webcompere.systemstubs.environment.EnvironmentVariables;
+import uk.org.webcompere.systemstubs.jupiter.SystemStub;
+import uk.org.webcompere.systemstubs.jupiter.SystemStubsExtension;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 @EnableKubernetesMockClient(crud = true)
+@ExtendWith(SystemStubsExtension.class)
 class PodIdentityAssociationServiceTest {
+
+    @SystemStub
+    EnvironmentVariables environmentVariables;
 
     KubernetesMockServer mockServer;
     KubernetesClient kubernetesClient;
@@ -138,8 +146,6 @@ class PodIdentityAssociationServiceTest {
         
         kubernetesClient.resource(configMap).create();
 
-        System.setProperty("AWS_ACCOUNT_ID", "123456789012");
-
         // Act
         String roleArn = service.getRoleArnForServiceAccount("test-cluster", "default", "my-sa");
 
@@ -164,26 +170,16 @@ class PodIdentityAssociationServiceTest {
     @Test
     @DisplayName("Should use environment AWS_ACCOUNT_ID for default role ARN")
     void testDefaultRoleArnWithEnvironmentAccountId() {
-        // Arrange - no ConfigMap created
-        System.setProperty("AWS_ACCOUNT_ID", "999999999999");
-
-        // Act
+        environmentVariables.set("AWS_ACCOUNT_ID", "999999999999");
         String roleArn = service.getRoleArnForServiceAccount("test-cluster", "default", "my-sa");
-
-        // Assert
         assertEquals("arn:aws:iam::999999999999:role/eks-pod-identity-default-my-sa", roleArn);
     }
 
     @Test
     @DisplayName("Should use default account ID when AWS_ACCOUNT_ID not set")
     void testDefaultRoleArnWithoutEnvironmentAccountId() {
-        // Arrange - no ConfigMap created
-        System.clearProperty("AWS_ACCOUNT_ID");
-
-        // Act
+        environmentVariables.remove("AWS_ACCOUNT_ID");
         String roleArn = service.getRoleArnForServiceAccount("test-cluster", "default", "my-sa");
-
-        // Assert
         assertEquals("arn:aws:iam::123456789012:role/eks-pod-identity-default-my-sa", roleArn);
     }
 }

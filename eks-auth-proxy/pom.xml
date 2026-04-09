@@ -13,7 +13,6 @@
     <skipITs>true</skipITs>
     <aws.sdk.version>2.28.17</aws.sdk.version>
     <fabric8.version>6.13.4</fabric8.version>
-    <aws.sdk.version>2.28.17</aws.sdk.version>
   </properties>
   <dependencyManagement>
     <dependencies>
@@ -27,6 +26,7 @@
     </dependencies>
   </dependencyManagement>
   <dependencies>
+    <!-- Runtime -->
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-rest-jackson</artifactId>
@@ -70,10 +70,18 @@
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-smallrye-jwt</artifactId>
     </dependency>
+
+    <!-- Test -->
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>iam</artifactId>
       <version>${aws.sdk.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>uk.org.webcompere</groupId>
+      <artifactId>system-stubs-jupiter</artifactId>
+      <version>2.1.7</version>
       <scope>test</scope>
     </dependency>
     <dependency>
