@@ -1,7 +1,6 @@
 package com.plcloud.eksauth.service;
 
-import com.plcloud.eksauth.model.PodIdentityAssociation;
-import com.plcloud.eksauth.model.PodIdentityAssociationSpec;
+import com.plcloud.eksauth.crd.PodIdentityAssociation;
 import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -77,7 +76,7 @@ public class PodIdentityAssociationService {
     private String getRoleArnFromCrd(String clusterName, String namespace, String serviceAccount) {
         try {
             String crdName = clusterName + "-" + serviceAccount;
-            PodIdentityAssociation crd = kubernetesClient.customResource(PodIdentityAssociation.class)
+            var crd = kubernetesClient.resources(PodIdentityAssociation.class)
                 .inNamespace(namespace)
                 .withName(crdName)
                 .get();

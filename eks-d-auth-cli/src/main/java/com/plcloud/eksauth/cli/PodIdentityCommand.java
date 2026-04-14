@@ -1,7 +1,6 @@
 package com.plcloud.eksauth.cli;
 
-import picocli.commandline.Command;
-import picocli.commandline.CommandLine;
+import picocli.CommandLine.Command;
 
 @Command(
     name = "eks-pod-identity-association",
@@ -18,6 +17,6 @@ import picocli.commandline.CommandLine;
 public class PodIdentityCommand implements Runnable {
     @Override
     public void run() {
-        new CommandLine(this).usage(System.out);
+        // help is printed by picocli via mixinStandardHelpOptions
     }
 }

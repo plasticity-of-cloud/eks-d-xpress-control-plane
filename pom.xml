@@ -10,7 +10,9 @@
   <packaging>pom</packaging>
 
   <modules>
+    <module>eks-pod-identity-crd</module>
     <module>eks-auth-proxy</module>
+    <module>eks-d-auth-cli</module>
     <module>eks-pod-identity-webhook</module>
   </modules>
 

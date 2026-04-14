@@ -71,8 +71,9 @@
       <artifactId>quarkus-smallrye-jwt</artifactId>
     </dependency>
     <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-picocli</artifactId>
+      <groupId>com.plcloud</groupId>
+      <artifactId>eks-pod-identity-crd</artifactId>
+      <version>${project.version}</version>
     </dependency>
 
     <!-- Test -->

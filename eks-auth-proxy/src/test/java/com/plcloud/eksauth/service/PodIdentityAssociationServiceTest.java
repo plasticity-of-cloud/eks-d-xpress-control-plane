@@ -1,7 +1,7 @@
 package com.plcloud.eksauth.service;
 
-import com.plcloud.eksauth.model.PodIdentityAssociation;
-import com.plcloud.eksauth.model.PodIdentityAssociationSpec;
+import com.plcloud.eksauth.crd.PodIdentityAssociation;
+import com.plcloud.eksauth.crd.PodIdentityAssociationSpec;
 import io.fabric8.kubernetes.api.model.ObjectMeta;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.dsl.MixedOperation;
@@ -44,7 +44,7 @@ class PodIdentityAssociationServiceTest {
         );
         crd.setSpec(spec);
 
-        kubernetesClient.customResource(PodIdentityAssociation.class)
+        kubernetesClient.resources(PodIdentityAssociation.class)
             .inNamespace("default")
             .create(crd);
 
