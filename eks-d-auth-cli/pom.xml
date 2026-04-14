@@ -43,6 +43,11 @@
       <version>6.13.4</version>
     </dependency>
 
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-container-image-jib</artifactId>
+    </dependency>
+
     <!-- Test -->
     <dependency>
       <groupId>io.quarkus</groupId>
@@ -94,4 +99,17 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <id>native</id>
+      <activation>
+        <property><name>native</name></property>
+      </activation>
+      <properties>
+        <quarkus.native.enabled>true</quarkus.native.enabled>
+        <quarkus.native.container-build>true</quarkus.native.container-build>
+      </properties>
+    </profile>
+  </profiles>
 </project>
