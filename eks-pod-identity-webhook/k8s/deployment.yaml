@@ -5,24 +5,27 @@ metadata:
   namespace: kube-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: eks-pod-identity-webhook
+  namespace: kube-system
 rules:
 - apiGroups: [""]
   resources: ["configmaps"]
-  verbs: ["get", "list", "watch"]
+  resourceNames: ["pod-identity-associations"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: eks-pod-identity-webhook
+  namespace: kube-system
 subjects:
 - kind: ServiceAccount
   name: eks-pod-identity-webhook
   namespace: kube-system
 roleRef:
-  kind: ClusterRole
+  kind: Role
   name: eks-pod-identity-webhook
   apiGroup: rbac.authorization.k8s.io
 ---

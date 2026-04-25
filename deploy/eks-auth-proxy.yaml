@@ -46,6 +46,11 @@ spec:
         app: eks-auth-proxy
     spec:
       serviceAccountName: eks-auth-proxy
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: eks-auth-proxy
         image: eks-auth-proxy:latest
@@ -76,6 +81,10 @@ spec:
         - name: tls-certs
           mountPath: /tls
           readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
         livenessProbe:
           httpGet:
             path: /health/live
