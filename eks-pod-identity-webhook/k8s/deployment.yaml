@@ -1,77 +1,58 @@
----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: eks-auth-proxy
+  name: eks-pod-identity-webhook
   namespace: kube-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: eks-auth-proxy
-  namespace: kube-system
+  name: eks-pod-identity-webhook
 rules:
 - apiGroups: [""]
   resources: ["configmaps"]
-  resourceNames: ["pod-identity-associations"]
-  verbs: ["get"]
+  verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
-  name: eks-auth-proxy
-  namespace: kube-system
+  name: eks-pod-identity-webhook
 subjects:
 - kind: ServiceAccount
-  name: eks-auth-proxy
+  name: eks-pod-identity-webhook
   namespace: kube-system
 roleRef:
-  kind: Role
-  name: eks-auth-proxy
+  kind: ClusterRole
+  name: eks-pod-identity-webhook
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: eks-auth-proxy
+  name: eks-pod-identity-webhook
   namespace: kube-system
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: eks-auth-proxy
+      app: eks-pod-identity-webhook
   template:
     metadata:
       labels:
-        app: eks-auth-proxy
+        app: eks-pod-identity-webhook
     spec:
-      serviceAccountName: eks-auth-proxy
+      serviceAccountName: eks-pod-identity-webhook
       containers:
-      - name: eks-auth-proxy
-        image: eks-auth-proxy:latest
+      - name: eks-pod-identity-webhook
+        image: 864899852480.dkr.ecr.ap-south-1.amazonaws.com/plcloud/eks-pod-identity-webhook:latest
         ports:
         - containerPort: 8443
           name: https
         - containerPort: 8080
           name: http
         env:
-        - name: AWS_REGION
-          value: "ap-south-1"
-        - name: AWS_ACCOUNT_ID
-          valueFrom:
-            secretKeyRef:
-              name: eks-auth-proxy-aws-creds
-              key: account-id
-        - name: AWS_ACCESS_KEY_ID
-          valueFrom:
-            secretKeyRef:
-              name: eks-auth-proxy-aws-creds
-              key: access-key-id
-        - name: AWS_SECRET_ACCESS_KEY
-          valueFrom:
-            secretKeyRef:
-              name: eks-auth-proxy-aws-creds
-              key: secret-access-key
+        - name: EKS_CLUSTER_NAME
+          value: "my-cluster"
         volumeMounts:
         - name: tls-certs
           mountPath: /tls
@@ -96,20 +77,17 @@ spec:
       volumes:
       - name: tls-certs
         secret:
-          secretName: eks-auth-proxy-tls
+          secretName: eks-pod-identity-webhook-tls
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: eks-auth-proxy
+  name: eks-pod-identity-webhook
   namespace: kube-system
 spec:
   selector:
-    app: eks-auth-proxy
+    app: eks-pod-identity-webhook
   ports:
   - name: https
     port: 443
     targetPort: 8443
-  - name: http
-    port: 8080
-    targetPort: 8080
