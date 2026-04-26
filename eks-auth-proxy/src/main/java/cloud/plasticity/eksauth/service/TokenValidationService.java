@@ -70,14 +70,20 @@ public class TokenValidationService {
             token = token.substring(7);
         }
 
-        TokenReview review = kubernetesClient.tokenReviews().create(
-            new TokenReviewBuilder()
-                .withNewSpec()
-                    .withToken(token)
-                    .withAudiences(List.of(EKS_POD_IDENTITY_AUDIENCE))
-                .endSpec()
-                .build()
-        );
+        TokenReview review;
+        try {
+            review = kubernetesClient.tokenReviews().create(
+                new TokenReviewBuilder()
+                    .withNewSpec()
+                        .withToken(token)
+                        .withAudiences(List.of(EKS_POD_IDENTITY_AUDIENCE))
+                    .endSpec()
+                    .build()
+            );
+        } catch (Exception e) {
+            LOG.warnf("TokenReview API call failed for cluster %s: %s", clusterName, e.getMessage());
+            throw new IllegalArgumentException("Token validation failed: " + e.getMessage(), e);
+        }
 
         TokenReviewStatus status = review.getStatus();
 
