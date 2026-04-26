@@ -204,15 +204,24 @@ Expected output:
 
 ## Cleanup
 
+This setup is designed to be **ephemeral**. To tear down, terminate the EC2 instance and remove the IAM resources:
+
 ```bash
-# Remove Helm release
-helm uninstall eks-pod-identity-agent -n kube-system
+# Terminate the EC2 instance (everything on the cluster dies with it)
+aws ec2 terminate-instances --instance-ids <instance-id>
 
-# Remove deployments
-kubectl delete -f deploy/eks-auth-proxy.yaml
-kubectl delete -f eks-auth-proxy/k8s/cert-manager.yaml
-kubectl delete -f eks-pod-identity-crd/src/main/resources/crd/pod-identity-association-crd.yaml
+# Remove IAM resources
+aws iam remove-role-from-instance-profile \
+  --instance-profile-name k3s-pod-id-profile --role-name k3s-pod-id-broker
+aws iam delete-instance-profile --instance-profile-name k3s-pod-id-profile
+aws iam delete-role-policy --role-name k3s-pod-id-broker --policy-name k3s-pod-id-broker-policy
+aws iam delete-role --role-name k3s-pod-id-broker
 
-# Remove cert-manager (optional)
-kubectl delete -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+# Remove target roles
+aws iam detach-role-policy --role-name k3s-pod-my-app \
+  --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+aws iam delete-role --role-name k3s-pod-my-app
+
+# Remove security group (if created)
+aws ec2 delete-security-group --group-name k3s-pod-id-sg
 ```
