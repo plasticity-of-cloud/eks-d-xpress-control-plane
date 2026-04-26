@@ -107,7 +107,7 @@ aws iam attach-role-policy \
 # Launch with the broker instance profile
 aws ec2 run-instances \
   --image-id <ubuntu-22.04-ami> \
-  --instance-type t3.medium \
+  --instance-type t4g.medium \
   --key-name my-key \
   --iam-instance-profile Name=k3s-pod-id-profile \
   --user-data '#!/bin/bash

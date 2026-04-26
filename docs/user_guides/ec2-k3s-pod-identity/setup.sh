@@ -7,7 +7,7 @@
 #   - An existing EC2 key pair
 #
 # Usage:
-#   ./setup.sh --key-pair my-key --region us-east-1 [--cluster-name k3s-pod-id] [--instance-type t3.medium]
+#   ./setup.sh --key-pair my-key --region us-east-1 [--cluster-name k3s-pod-id] [--instance-type t4g.medium]
 #
 set -euo pipefail
 
@@ -19,7 +19,7 @@ err()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 # ── defaults ──────────────────────────────────────────────────────────
 REGION="${AWS_REGION:-us-east-1}"
 CLUSTER_NAME="k3s-pod-id"
-INSTANCE_TYPE="t3.medium"
+INSTANCE_TYPE="t4g.medium"
 KEY_PAIR=""
 BROKER_ROLE="k3s-pod-id-broker"
 BROKER_POLICY="k3s-pod-id-broker-policy"
@@ -132,7 +132,7 @@ CLOUD_INIT
 # ── 4. Launch EC2 ─────────────────────────────────────────────────────
 log "Looking up latest Ubuntu 22.04 AMI ..."
 AMI_ID=$(aws ec2 describe-images --owners 099720109477 \
-  --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+  --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-arm64-server-*" \
             "Name=state,Values=available" \
   --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
   --output text --region "$REGION")
