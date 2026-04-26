@@ -9,7 +9,6 @@ permissions:
 
 env:
   JAVA_VERSION: '21'
-  GRAALVM_VERSION: '21'
 
 jobs:
   # ── Per-architecture builds ──────────────────────────────────────────
@@ -20,11 +19,9 @@ jobs:
           - runner: ubuntu-24.04
             arch: amd64
             jib-platform: linux/amd64
-            graalvm-arch: amd64
           - runner: ubuntu-24.04-arm
             arch: arm64
             jib-platform: linux/arm64
-            graalvm-arch: aarch64
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -66,13 +63,7 @@ jobs:
           gzip eks-auth-proxy-${VERSION}-linux-${{ matrix.arch }}.tar
           gzip eks-pod-identity-webhook-${VERSION}-linux-${{ matrix.arch }}.tar
 
-      # Native build for CLI
-      - uses: graalvm/setup-graalvm@v1
-        with:
-          java-version: ${{ env.GRAALVM_VERSION }}
-          distribution: graalce
-          cache: maven
-
+      # Native build for CLI (GraalVM runs inside container via quarkus.native.container-build)
       - name: Build CLI native binary
         run: |
           mvn -B -pl eks-pod-identity-crd,eks-d-auth-cli package -Pnative -DskipTests
