@@ -1,0 +1,37 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: podidentityassociations.eks.amazonaws.com
+spec:
+  group: eks.amazonaws.com
+  names:
+    kind: PodIdentityAssociation
+    plural: podidentityassociations
+    singular: podidentityassociation
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              clusterName:
+                type: string
+              namespace:
+                type: string
+              serviceAccount:
+                type: string
+              roleArn:
+                type: string
+            required: [clusterName, namespace, serviceAccount, roleArn]

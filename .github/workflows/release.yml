@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+env:
+  JAVA_VERSION: '21'
+  GRAALVM_VERSION: '21'
+
+jobs:
+  # ── Per-architecture builds ──────────────────────────────────────────
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+            jib-platform: linux/amd64
+            graalvm-arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            jib-platform: linux/arm64
+            graalvm-arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # JVM build for proxy + webhook
+      - uses: actions/setup-java@v4
+        id: setup-jvm
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Build and test
+        run: mvn -B verify -DskipITs
+
+      - name: Build proxy image
+        run: |
+          mvn -B -pl eks-pod-identity-crd,eks-auth-proxy package -DskipTests \
+            -Dquarkus.container-image.build=true \
+            -Dquarkus.container-image.push=false \
+            -Dquarkus.container-image.image=eks-auth-proxy:build \
+            -Dquarkus.jib.platforms=${{ matrix.jib-platform }}
+
+      - name: Build webhook image
+        run: |
+          mvn -B -pl eks-pod-identity-crd,eks-pod-identity-webhook package -DskipTests \
+            -Dquarkus.container-image.build=true \
+            -Dquarkus.container-image.push=false \
+            -Dquarkus.container-image.image=eks-pod-identity-webhook:build \
+            -Dquarkus.jib.platforms=${{ matrix.jib-platform }}
+
+      - name: Save Docker images
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          docker save eks-auth-proxy:build \
+            -o eks-auth-proxy-${VERSION}-linux-${{ matrix.arch }}.tar
+          docker save eks-pod-identity-webhook:build \
+            -o eks-pod-identity-webhook-${VERSION}-linux-${{ matrix.arch }}.tar
+          gzip eks-auth-proxy-${VERSION}-linux-${{ matrix.arch }}.tar
+          gzip eks-pod-identity-webhook-${VERSION}-linux-${{ matrix.arch }}.tar
+
+      # Native build for CLI
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: ${{ env.GRAALVM_VERSION }}
+          distribution: graalce
+          cache: maven
+
+      - name: Build CLI native binary
+        run: |
+          mvn -B -pl eks-pod-identity-crd,eks-d-auth-cli package -Pnative -DskipTests
+          VERSION=${GITHUB_REF_NAME#v}
+          cp eks-d-auth-cli/target/*-runner \
+            eks-d-auth-cli-${VERSION}-linux-${{ matrix.arch }}
+        env:
+          MAVEN_OPTS: '-Xmx10g'
+
+      - name: Upload arch artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          retention-days: 1
+          path: |
+            eks-auth-proxy-*-linux-${{ matrix.arch }}.tar.gz
+            eks-pod-identity-webhook-*-linux-${{ matrix.arch }}.tar.gz
+            eks-d-auth-cli-*-linux-${{ matrix.arch }}
+
+  # ── Architecture-independent artifacts ───────────────────────────────
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm chart
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sed -i "s/^version:.*/version: ${VERSION}/" charts/eks-auth-service-proxy/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/eks-auth-service-proxy/Chart.yaml
+          helm package charts/eks-auth-service-proxy -d .
+
+      - name: Package k3s deployment bundle
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p _k3s-deploy
+          cp -r deploy/ _k3s-deploy/deploy/
+          cp -r docs/user_guides/ec2-k3s-pod-identity/ _k3s-deploy/ec2-k3s-setup/
+          cp eks-pod-identity-crd/src/main/resources/crd/pod-identity-association-crd.yaml \
+            _k3s-deploy/pod-identity-association-crd.yaml
+          cp deploy.sh _k3s-deploy/
+          tar czf eks-auth-k3s-deploy-${VERSION}.tar.gz -C _k3s-deploy .
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          retention-days: 1
+          path: |
+            eks-auth-service-proxy-*.tgz
+            eks-auth-k3s-deploy-*.tar.gz
+
+  # ── Create GitHub release ────────────────────────────────────────────
+  release:
+    needs: [build, package]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release artifacts
+        run: ls -lhR artifacts/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*
