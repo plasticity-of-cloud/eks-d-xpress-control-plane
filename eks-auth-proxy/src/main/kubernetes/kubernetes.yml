@@ -1,0 +1,71 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eks-auth-proxy
+rules:
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["tokenreviews"]
+  verbs: ["create"]
+- apiGroups: ["eks.plasticity.cloud"]
+  resources: ["podidentityassociations"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eks-auth-proxy
+subjects:
+- kind: ServiceAccount
+  name: eks-auth-proxy
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: eks-auth-proxy
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: eks-auth-proxy-selfsigned
+  namespace: kube-system
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: eks-auth-proxy-ca
+  namespace: kube-system
+spec:
+  isCA: true
+  commonName: eks-auth-proxy-ca
+  secretName: eks-auth-proxy-ca
+  issuerRef:
+    name: eks-auth-proxy-selfsigned
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: eks-auth-proxy-ca
+  namespace: kube-system
+spec:
+  ca:
+    secretName: eks-auth-proxy-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: eks-auth-proxy-cert
+  namespace: kube-system
+spec:
+  secretName: eks-auth-proxy-tls
+  duration: 8760h
+  renewBefore: 720h
+  issuerRef:
+    name: eks-auth-proxy-ca
+    kind: Issuer
+  dnsNames:
+  - eks-auth-proxy.kube-system.svc
+  - eks-auth-proxy.kube-system.svc.cluster.local
