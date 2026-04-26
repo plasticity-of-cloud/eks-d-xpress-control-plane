@@ -199,3 +199,17 @@ mvn -pl eks-auth-proxy compile quarkus:dev
 <!-- This section is for human and agent-maintained operational knowledge.
      Add repo-specific conventions, gotchas, and workflow rules here.
      This section is preserved exactly as-is when re-running codebase-summary. -->
+
+### Domain and Naming Convention
+
+The project is released under the **plasticity.cloud** domain.
+
+| Context | Convention | Example |
+|---------|-----------|---------|
+| Java packages | `cloud.plasticity.*` | `cloud.plasticity.eksauth.service` |
+| Maven groupId | `cloud.plasticity` | `<groupId>cloud.plasticity</groupId>` |
+| CRD API group | `eks.plasticity.cloud` | `podidentityassociations.eks.plasticity.cloud` |
+| Webhook name | `pod-identity.plasticity.cloud` | MutatingWebhookConfiguration |
+| Container images | `plasticity.cloud/` prefix or ECR | `plasticity.cloud/eks-auth-proxy` |
+
+**Current state**: The codebase still uses `com.plcloud` (Java packages), `eks.amazonaws.com` (CRD group), and `pod-identity.plcloud.com` (webhook). These should be migrated to the `plasticity.cloud` convention in a dedicated refactor.
