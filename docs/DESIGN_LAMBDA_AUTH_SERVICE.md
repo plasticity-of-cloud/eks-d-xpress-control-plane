@@ -1,8 +1,8 @@
-# EKS-DX: Lambda-Based Pod Identity Service
+# EKS-DX Architecture (Revised)
 
 ## Overview
 
-Move the eks-auth-proxy out of the cluster into AWS Lambda. Associations stored in DynamoDB. Clusters (k3s, microk8s, EKS-D) register with the service and receive scoped credentials to query their own associations only.
+Two-tier architecture: a lightweight in-cluster proxy handles Kubernetes token validation, then forwards to a centralized Lambda service (EKS-DX Service) that mimics the real EKS API surface for cluster management and pod identity associations.
 
 ## Architecture
 
@@ -11,351 +11,225 @@ Move the eks-auth-proxy out of the cluster into AWS Lambda. Associations stored 
 │  AWS Account                                                         │
 │                                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐    │
-│  │ Lambda: eks-dx-auth-service                                  │    │
-│  │   POST /clusters/{clusterName}/assets                        │    │
-│  │   • Validates token (JWKS from DynamoDB — pushed by cluster) │    │
+│  │ Lambda: EKS-DX Service (mimics EKS API)                      │    │
+│  │                                                              │    │
+│  │ Cluster Management (DescribeCluster-compatible):             │    │
+│  │   POST /clusters                     (RegisterCluster)       │    │
+│  │   GET  /clusters/{name}              (DescribeCluster)       │    │
+│  │   DELETE /clusters/{name}            (DeregisterCluster)     │    │
+│  │   GET  /clusters                     (ListClusters)          │    │
+│  │                                                              │    │
+│  │ Pod Identity Associations (EKS API-compatible):              │    │
+│  │   POST /clusters/{name}/pod-identity-associations            │    │
+│  │   GET  /clusters/{name}/pod-identity-associations            │    │
+│  │   GET  /clusters/{name}/pod-identity-associations/{id}       │    │
+│  │   DELETE /clusters/{name}/pod-identity-associations/{id}     │    │
+│  │                                                              │    │
+│  │ Auth (called by in-cluster proxy):                           │    │
+│  │   POST /clusters/{name}/assets                               │    │
+│  │   • Receives pre-validated claims from proxy                 │    │
 │  │   • Looks up association in DynamoDB                          │    │
 │  │   • STS AssumeRole → returns temporary credentials           │    │
 │  └──────────────┬───────────────────────┬───────────────────────┘    │
 │                 │                       │                            │
 │  ┌──────────────▼──────┐  ┌─────────────▼──────┐                    │
 │  │ DynamoDB             │  │ STS                 │                    │
-│  │                      │  │ AssumeRole           │                    │
-│  │ eks-dx-clusters      │  │ + TagSession         │                    │
-│  │  PK: <clusterName>   │  └────────────────────┘                    │
-│  │  issuer, jwks, ...   │                                            │
-│  │                      │                                            │
-│  │ eks-dx-associations  │                                            │
-│  │  PK: CLUSTER#<name>  │                                            │
-│  │  SK: <ns>#<sa>       │                                            │
-│  └──────────────────────┘                                            │
+│  │ eks-dx-clusters      │  │ AssumeRole           │                    │
+│  │ eks-dx-associations  │  │ + TagSession         │                    │
+│  └──────────────────────┘  └────────────────────┘                    │
 │                                                                      │
 │  API Gateway (HTTPS)                                                 │
 └──────────────────────────────────────────────────────────────────────┘
-          ▲                              ▲
-          │ POST /clusters/*/assets      │ DynamoDB GetItem
-          │ (token exchange)             │ (association check + JWKS push)
-          │                              │
-┌─────────┼──────────────────────────────┼─────────────────────────────┐
-│  EC2 instance                          │                             │
-│  Instance profile: dynamodb:UpdateItem │ (JWKS push only,            │
-│  on eks-dx-clusters for own PK         │  scoped to own cluster)     │
-│                                        │                             │
-│  ┌─────────────────────────────────────┼───────────────────────┐    │
-│  │ k3s / microk8s / EKS-D cluster      │                       │    │
-│  │                                     │                       │    │
-│  │  ┌──────────────────────┐  ┌────────┴──────────────────┐   │    │
-│  │  │ EKS Pod Identity     │  │ eks-pod-identity-webhook  │   │    │
-│  │  │ Agent (DaemonSet)    │  │ DynamoDB GetItem for      │   │    │
-│  │  │ --endpoint <gw-url>  │  │ association check         │   │    │
-│  │  │ 169.254.170.23:80    │  │ (via Pod Identity creds)  │   │    │
-│  │  └──────────────────────┘  └───────────────────────────┘   │    │
-│  │                                                             │    │
-│  │  ┌─────────────────────────────────────────────────────┐   │    │
-│  │  │ JWKS sync (host-level, NOT a pod)                   │   │    │
-│  │  │ systemd timer or cron, every 6h                     │   │    │
-│  │  │ curl localhost:6443/openid/v1/jwks → DynamoDB       │   │    │
-│  │  │ Uses EC2 instance profile directly                  │   │    │
-│  │  └─────────────────────────────────────────────────────┘   │    │
-│  └─────────────────────────────────────────────────────────────┘    │
+          ▲
+          │ POST /clusters/{name}/assets
+          │ (pre-validated claims + token metadata)
+          │
+┌─────────┼────────────────────────────────────────────────────────────┐
+│  k3s / microk8s / EKS-D cluster                                      │
+│         │                                                            │
+│  ┌──────┴──────────────────┐                                        │
+│  │ EKS Pod Identity Agent  │                                        │
+│  │ --endpoint <proxy-url>  │                                        │
+│  │ 169.254.170.23:80       │                                        │
+│  └──────────┬──────────────┘                                        │
+│             │                                                        │
+│  ┌──────────▼──────────────┐                                        │
+│  │ eks-auth-proxy           │                                        │
+│  │ (lightweight, in-cluster)│                                        │
+│  │                          │                                        │
+│  │ 1. Kubernetes TokenReview│ ← validates JWT signature + audience  │
+│  │ 2. Extract claims        │ ← namespace, SA, pod name/uid        │
+│  │ 3. Forward to Lambda     │ ← POST /clusters/{name}/assets       │
+│  │    with validated claims │                                        │
+│  └──────────────────────────┘                                        │
+│                                                                      │
+│  ┌──────────────────────────┐                                        │
+│  │ eks-pod-identity-webhook │                                        │
+│  │ queries Lambda API for   │                                        │
+│  │ association existence    │                                        │
+│  └──────────────────────────┘                                        │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-## Trust Model and Credential Isolation
+## Why Two Tiers
 
-### Problem
+| Concern | In-cluster proxy | Lambda (EKS-DX Service) |
+|---------|-----------------|------------------------|
+| Token validation | ✅ Only the cluster can validate its own SA tokens via TokenReview | ❌ Would need JWKS sync + JWT parsing |
+| STS AssumeRole | ❌ Requires broker credentials on the node | ✅ Lambda execution role, no creds on node |
+| Association storage | ❌ CRDs are cluster-local, not centrally managed | ✅ DynamoDB, multi-cluster, AWS CLI compatible |
+| Cluster registration | ❌ Not applicable | ✅ DescribeCluster-compatible API |
+| AWS CLI compatibility | ❌ Custom API | ✅ `aws eks describe-cluster`, `aws eks create-pod-identity-association` work |
 
-The EC2 instance profile is accessible via `169.254.169.254` to anything on the host. Without isolation, any pod could use it.
+The proxy does what only the cluster can do (TokenReview). The Lambda does what should be centralized (storage, STS, management API).
 
-### Solution
+**Bonus**: No JWKS sync needed. The cluster validates its own tokens — no need to push JWKS to DynamoDB. The Lambda trusts the proxy's validated claims.
 
-Three layers of isolation:
+## EKS-DX Service API (Lambda)
 
-| Component | Runs as | Gets credentials from | Permissions |
-|-----------|---------|----------------------|-------------|
-| **JWKS sync** | Host-level systemd/cron (not a pod) | EC2 instance profile | `dynamodb:UpdateItem` on own cluster row only |
-| **Webhook** | Kubernetes pod | Pod Identity (via agent → Lambda) | `dynamodb:GetItem/Query` on own cluster associations |
-| **Application pods** | Kubernetes pod | Pod Identity (via agent → Lambda) | Whatever role is mapped in their association |
+### Cluster Management
 
-**Why this is safe:**
+Compatible with AWS EKS API surface so `aws eks` CLI commands work with `--endpoint-url`:
 
-1. The **EKS Pod Identity Agent** intercepts `169.254.169.254` for all pods via iptables. Pods cannot reach the EC2 metadata service — they get credentials from the agent instead.
+```bash
+# Register a cluster
+aws eks create-cluster \
+  --name my-k3s \
+  --endpoint-url https://eks-dx.example.com \
+  --kubernetes-network-config '{}' \
+  --role-arn arn:aws:iam::123456789012:role/unused \
+  --resources-vpc-config '{}'
 
-2. The **JWKS sync** runs on the host (systemd), outside Kubernetes. It's the only process that uses the instance profile. It has a single permission: write JWKS to its own cluster's DynamoDB row.
+# Describe
+aws eks describe-cluster --name my-k3s --endpoint-url https://eks-dx.example.com
 
-3. The **webhook** gets its DynamoDB read credentials through Pod Identity itself — dogfooding the system. Its association maps to a role with scoped `dynamodb:GetItem/Query`.
+# List
+aws eks list-clusters --endpoint-url https://eks-dx.example.com
 
-4. The **instance profile has no STS permissions**. AssumeRole happens only inside the Lambda. Even if a pod somehow bypassed the agent and reached the metadata service, it could only push JWKS — not assume any role.
+# Deregister
+aws eks delete-cluster --name my-k3s --endpoint-url https://eks-dx.example.com
+```
 
-### EC2 Instance Profile (Minimal)
+### Pod Identity Associations
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Sid": "PushJWKSOnly",
-    "Effect": "Allow",
-    "Action": "dynamodb:UpdateItem",
-    "Resource": "arn:aws:dynamodb:*:*:table/eks-dx-clusters",
-    "Condition": {
-      "ForAllValues:StringEquals": {
-        "dynamodb:LeadingKeys": ["my-k3s"]
-      }
-    }
-  }]
+```bash
+# Create association
+aws eks create-pod-identity-association \
+  --cluster-name my-k3s \
+  --namespace default \
+  --service-account my-app \
+  --role-arn arn:aws:iam::123456789012:role/my-app \
+  --endpoint-url https://eks-dx.example.com
+
+# List
+aws eks list-pod-identity-associations \
+  --cluster-name my-k3s \
+  --endpoint-url https://eks-dx.example.com
+
+# Describe
+aws eks describe-pod-identity-association \
+  --cluster-name my-k3s \
+  --association-id assoc-xxx \
+  --endpoint-url https://eks-dx.example.com
+
+# Delete
+aws eks delete-pod-identity-association \
+  --cluster-name my-k3s \
+  --association-id assoc-xxx \
+  --endpoint-url https://eks-dx.example.com
+```
+
+### Auth Endpoint (Internal — called by in-cluster proxy)
+
+```
+POST /clusters/{clusterName}/assets
+Body: {
+  "claims": {
+    "namespace": "default",
+    "serviceAccount": "my-app",
+    "serviceAccountUid": "uid-123",
+    "podName": "my-app-abc123",
+    "podUid": "pod-uid-456",
+    "subject": "system:serviceaccount:default:my-app"
+  }
+}
+
+Response: {
+  "credentials": { "accessKeyId": "...", "secretAccessKey": "...", "sessionToken": "...", "expiration": ... },
+  "assumedRoleUser": { "arn": "...", "assumeRoleId": "..." },
+  "podIdentityAssociation": { "associationArn": "...", "associationId": "..." },
+  "subject": { "namespace": "default", "serviceAccount": "my-app" },
+  "audience": "pods.eks.amazonaws.com"
 }
 ```
 
-One permission. No STS. No association reads. Scoped to own cluster key.
+The proxy sends pre-validated claims, not the raw token. The Lambda trusts the proxy (authenticated via IAM SigV4 or API key).
 
-## JWKS Sync Agent
+## In-Cluster Proxy (Simplified)
 
-Runs on the EC2 host, not as a Kubernetes pod. Pushes the cluster's SA signing public keys to DynamoDB so the Lambda can validate tokens without reaching back into the cluster.
+The proxy becomes much simpler — just TokenReview + forward:
 
-### Implementation
+```java
+@POST
+@Path("/{clusterName}/assets")
+public Response assumeRoleForPodIdentity(
+        @PathParam("clusterName") String clusterName,
+        AgentRequest request) {
 
-Installed at cluster registration time as a systemd timer:
+    // 1. Validate token via Kubernetes TokenReview (existing code)
+    TokenClaims claims = tokenValidationService.validateToken(request.token, clusterName);
 
-```bash
-# /etc/systemd/system/eks-dx-jwks-sync.service
-[Unit]
-Description=EKS-DX JWKS sync
+    // 2. Forward validated claims to EKS-DX Lambda
+    Response lambdaResponse = eksDxClient.assumeRole(clusterName, claims);
 
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/eks-dx-jwks-sync
+    // 3. Return credentials to agent
+    return lambdaResponse;
+}
 ```
 
-```bash
-# /etc/systemd/system/eks-dx-jwks-sync.timer
-[Unit]
-Description=Sync JWKS every 6 hours
+No DynamoDB, no STS, no association lookup. Just TokenReview + HTTP forward.
 
-[Timer]
-OnBootSec=1min
-OnUnitActiveSec=6h
+### Proxy IAM Requirements
 
-[Install]
-WantedBy=timers.target
-```
+None. The proxy doesn't call any AWS APIs. It:
+- Calls the Kubernetes TokenReview API (via ServiceAccount RBAC)
+- Calls the Lambda endpoint (HTTPS, authenticated via shared secret or mTLS)
 
-```bash
-#!/bin/bash
-# /usr/local/bin/eks-dx-jwks-sync
-CLUSTER_NAME="my-k3s"
-REGION="us-east-1"
-JWKS=$(curl -sk https://localhost:6443/openid/v1/jwks)
+The EC2 instance profile can be empty or removed entirely.
 
-aws dynamodb update-item \
-  --table-name eks-dx-clusters \
-  --region "$REGION" \
-  --key '{"clusterName":{"S":"'"$CLUSTER_NAME"'"}}' \
-  --update-expression "SET jwks = :j, jwksSyncedAt = :t" \
-  --expression-attribute-values '{
-    ":j": {"S": "'"$(echo "$JWKS" | jq -c .)"'"},
-    ":t": {"S": "'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"}
-  }'
-```
+## Component Summary
 
-### Why Host-Level, Not a Pod
+| Component | Location | Responsibilities | AWS Permissions |
+|-----------|----------|-----------------|-----------------|
+| **EKS-DX Service** | Lambda | Association CRUD, cluster registration, STS AssumeRole | DynamoDB read/write, STS AssumeRole |
+| **eks-auth-proxy** | In-cluster | TokenReview, forward claims to Lambda | None (Kubernetes RBAC only) |
+| **eks-pod-identity-webhook** | In-cluster | Pod mutation (inject env vars + token volume) | Calls Lambda API to check association existence |
+| **EKS Pod Identity Agent** | In-cluster (DaemonSet) | Intercepts 169.254.170.23, forwards to proxy | None |
+| **eks-dx CLI** | Developer machine | Cluster registration, association management | Calls Lambda API (same as `aws eks` with `--endpoint-url`) |
 
-- Pods can't use the instance profile (agent blocks metadata service)
-- No chicken-and-egg: JWKS sync doesn't depend on Pod Identity being functional
-- Runs before and independently of the Kubernetes control plane components
-- If k3s restarts, the sync still runs on the next timer tick
+## Proxy ↔ Lambda Authentication
 
-## Cluster Registration
+The proxy needs to authenticate to the Lambda. Options:
 
-### Registration Flow
+1. **API Gateway API key** — simple, rotatable, passed as `x-api-key` header. Generated at cluster registration.
+2. **IAM SigV4** — standard AWS auth. Proxy would need minimal IAM creds (just `execute-api:Invoke`). But this reintroduces credentials on the node.
+3. **mTLS** — cert-based auth between proxy and API Gateway. Strong but complex.
 
-```bash
-eks-dx register \
-  --cluster-name my-k3s \
-  --issuer https://kubernetes.default.svc \
-  --region us-east-1
-```
-
-This:
-
-1. Creates **DynamoDB entry** in `eks-dx-clusters`:
-   ```json
-   {
-     "clusterName": "my-k3s",
-     "issuer": "https://kubernetes.default.svc",
-     "jwks": null,
-     "registeredAt": "2026-04-26T22:00:00Z"
-   }
-   ```
-   (`jwks` is null until the first sync runs)
-
-2. Creates **IAM instance profile** `eks-dx-cluster-my-k3s` with the minimal DynamoDB UpdateItem policy (JWKS push only)
-
-3. Creates **IAM role** `eks-dx-cluster-my-k3s-webhook` for the webhook pod:
-   ```json
-   {
-     "Statement": [{
-       "Effect": "Allow",
-       "Action": ["dynamodb:GetItem", "dynamodb:Query"],
-       "Resource": "arn:aws:dynamodb:*:*:table/eks-dx-associations",
-       "Condition": {
-         "ForAllValues:StringLike": {
-           "dynamodb:LeadingKeys": ["CLUSTER#my-k3s"]
-         }
-       }
-     }]
-   }
-   ```
-
-4. Creates **pod identity association** for the webhook itself:
-   ```
-   my-k3s:kube-system:eks-pod-identity-webhook → eks-dx-cluster-my-k3s-webhook
-   ```
-
-5. Installs the **JWKS sync** systemd timer on the host
-
-6. Outputs:
-   - Lambda endpoint URL (for `--endpoint` flag)
-   - Instance profile name (for EC2)
-   - First JWKS sync triggered immediately
-
-### Bootstrap Order
-
-```
-1. eks-dx register → creates DynamoDB entries + IAM roles + systemd timer
-2. JWKS sync runs → pushes cluster's public keys to DynamoDB
-3. EKS Pod Identity Agent starts → points to Lambda endpoint
-4. Webhook starts → gets DynamoDB read creds via Pod Identity (dogfooding)
-5. Application pods start → webhook injects env vars → agent → Lambda → STS
-```
-
-Step 4 is the dogfooding moment: the webhook's own credentials come through the Pod Identity system it's part of.
+**Recommendation**: API key per cluster, generated at registration, stored as a Kubernetes Secret. The proxy reads it at startup. If the key is compromised, revoke and re-register.
 
 ## DynamoDB Schema
 
 ### Table: `eks-dx-clusters`
 
-| PK (clusterName) | issuer | jwks | jwksSyncedAt | registeredAt |
-|-------------------|--------|------|--------------|--------------|
-| `my-k3s` | `https://kubernetes.default.svc` | `{"keys":[...]}` | `2026-04-26T22:00:00Z` | `2026-04-26T22:00:00Z` |
+| PK (clusterName) | status | registeredAt | apiKey (hashed) |
+|-------------------|--------|--------------|-----------------|
+| `my-k3s` | `ACTIVE` | `2026-04-26T22:00:00Z` | `sha256:...` |
 
 ### Table: `eks-dx-associations`
 
-| PK | SK | roleArn | createdAt |
-|----|-----|---------|-----------|
-| `CLUSTER#my-k3s` | `default#my-app` | `arn:aws:iam::123456789012:role/my-app` | `2026-04-26T22:00:00Z` |
-| `CLUSTER#my-k3s` | `ci-cd#builder` | `arn:aws:iam::123456789012:role/ci-builder` | `2026-04-26T22:00:00Z` |
-
-### IAM Scoping per Cluster
-
-Each cluster's roles use **DynamoDB leading key conditions**:
-
-```json
-{
-  "Condition": {
-    "ForAllValues:StringLike": {
-      "dynamodb:LeadingKeys": ["CLUSTER#my-k3s"]
-    }
-  }
-}
-```
-
-- Cluster A cannot read Cluster B's associations
-- Instance profile can only write JWKS for its own cluster
-- No cross-cluster data leakage
-
-## Lambda Auth Service
-
-### Endpoint
-
-```
-POST /clusters/{clusterName}/assets
-Body: {"token": "<jwt>"}
-```
-
-### Flow
-
-1. Look up cluster in `eks-dx-clusters` → get issuer + JWKS (from DynamoDB, pushed by cluster)
-2. Validate token:
-   - Parse JWKS from DynamoDB (cached in Lambda memory with TTL)
-   - Verify JWT signature (RS256), audience (`pods.eks.amazonaws.com`), expiry, issuer
-   - Extract namespace + service account from claims
-3. Look up association in `eks-dx-associations` → get roleArn
-4. STS AssumeRole with session tags → return temporary credentials
-
-### Lambda IAM Role
-
-```json
-{
-  "Statement": [
-    {
-      "Sid": "ReadClusterAndAssociationData",
-      "Effect": "Allow",
-      "Action": ["dynamodb:GetItem", "dynamodb:Query"],
-      "Resource": [
-        "arn:aws:dynamodb:*:*:table/eks-dx-associations",
-        "arn:aws:dynamodb:*:*:table/eks-dx-clusters"
-      ]
-    },
-    {
-      "Sid": "AssumeTargetRoles",
-      "Effect": "Allow",
-      "Action": ["sts:AssumeRole", "sts:TagSession"],
-      "Resource": "arn:aws:iam::*:role/eks-dx-pod-*"
-    }
-  ]
-}
-```
-
-### Token Validation
-
-The Lambda validates JWTs directly (no Kubernetes TokenReview):
-
-- JWKS is read from DynamoDB (pushed by the cluster's host-level sync agent)
-- No network path from Lambda to the cluster required
-- JWKS cached in Lambda memory, refreshed from DynamoDB every 5 minutes
-- If JWKS is stale (cluster rotated keys), the sync agent pushes new keys within 6 hours
-
-## Webhook (In-Cluster)
-
-Stays in the cluster. Switches from CRD lookup to DynamoDB:
-
-```java
-public boolean hasAssociation(String clusterName, String namespace, String serviceAccount) {
-    GetItemResponse response = dynamoDb.getItem(GetItemRequest.builder()
-        .tableName("eks-dx-associations")
-        .key(Map.of(
-            "PK", AttributeValue.fromS("CLUSTER#" + clusterName),
-            "SK", AttributeValue.fromS(namespace + "#" + serviceAccount)))
-        .build());
-    return response.hasItem();
-}
-```
-
-Gets its AWS credentials via Pod Identity (dogfooding). Its association maps to `eks-dx-cluster-<name>-webhook` role which has scoped DynamoDB read-only access.
-
-## CLI
-
-```bash
-# Register a cluster (run from the EC2 host)
-eks-dx register --cluster-name my-k3s --issuer https://kubernetes.default.svc --region us-east-1
-
-# Manage associations (run from anywhere with AWS credentials)
-eks-dx create  --cluster-name my-k3s --service-account default:my-app --role-arn arn:aws:iam::...:role/my-app
-eks-dx list    --cluster-name my-k3s
-eks-dx delete  --cluster-name my-k3s --service-account default:my-app
-
-# Deregister
-eks-dx deregister --cluster-name my-k3s
-```
-
-## IAM Role Summary
-
-| Role | Attached to | Permissions | Scope |
-|------|-------------|-------------|-------|
-| `eks-dx-cluster-<name>` | EC2 instance profile | `dynamodb:UpdateItem` on `eks-dx-clusters` | Own cluster key only |
-| `eks-dx-cluster-<name>-webhook` | Webhook pod (via Pod Identity) | `dynamodb:GetItem/Query` on `eks-dx-associations` | Own cluster associations only |
-| `eks-dx-auth-service` | Lambda execution role | `dynamodb:GetItem/Query` on both tables + `sts:AssumeRole` on `eks-dx-pod-*` | All clusters (it's the central service) |
-| `eks-dx-pod-*` | Target roles assumed by pods | Application-specific (S3, DynamoDB, etc.) | Whatever the app needs |
+| PK | SK | roleArn | associationId | createdAt |
+|----|-----|---------|---------------|-----------|
+| `CLUSTER#my-k3s` | `default#my-app` | `arn:aws:iam::...:role/my-app` | `assoc-abc123` | `2026-04-26T22:00:00Z` |
 
 ## Cost Estimate (per cluster)
 
@@ -363,28 +237,14 @@ eks-dx deregister --cluster-name my-k3s
 |----------|------|
 | Lambda (1000 requests/day) | ~$0.20/month |
 | API Gateway | ~$3.50/month |
-| DynamoDB on-demand (1000 reads/day) | ~$0.04/month |
-| JWKS sync (4 DynamoDB writes/day) | ~$0.00/month |
+| DynamoDB on-demand | ~$0.04/month |
+| In-cluster proxy (tiny pod) | ~0 (runs on existing node) |
 | **Total** | **~$4/month** |
 
-vs. EKS control plane: $73/month
+## What This Eliminates
 
-## Migration Path
-
-| Component | Current (in-cluster) | Target (Lambda + DynamoDB) |
-|-----------|---------------------|---------------------------|
-| Auth proxy | Kubernetes Deployment | Lambda + API Gateway |
-| Associations | CRD resources | DynamoDB table |
-| Token validation | Kubernetes TokenReview | Direct JWT/JWKS from DynamoDB |
-| JWKS distribution | Not needed (TokenReview) | Host-level sync → DynamoDB |
-| Webhook | CRD lookup | DynamoDB GetItem |
-| CLI | CRD CRUD | DynamoDB CRUD |
-| Agent config | `--endpoint http://...:8080` | `--endpoint https://...` |
-
-## Open Questions
-
-1. **Multi-region**: Deploy Lambda + DynamoDB per-region, or use DynamoDB Global Tables for multi-region clusters?
-2. **Agent authentication to Lambda**: The token itself authenticates the request (Lambda validates it). No additional auth needed — same as real EKS.
-3. **CRD backward compatibility**: Keep CRD support as an offline/disconnected fallback mode?
-4. **JWKS rotation urgency**: 6-hour sync interval means up to 6h delay if cluster rotates SA keys. Acceptable? Or add a manual `eks-dx sync-jwks` command?
-5. **Webhook bootstrap**: On first boot, the webhook needs Pod Identity to get DynamoDB creds, but Pod Identity needs the webhook to inject env vars. Solution: the webhook's own pod should have env vars injected statically (not via webhook) or use the instance profile as a bootstrap fallback.
+- ❌ JWKS sync agent (no longer needed — proxy does TokenReview locally)
+- ❌ EC2 instance profile permissions (proxy has no AWS permissions)
+- ❌ DynamoDB access from inside the cluster (webhook calls Lambda API, not DynamoDB directly)
+- ❌ Custom CLI (replaced by `aws eks --endpoint-url`)
+- ❌ CRD resources (replaced by DynamoDB)
