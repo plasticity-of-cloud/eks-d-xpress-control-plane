@@ -9,14 +9,13 @@ Pod identity associations are stored as Kubernetes CRDs (`PodIdentityAssociation
 ```
 Pod Token → eks-auth-proxy → CRD lookup (local cluster) → STS AssumeRole
                                   ↓ (fallback)
-                             EKS API → generated default
+                             generated default role ARN
 ```
 
 ### Lookup Order
 
 1. **CRD** — `PodIdentityAssociation` resource in the pod's namespace
-2. **EKS API** — `eks:ListPodIdentityAssociations` (for managed EKS clusters)
-3. **Generated default** — `arn:aws:iam::<account>:role/eks-pod-identity-<ns>-<sa>`
+2. **Generated default** — `arn:aws:iam::<account>:role/eks-pod-identity-<ns>-<sa>`
 
 ## CRD Definition
 

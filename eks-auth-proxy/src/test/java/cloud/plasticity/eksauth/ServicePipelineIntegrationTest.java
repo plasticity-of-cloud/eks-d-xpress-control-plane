@@ -16,9 +16,6 @@ import jakarta.inject.Inject;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import software.amazon.awssdk.services.eks.EksClient;
-import software.amazon.awssdk.services.eks.model.ListPodIdentityAssociationsRequest;
-import software.amazon.awssdk.services.eks.model.ListPodIdentityAssociationsResponse;
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
 import software.amazon.awssdk.services.sts.model.AssumeRoleResponse;
@@ -36,7 +33,7 @@ import static org.mockito.Mockito.*;
  * + AwsCredentialService through the HTTP layer.
  *
  * K8s interactions (TokenReview, CRD) go through the real Fabric8 mock server.
- * AWS SDK clients (EksClient, StsClient) are replaced with Mockito mocks via @InjectMock.
+ * StsClient is replaced with a Mockito mock via @InjectMock.
  */
 @QuarkusTest
 @WithKubernetesTestServer
@@ -49,9 +46,6 @@ class ServicePipelineIntegrationTest {
     KubernetesClient kubernetesClient;
 
     @InjectMock
-    EksClient eksClient;
-
-    @InjectMock
     StsClient stsClient;
 
     private static final String CLUSTER   = "test-cluster";
@@ -61,10 +55,6 @@ class ServicePipelineIntegrationTest {
 
     @BeforeEach
     void resetMockServer() {
-        // EKS API returns empty by default so CRD / generated-default fallbacks are exercised
-        when(eksClient.listPodIdentityAssociations(any(ListPodIdentityAssociationsRequest.class)))
-            .thenReturn(ListPodIdentityAssociationsResponse.builder().build());
-
         // Clean up CRDs from previous tests
         kubernetesClient.resources(PodIdentityAssociation.class)
             .inNamespace(NAMESPACE)

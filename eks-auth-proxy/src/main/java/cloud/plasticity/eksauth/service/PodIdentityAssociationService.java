@@ -5,12 +5,7 @@ import io.fabric8.kubernetes.client.KubernetesClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
-import software.amazon.awssdk.services.eks.EksClient;
-import software.amazon.awssdk.services.eks.model.DescribePodIdentityAssociationRequest;
-import software.amazon.awssdk.services.eks.model.ListPodIdentityAssociationsRequest;
-import software.amazon.awssdk.services.eks.model.PodIdentityAssociationSummary;
 
-import java.util.List;
 import java.util.Optional;
 
 @ApplicationScoped
@@ -19,13 +14,9 @@ public class PodIdentityAssociationService {
     private static final Logger LOG = Logger.getLogger(PodIdentityAssociationService.class);
 
     @Inject
-    EksClient eksClient;
-
-    @Inject
     KubernetesClient kubernetesClient;
 
     // For testing
-    void setEksClient(EksClient eksClient) { this.eksClient = eksClient; }
     void setKubernetesClient(KubernetesClient kubernetesClient) { this.kubernetesClient = kubernetesClient; }
 
     public String getRoleArnForServiceAccount(String clusterName, String namespace, String serviceAccount) {
@@ -35,32 +26,7 @@ public class PodIdentityAssociationService {
             return roleArn;
         }
 
-        // 2. Fallback: AWS EKS API (for managed EKS clusters)
-        try {
-            List<PodIdentityAssociationSummary> associations = eksClient.listPodIdentityAssociations(
-                ListPodIdentityAssociationsRequest.builder()
-                    .clusterName(clusterName)
-                    .namespace(namespace)
-                    .serviceAccount(serviceAccount)
-                    .build()
-            ).associations();
-
-            if (!associations.isEmpty()) {
-                String associationId = associations.get(0).associationId();
-                roleArn = eksClient.describePodIdentityAssociation(
-                    DescribePodIdentityAssociationRequest.builder()
-                        .clusterName(clusterName)
-                        .associationId(associationId)
-                        .build()
-                ).association().roleArn();
-                LOG.infof("EKS API association found for %s/%s/%s -> %s", clusterName, namespace, serviceAccount, roleArn);
-                return roleArn;
-            }
-        } catch (Exception e) {
-            LOG.debugf("EKS API lookup failed: %s", e.getMessage());
-        }
-
-        // 3. Last resort: generated default
+        // 2. Last resort: generated default
         return getDefaultRoleArn(namespace, serviceAccount);
     }
 
