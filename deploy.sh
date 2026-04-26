@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Defaults
-TARGET="all"        # all | proxy | webhook | crd | associations
+TARGET="all"        # all | proxy | webhook | crd
 NAMESPACE="kube-system"
 CLUSTER=""
 DRY_RUN=false
@@ -20,11 +20,13 @@ usage() {
 Usage: $0 [OPTIONS]
 
 Options:
-  --target TARGET    What to deploy: all (default), proxy, webhook, crd, associations
+  --target TARGET    What to deploy: all (default), proxy, webhook, crd
   --namespace NS     Kubernetes namespace (default: kube-system)
   --cluster NAME     kubectl context / cluster name to use
   --dry-run          Print manifests without applying
   --help             Show this help
+
+Pod identity associations are managed via the eks-d-auth-cli tool, not this script.
 EOF
     exit 0
 }
@@ -94,27 +96,19 @@ deploy_webhook() {
     echo -e "${GREEN}webhook deployed.${NC}"
 }
 
-deploy_associations() {
-    echo -e "${YELLOW}Deploying pod-identity-associations ConfigMap...${NC}"
-    $APPLY deploy/pod-identity-associations.yaml
-    echo -e "${GREEN}ConfigMap deployed.${NC}"
-}
-
 echo -e "${GREEN}=== EKS Auth Deploy ===${NC}"
 echo "target=$TARGET  namespace=$NAMESPACE  dry-run=$DRY_RUN"
 [[ -n "$CLUSTER" ]] && echo "cluster=$CLUSTER"
 echo
 
 case "$TARGET" in
-    crd)          deploy_crd ;;
-    proxy)        deploy_proxy ;;
-    webhook)      deploy_webhook ;;
-    associations) deploy_associations ;;
+    crd)     deploy_crd ;;
+    proxy)   deploy_proxy ;;
+    webhook) deploy_webhook ;;
     all)
         deploy_crd
         deploy_proxy
         deploy_webhook
-        deploy_associations
         ;;
     *) echo -e "${RED}Unknown target: $TARGET${NC}"; exit 1 ;;
 esac

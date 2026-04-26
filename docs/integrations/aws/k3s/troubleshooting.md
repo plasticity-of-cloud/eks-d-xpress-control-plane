@@ -1,5 +1,8 @@
 # Troubleshooting Guide for k3s EKS Pod Identity Integration
 
+> **Note**: The deployment guides have moved. See [`deploy/README.md`](../../../deploy/README.md)
+> for the current troubleshooting table. The diagnostic steps below are still valid.
+
 ## Common Issues and Solutions
 
 ### 1. EKS Pod Identity Agent Issues

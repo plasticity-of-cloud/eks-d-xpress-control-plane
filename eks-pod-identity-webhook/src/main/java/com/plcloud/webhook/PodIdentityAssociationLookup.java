@@ -1,17 +1,15 @@
 package com.plcloud.webhook;
 
-import io.fabric8.kubernetes.api.model.ConfigMap;
+import com.plcloud.eksauth.crd.PodIdentityAssociation;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
-import java.util.Map;
-
 /**
- * Looks up Pod Identity Associations from the ConfigMap.
- * Keys follow the format: "clusterName:namespace:serviceAccount" or "clusterName:namespace:*"
+ * Looks up Pod Identity Associations from CRD resources.
+ * CRD name convention: "{clusterName}-{serviceAccount}" in the target namespace.
  */
 @ApplicationScoped
 public class PodIdentityAssociationLookup {
@@ -21,32 +19,24 @@ public class PodIdentityAssociationLookup {
     @Inject
     KubernetesClient kubernetesClient;
 
-    @ConfigProperty(name = "eks.pod-identity.configmap.name", defaultValue = "pod-identity-associations")
-    String configMapName;
-
-    @ConfigProperty(name = "eks.pod-identity.configmap.namespace", defaultValue = "kube-system")
-    String configMapNamespace;
+    @ConfigProperty(name = "eks.cluster-name")
+    String clusterName;
 
     public boolean hasAssociation(String clusterName, String namespace, String serviceAccount) {
         try {
-            ConfigMap configMap = kubernetesClient.configMaps()
-                .inNamespace(configMapNamespace)
-                .withName(configMapName)
+            String crdName = clusterName + "-" + serviceAccount;
+            var crd = kubernetesClient.resources(PodIdentityAssociation.class)
+                .inNamespace(namespace)
+                .withName(crdName)
                 .get();
 
-            if (configMap == null || configMap.getData() == null) {
-                LOG.warnf("ConfigMap %s/%s not found, skipping injection", configMapNamespace, configMapName);
-                return false;
+            if (crd != null && crd.getSpec() != null) {
+                LOG.debugf("CRD association found for %s/%s/%s", clusterName, namespace, serviceAccount);
+                return true;
             }
-
-            Map<String, String> data = configMap.getData();
-            String exactKey = clusterName + ":" + namespace + ":" + serviceAccount;
-            String wildcardKey = clusterName + ":" + namespace + ":*";
-
-            return data.containsKey(exactKey) || data.containsKey(wildcardKey);
         } catch (Exception e) {
-            LOG.errorf("Error looking up Pod Identity association: %s", e.getMessage());
-            return false;
+            LOG.errorf("Error looking up Pod Identity association CRD: %s", e.getMessage());
         }
+        return false;
     }
 }

@@ -1,11 +1,9 @@
 package com.plcloud.eksauth.service;
 
 import com.plcloud.eksauth.crd.PodIdentityAssociation;
-import io.fabric8.kubernetes.api.model.ConfigMap;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.eks.EksClient;
 import software.amazon.awssdk.services.eks.model.DescribePodIdentityAssociationRequest;
@@ -13,7 +11,6 @@ import software.amazon.awssdk.services.eks.model.ListPodIdentityAssociationsRequ
 import software.amazon.awssdk.services.eks.model.PodIdentityAssociationSummary;
 
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 
 @ApplicationScoped
@@ -31,12 +28,6 @@ public class PodIdentityAssociationService {
     void setEksClient(EksClient eksClient) { this.eksClient = eksClient; }
     void setKubernetesClient(KubernetesClient kubernetesClient) { this.kubernetesClient = kubernetesClient; }
 
-    @ConfigProperty(name = "eks.pod-identity.configmap.name", defaultValue = "pod-identity-associations")
-    String configMapName;
-
-    @ConfigProperty(name = "eks.pod-identity.configmap.namespace", defaultValue = "kube-system")
-    String configMapNamespace;
-
     public String getRoleArnForServiceAccount(String clusterName, String namespace, String serviceAccount) {
         // 1. Primary: Kubernetes CRD
         String roleArn = getRoleArnFromCrd(clusterName, namespace, serviceAccount);
@@ -44,7 +35,7 @@ public class PodIdentityAssociationService {
             return roleArn;
         }
 
-        // 2. Fallback: AWS EKS API (for backward compatibility)
+        // 2. Fallback: AWS EKS API (for managed EKS clusters)
         try {
             List<PodIdentityAssociationSummary> associations = eksClient.listPodIdentityAssociations(
                 ListPodIdentityAssociationsRequest.builder()
@@ -66,11 +57,11 @@ public class PodIdentityAssociationService {
                 return roleArn;
             }
         } catch (Exception e) {
-            LOG.debugf("EKS API lookup failed, falling back to ConfigMap: %s", e.getMessage());
+            LOG.debugf("EKS API lookup failed: %s", e.getMessage());
         }
 
-        // 3. Fallback: ConfigMap
-        return getRoleArnFromConfigMap(clusterName, namespace, serviceAccount);
+        // 3. Last resort: generated default
+        return getDefaultRoleArn(namespace, serviceAccount);
     }
 
     private String getRoleArnFromCrd(String clusterName, String namespace, String serviceAccount) {
@@ -90,29 +81,6 @@ public class PodIdentityAssociationService {
             LOG.debugf("CRD lookup failed: %s", e.getMessage());
         }
         return null;
-    }
-
-    private String getRoleArnFromConfigMap(String clusterName, String namespace, String serviceAccount) {
-        try {
-            ConfigMap configMap = kubernetesClient.configMaps()
-                .inNamespace(configMapNamespace)
-                .withName(configMapName)
-                .get();
-
-            if (configMap != null) {
-                Map<String, String> data = configMap.getData();
-                if (data != null) {
-                    String roleArn = data.get(clusterName + ":" + namespace + ":" + serviceAccount);
-                    if (roleArn != null) return roleArn;
-                    roleArn = data.get(clusterName + ":" + namespace + ":*");
-                    if (roleArn != null) return roleArn;
-                }
-            }
-        } catch (Exception e) {
-            LOG.debugf("ConfigMap lookup failed: %s", e.getMessage());
-        }
-
-        return getDefaultRoleArn(namespace, serviceAccount);
     }
 
     private String getDefaultRoleArn(String namespace, String serviceAccount) {

@@ -1,5 +1,8 @@
 # Quick Setup Script for k3s with EKS Pod Identity
 
+> **⚠️ DEPRECATED** — This script uses overly broad IAM policies.
+> Use [`docs/user_guides/ec2-k3s-pod-identity/setup.sh`](../../user_guides/ec2-k3s-pod-identity/setup.sh) instead (minimal broker role).
+
 This script automates the setup of k3s on EC2 with EKS Pod Identity integration.
 
 ## Prerequisites

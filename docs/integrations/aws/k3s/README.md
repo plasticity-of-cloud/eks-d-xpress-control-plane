@@ -1,5 +1,10 @@
 # k3s on EC2 with EKS Pod Identity Integration
 
+> **⚠️ DEPRECATED** — This guide uses overly broad IAM policies and manual agent deployment.
+> Use the consolidated guides instead:
+> - **Deployment**: [`deploy/README.md`](../../../deploy/README.md)
+> - **Full EC2 provisioning**: [`docs/user_guides/ec2-k3s-pod-identity/`](../../user_guides/ec2-k3s-pod-identity/)
+
 This guide sets up k3s on a single EC2 instance with EKS Pod Identity Agent and Cluster Autoscaler support, using our AWS EKS Auth Service Proxy.
 
 ## Overview

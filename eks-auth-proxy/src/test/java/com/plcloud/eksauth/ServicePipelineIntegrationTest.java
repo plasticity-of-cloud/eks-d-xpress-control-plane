@@ -3,7 +3,6 @@ package com.plcloud.eksauth;
 import com.plcloud.eksauth.crd.PodIdentityAssociation;
 import com.plcloud.eksauth.crd.PodIdentityAssociationSpec;
 import com.plcloud.eksauth.model.AssumeRoleForPodIdentityRequest;
-import io.fabric8.kubernetes.api.model.ConfigMapBuilder;
 import io.fabric8.kubernetes.api.model.ObjectMetaBuilder;
 import io.fabric8.kubernetes.api.model.authentication.TokenReviewBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -26,7 +25,6 @@ import software.amazon.awssdk.services.sts.model.AssumeRoleResponse;
 import software.amazon.awssdk.services.sts.model.Credentials;
 
 import java.time.Instant;
-import java.util.Map;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.*;
@@ -37,7 +35,7 @@ import static org.mockito.Mockito.*;
  * Component integration test: wires TokenValidationService + PodIdentityAssociationService
  * + AwsCredentialService through the HTTP layer.
  *
- * K8s interactions (TokenReview, ConfigMap, CRD) go through the real Fabric8 mock server.
+ * K8s interactions (TokenReview, CRD) go through the real Fabric8 mock server.
  * AWS SDK clients (EksClient, StsClient) are replaced with Mockito mocks via @InjectMock.
  */
 @QuarkusTest
@@ -63,9 +61,15 @@ class ServicePipelineIntegrationTest {
 
     @BeforeEach
     void resetMockServer() {
-        // EKS API returns empty by default so CRD/ConfigMap fallbacks are exercised
+        // EKS API returns empty by default so CRD / generated-default fallbacks are exercised
         when(eksClient.listPodIdentityAssociations(any(ListPodIdentityAssociationsRequest.class)))
             .thenReturn(ListPodIdentityAssociationsResponse.builder().build());
+
+        // Clean up CRDs from previous tests
+        kubernetesClient.resources(PodIdentityAssociation.class)
+            .inNamespace(NAMESPACE)
+            .withName(CLUSTER + "-" + SA)
+            .delete();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -98,6 +102,19 @@ class ServicePipelineIntegrationTest {
                 .build());
     }
 
+    private PodIdentityAssociation createCrd(String namespace, String sa, String roleArn) {
+        var crd = new PodIdentityAssociation();
+        crd.setMetadata(new ObjectMetaBuilder()
+            .withName(CLUSTER + "-" + sa)
+            .withNamespace(namespace)
+            .build());
+        crd.setSpec(new PodIdentityAssociationSpec(CLUSTER, namespace, sa, roleArn));
+        return kubernetesClient.resources(PodIdentityAssociation.class)
+            .inNamespace(namespace)
+            .resource(crd)
+            .create();
+    }
+
     private AssumeRoleForPodIdentityRequest request(String token) {
         var req = new AssumeRoleForPodIdentityRequest();
         req.setClusterName(CLUSTER);
@@ -108,24 +125,12 @@ class ServicePipelineIntegrationTest {
     // ── tests ─────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("Full pipeline: ConfigMap role mapping → real credentials returned")
-    void fullPipeline_configMapRoleMapping() {
-        // Arrange: ConfigMap with exact key
-        kubernetesClient.configMaps()
-            .inNamespace("kube-system")
-            .resource(new ConfigMapBuilder()
-                .withMetadata(new ObjectMetaBuilder()
-                    .withName("pod-identity-associations")
-                    .withNamespace("kube-system")
-                    .build())
-                .withData(Map.of(CLUSTER + ":" + NAMESPACE + ":" + SA, ROLE_ARN))
-                .build())
-            .create();
-
+    @DisplayName("Full pipeline: CRD role mapping → real credentials returned")
+    void fullPipeline_crdRoleMapping() {
+        createCrd(NAMESPACE, SA, ROLE_ARN);
         stubTokenReview(true, "system:serviceaccount:" + NAMESPACE + ":" + SA);
         stubSts();
 
-        // Act & Assert
         given()
             .contentType(ContentType.JSON)
             .body(request("valid-token"))
@@ -146,33 +151,8 @@ class ServicePipelineIntegrationTest {
     }
 
     @Test
-    @DisplayName("Full pipeline: CRD role mapping takes priority over ConfigMap")
-    void fullPipeline_crdRoleMappingTakesPriority() {
-        // Arrange: both CRD and ConfigMap exist; CRD should win
-        String crdRoleArn = "arn:aws:iam::123456789012:role/crd-role";
-
-        var crd = new PodIdentityAssociation();
-        crd.setMetadata(new ObjectMetaBuilder()
-            .withName(CLUSTER + "-" + SA)
-            .withNamespace(NAMESPACE)
-            .build());
-        crd.setSpec(new PodIdentityAssociationSpec(CLUSTER, NAMESPACE, SA, crdRoleArn));
-        kubernetesClient.resources(PodIdentityAssociation.class)
-            .inNamespace(NAMESPACE)
-            .resource(crd)
-            .create();
-
-        kubernetesClient.configMaps()
-            .inNamespace("kube-system")
-            .resource(new ConfigMapBuilder()
-                .withMetadata(new ObjectMetaBuilder()
-                    .withName("pod-identity-associations")
-                    .withNamespace("kube-system")
-                    .build())
-                .withData(Map.of(CLUSTER + ":" + NAMESPACE + ":" + SA, ROLE_ARN))
-                .build())
-            .create();
-
+    @DisplayName("No CRD → falls back to generated default role ARN")
+    void noCrd_fallsBackToGeneratedDefault() {
         stubTokenReview(true, "system:serviceaccount:" + NAMESPACE + ":" + SA);
         stubSts();
 
@@ -184,38 +164,10 @@ class ServicePipelineIntegrationTest {
         .then()
             .statusCode(200);
 
+        // Generated default: arn:aws:iam::<account>:role/eks-pod-identity-<ns>-<sa>
         verify(stsClient).assumeRole(argThat((AssumeRoleRequest r) ->
-            r.roleArn().equals(crdRoleArn)
+            r.roleArn().contains("eks-pod-identity-" + NAMESPACE + "-" + SA)
         ));
-    }
-
-    @Test
-    @DisplayName("Full pipeline: ConfigMap wildcard namespace match")
-    void fullPipeline_configMapWildcardMatch() {
-        kubernetesClient.configMaps()
-            .inNamespace("kube-system")
-            .resource(new ConfigMapBuilder()
-                .withMetadata(new ObjectMetaBuilder()
-                    .withName("pod-identity-associations")
-                    .withNamespace("kube-system")
-                    .build())
-                .withData(Map.of(CLUSTER + ":" + NAMESPACE + ":*", ROLE_ARN))
-                .build())
-            .create();
-
-        stubTokenReview(true, "system:serviceaccount:" + NAMESPACE + ":any-sa");
-        stubSts();
-
-        given()
-            .contentType(ContentType.JSON)
-            .body(request("valid-token"))
-        .when()
-            .post("/")
-        .then()
-            .statusCode(200)
-            .body("Credentials.AccessKeyId", equalTo("AKIATEST"));
-
-        verify(stsClient).assumeRole(argThat((AssumeRoleRequest r) -> r.roleArn().equals(ROLE_ARN)));
     }
 
     @Test
@@ -239,17 +191,7 @@ class ServicePipelineIntegrationTest {
     @Test
     @DisplayName("STS failure propagates as 500")
     void stsFailure_returns500() {
-        kubernetesClient.configMaps()
-            .inNamespace("kube-system")
-            .resource(new ConfigMapBuilder()
-                .withMetadata(new ObjectMetaBuilder()
-                    .withName("pod-identity-associations")
-                    .withNamespace("kube-system")
-                    .build())
-                .withData(Map.of(CLUSTER + ":" + NAMESPACE + ":" + SA, ROLE_ARN))
-                .build())
-            .create();
-
+        createCrd(NAMESPACE, SA, ROLE_ARN);
         stubTokenReview(true, "system:serviceaccount:" + NAMESPACE + ":" + SA);
         when(stsClient.assumeRole(any(AssumeRoleRequest.class)))
             .thenThrow(new RuntimeException("Access denied by STS"));
@@ -270,7 +212,6 @@ class ServicePipelineIntegrationTest {
         stubTokenReview(true, "system:serviceaccount:" + NAMESPACE + ":" + SA);
         stubSts();
 
-        // No ConfigMap → falls back to default role ARN, STS still called
         given()
             .contentType(ContentType.JSON)
             .body(request("Bearer actual-token"))
@@ -279,8 +220,6 @@ class ServicePipelineIntegrationTest {
         .then()
             .statusCode(200);
 
-        // Verify the mock server received the TokenReview (it was consumed by .once())
-        // and STS was called (meaning the full pipeline ran)
         verify(stsClient).assumeRole(any(AssumeRoleRequest.class));
     }
 }
