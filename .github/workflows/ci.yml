@@ -29,3 +29,8 @@ jobs:
           mvn -B -pl eks-pod-identity-crd,eks-pod-identity-webhook package -DskipTests \
             -Dquarkus.container-image.build=true \
             -Dquarkus.container-image.push=false
+
+      - name: Lint Helm charts
+        run: |
+          helm lint eks-auth-proxy/target/helm/kubernetes/eks-auth-proxy
+          helm lint eks-pod-identity-webhook/target/helm/kubernetes/eks-pod-identity-webhook
