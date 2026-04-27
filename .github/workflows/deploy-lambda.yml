@@ -1,0 +1,51 @@
+name: Deploy Lambda (test)
+
+on:
+  workflow_dispatch:
+    inputs:
+      function-name:
+        description: Lambda function name
+        required: true
+        default: eks-dx-service
+      region:
+        description: AWS region
+        required: true
+        default: us-east-1
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: test
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build Lambda function.zip
+        run: mvn -B -pl eks-dx-lambda package -DskipTests
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ inputs.region }}
+
+      - name: Deploy Lambda function
+        uses: aws-actions/aws-lambda-deploy@v1.1.0
+        with:
+          function-name: ${{ inputs.function-name }}
+          code-artifacts-dir: eks-dx-lambda/target/function.zip
+          handler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
+          runtime: java21
+          memory-size: 512
+          timeout: 30
+          snap-start: '{"ApplyOn":"PublishedVersions"}'
+          publish: true
