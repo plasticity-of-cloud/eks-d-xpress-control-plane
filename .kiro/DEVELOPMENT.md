@@ -59,7 +59,7 @@ java -jar target/quarkus-app/quarkus-run.jar
 
 #### Native Mode
 ```bash
-./target/aws-eks-auth-service-proxy-1.0.0-SNAPSHOT-runner
+./target/eks-dx-control-plane-1.0.0-SNAPSHOT-runner
 ```
 
 ## Configuration

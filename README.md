@@ -1,4 +1,4 @@
-# AWS EKS Auth Service Proxy
+# EKS-DX Control Plane
 
 A Quarkus-based service that replicates the AWS EKS Auth Service (`AssumeRoleForPodIdentity`) for local development and CI/CD environments.
 
@@ -34,7 +34,7 @@ docker run -p 8080:8080 \
   -e AWS_ACCESS_KEY_ID=... \
   -e AWS_SECRET_ACCESS_KEY=... \
   -e AWS_REGION=us-east-1 \
-  aws-eks-auth-service-proxy:latest
+  eks-dx-control-plane:latest
 ```
 
 ## API

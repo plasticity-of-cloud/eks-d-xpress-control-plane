@@ -65,7 +65,7 @@ Flow:
 If not already deployed:
 
 ```bash
-cd aws-eks-auth-service-proxy
+cd eks-dx-control-plane
 mvn -pl eks-dx-lambda package -DskipTests
 sam deploy -t sam.yaml --stack-name eks-dx --region us-east-1 \
   --capabilities CAPABILITY_IAM --resolve-s3 --no-confirm-changeset

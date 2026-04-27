@@ -7,7 +7,7 @@
     <artifactId>aws-eks-auth-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
   </parent>
-  <artifactId>aws-eks-auth-service-proxy</artifactId>
+  <artifactId>eks-dx-control-plane</artifactId>
   <description>Simplified in-cluster proxy — TokenReview + Lambda forwarding</description>
   <properties>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
