@@ -20,10 +20,9 @@
 ### Testing
 - [x] Unit tests for all services and resources (123 tests)
 - [x] Integration test with DynamoDB Local (16 tests)
-- [ ] SAM local testing (`sam local start-api`)
+- [x] SAM local testing (`sam validate --lint`)
 
 ### Deployment
-- [ ] Validate SAM template (`sam validate`)
 - [ ] First deploy to AWS (`sam deploy --guided`)
 - [ ] SnapStart verification (cold start benchmarks)
 

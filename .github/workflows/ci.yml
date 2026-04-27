@@ -24,6 +24,10 @@ jobs:
       - name: Build Lambda function.zip
         run: mvn -B -pl eks-dx-lambda package -DskipTests
 
+      - name: Validate SAM template
+        uses: aws-actions/setup-sam@v2
+      - run: sam validate -t sam.yaml --lint
+
       - name: Build container images (JVM)
         run: |
           mvn -B -pl eks-auth-proxy package -DskipTests \

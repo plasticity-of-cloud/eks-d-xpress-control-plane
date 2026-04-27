@@ -6,61 +6,64 @@ Globals:
   Function:
     Timeout: 30
     MemorySize: 512
-    SnapStart:
-      ApplyOn: PublishedVersions
+    Runtime: java21
 
 Parameters:
   DomainName:
     Type: String
     Default: ""
-    Description: Custom domain name (e.g., eks-dx.plasticity.cloud). Leave empty to skip.
+    Description: Custom domain name (leave empty to skip)
   CertificateArn:
     Type: String
     Default: ""
-    Description: ACM certificate ARN for the custom domain. Required if DomainName is set.
+    Description: ACM certificate ARN for custom domain
 
 Conditions:
   HasCustomDomain: !Not [!Equals [!Ref DomainName, ""]]
 
 Resources:
-  # --- API Gateway ---
+  # --- REST API (v1) with IAM auth on management endpoints ---
   EksDxApi:
-    Type: AWS::Serverless::HttpApi
+    Type: AWS::Serverless::Api
     Properties:
-      StageName: $default
+      StageName: prod
       Auth:
-        DefaultAuthorizer: NONE
-      AccessLogSettings:
+        DefaultAuthorizer: AWS_IAM
+      AccessLogSetting:
         DestinationArn: !GetAtt ApiAccessLogGroup.Arn
-        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","method":"$context.httpMethod","path":"$context.path","status":"$context.status","latency":"$context.responseLatency"}'
+      MethodSettings:
+        - HttpMethod: "*"
+          ResourcePath: "/*"
+          LoggingLevel: INFO
 
   # --- Custom Domain ---
   ApiDomainName:
-    Type: AWS::ApiGatewayV2::DomainName
+    Type: AWS::ApiGateway::DomainName
     Condition: HasCustomDomain
     Properties:
       DomainName: !Ref DomainName
-      DomainNameConfigurations:
-        - CertificateArn: !Ref CertificateArn
-          EndpointType: REGIONAL
+      RegionalCertificateArn: !Ref CertificateArn
+      EndpointConfiguration:
+        Types: [REGIONAL]
 
   ApiMapping:
-    Type: AWS::ApiGatewayV2::ApiMapping
+    Type: AWS::ApiGateway::BasePathMapping
     Condition: HasCustomDomain
-    DependsOn: EksDxApi
+    DependsOn: EksDxApiprodStage
     Properties:
-      ApiId: !Ref EksDxApi
       DomainName: !Ref DomainName
-      Stage: $default
+      RestApiId: !Ref EksDxApi
+      Stage: prod
 
   # --- Lambda Function ---
   EksDxFunction:
     Type: AWS::Serverless::Function
     Properties:
       Handler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
-      Runtime: java21
       CodeUri: eks-dx-lambda/target/function.zip
       AutoPublishAlias: live
+      SnapStart:
+        ApplyOn: PublishedVersions
       Environment:
         Variables:
           EKS_DX_CLUSTERS_TABLE: !Ref ClustersTable
@@ -75,58 +78,75 @@ Resources:
             Action: [sts:AssumeRole, sts:TagSession]
             Resource: "arn:aws:iam::*:role/eks-dx-pod-*"
       Events:
-        # Credential exchange — open (token-authenticated)
+        # Credential exchange — NO auth (token is in the body, validated by Lambda)
         Assets:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref EksDxApi
+            RestApiId: !Ref EksDxApi
             Path: /clusters/{clusterName}/assets
             Method: POST
-        # Management endpoints — IAM-authenticated
+            Auth:
+              Authorizer: NONE
+        # Management endpoints — IAM auth (default)
         ClustersPost:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref EksDxApi
+            RestApiId: !Ref EksDxApi
             Path: /clusters
             Method: POST
-            Auth:
-              Authorizer: AWS_IAM
         ClustersGet:
-          Type: HttpApi
+          Type: Api
           Properties:
-            ApiId: !Ref EksDxApi
+            RestApiId: !Ref EksDxApi
             Path: /clusters
             Method: GET
-            Auth:
-              Authorizer: AWS_IAM
-        ClusterByName:
-          Type: HttpApi
+        ClusterGet:
+          Type: Api
           Properties:
-            ApiId: !Ref EksDxApi
+            RestApiId: !Ref EksDxApi
             Path: /clusters/{name}
-            Method: ANY
-            Auth:
-              Authorizer: AWS_IAM
-        ClusterJwks:
-          Type: HttpApi
+            Method: GET
+        ClusterDelete:
+          Type: Api
           Properties:
-            ApiId: !Ref EksDxApi
+            RestApiId: !Ref EksDxApi
+            Path: /clusters/{name}
+            Method: DELETE
+        ClusterJwks:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EksDxApi
             Path: /clusters/{name}/jwks
             Method: PUT
-            Auth:
-              Authorizer: AWS_IAM
-        AssociationsAny:
-          Type: HttpApi
+        # Association endpoints — no IAM auth (webhook uses SA token)
+        AssociationsGet:
+          Type: Api
           Properties:
-            ApiId: !Ref EksDxApi
+            RestApiId: !Ref EksDxApi
             Path: /clusters/{name}/pod-identity-associations
-            Method: ANY
-        AssociationById:
-          Type: HttpApi
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        AssociationsPost:
+          Type: Api
           Properties:
-            ApiId: !Ref EksDxApi
+            RestApiId: !Ref EksDxApi
+            Path: /clusters/{name}/pod-identity-associations
+            Method: POST
+        AssociationGet:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EksDxApi
             Path: /clusters/{name}/pod-identity-associations/{id}
-            Method: ANY
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        AssociationDelete:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EksDxApi
+            Path: /clusters/{name}/pod-identity-associations/{id}
+            Method: DELETE
 
   # --- DynamoDB Tables ---
   ClustersTable:
@@ -156,7 +176,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: eks-dx-lambda-errors
-      AlarmDescription: EKS-DX Lambda function errors
+      AlarmDescription: EKS-DX Lambda errors > 5 in 5 minutes
       Namespace: AWS/Lambda
       MetricName: Errors
       Dimensions:
@@ -173,7 +193,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: eks-dx-lambda-throttles
-      AlarmDescription: EKS-DX Lambda function throttles
+      AlarmDescription: EKS-DX Lambda throttles
       Namespace: AWS/Lambda
       MetricName: Throttles
       Dimensions:
@@ -207,7 +227,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: eks-dx-dynamodb-throttles
-      AlarmDescription: DynamoDB read/write throttling
+      AlarmDescription: DynamoDB throttled requests
       Namespace: AWS/DynamoDB
       MetricName: ThrottledRequests
       Dimensions:
@@ -230,7 +250,7 @@ Resources:
 Outputs:
   Endpoint:
     Description: EKS-DX API endpoint
-    Value: !Sub "https://${EksDxApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Value: !Sub "https://${EksDxApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
   CustomEndpoint:
     Condition: HasCustomDomain
     Description: Custom domain endpoint
@@ -239,3 +259,7 @@ Outputs:
     Value: !Ref ClustersTable
   AssociationsTableName:
     Value: !Ref AssociationsTable
+  FunctionName:
+    Value: !Ref EksDxFunction
+  FunctionArn:
+    Value: !GetAtt EksDxFunction.Arn
