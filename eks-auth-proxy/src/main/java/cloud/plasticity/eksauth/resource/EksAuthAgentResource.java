@@ -1,11 +1,10 @@
 package cloud.plasticity.eksauth.resource;
 
+import cloud.plasticity.eksauth.service.LambdaForwardingService;
 import cloud.plasticity.eksauth.service.TokenValidationService;
-import cloud.plasticity.eksauth.service.PodIdentityAssociationService;
-import cloud.plasticity.eksauth.service.AwsCredentialService;
-import software.amazon.awssdk.services.sts.model.Credentials;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
@@ -15,13 +14,9 @@ import org.jboss.logging.Logger;
 import java.util.Map;
 
 /**
- * AWS-API-compatible endpoint that the EKS Pod Identity Agent calls via its
- * {@code --endpoint} flag. Matches the real EKS Auth Service wire format so
- * the agent's AWS SDK client works unmodified.
- *
- * <p>Real API: {@code POST /clusters/{clusterName}/assets}
- * <br>Request body: {@code {"token":"<jwt>"}}
- * <br>Response body: camelCase JSON matching the eksauth Smithy model.
+ * AWS-API-compatible endpoint that the EKS Pod Identity Agent calls.
+ * Validates the token locally via TokenReview (fast-fail), then forwards
+ * the full credential exchange to the EKS-DX Lambda service.
  */
 @Path("/clusters")
 @Produces(MediaType.APPLICATION_JSON)
@@ -29,48 +24,14 @@ import java.util.Map;
 public class EksAuthAgentResource {
 
     private static final Logger LOG = Logger.getLogger(EksAuthAgentResource.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Inject TokenValidationService tokenValidationService;
-    @Inject PodIdentityAssociationService podIdentityAssociationService;
-    @Inject AwsCredentialService awsCredentialService;
-
-    // --- request / response DTOs matching the AWS wire format ---
+    @Inject LambdaForwardingService forwardingService;
 
     public static class AgentRequest {
         @JsonProperty("token") public String token;
     }
-
-    public static class AgentResponse {
-        @JsonProperty("credentials")              public CredentialsDto credentials;
-        @JsonProperty("assumedRoleUser")           public AssumedRoleUserDto assumedRoleUser;
-        @JsonProperty("podIdentityAssociation")    public AssociationDto podIdentityAssociation;
-        @JsonProperty("subject")                   public SubjectDto subject;
-        @JsonProperty("audience")                  public String audience;
-    }
-
-    public static class CredentialsDto {
-        @JsonProperty("accessKeyId")     public String accessKeyId;
-        @JsonProperty("secretAccessKey") public String secretAccessKey;
-        @JsonProperty("sessionToken")    public String sessionToken;
-        @JsonProperty("expiration")      public long expiration; // epoch seconds
-    }
-
-    public static class AssumedRoleUserDto {
-        @JsonProperty("arn")           public String arn;
-        @JsonProperty("assumeRoleId")  public String assumeRoleId;
-    }
-
-    public static class AssociationDto {
-        @JsonProperty("associationArn") public String associationArn;
-        @JsonProperty("associationId")  public String associationId;
-    }
-
-    public static class SubjectDto {
-        @JsonProperty("namespace")      public String namespace;
-        @JsonProperty("serviceAccount") public String serviceAccount;
-    }
-
-    // --- endpoint ---
 
     @POST
     @Path("/{clusterName}/assets")
@@ -84,42 +45,18 @@ public class EksAuthAgentResource {
 
             LOG.infof("Agent API: AssumeRoleForPodIdentity cluster=%s", clusterName);
 
-            TokenValidationService.TokenClaims claims =
-                    tokenValidationService.validateToken(request.token, clusterName);
+            // 1. Fast-fail: validate token via Kubernetes TokenReview
+            tokenValidationService.validateToken(request.token, clusterName);
 
-            String roleArn = podIdentityAssociationService.getRoleArnForServiceAccount(
-                    clusterName, claims.getNamespace(), claims.getServiceAccount());
+            // 2. Forward to Lambda for full credential exchange
+            String body = MAPPER.writeValueAsString(Map.of("token", request.token));
+            LambdaForwardingService.ForwardResult result =
+                forwardingService.forward(clusterName, body);
 
-            String sessionName = awsCredentialService.generateSessionName(
-                    claims.getNamespace(), claims.getServiceAccount());
-
-            Credentials creds = awsCredentialService.assumeRole(
-                    roleArn, sessionName, clusterName, claims.getSessionTags());
-
-            AgentResponse resp = new AgentResponse();
-
-            resp.credentials = new CredentialsDto();
-            resp.credentials.accessKeyId     = creds.accessKeyId();
-            resp.credentials.secretAccessKey  = creds.secretAccessKey();
-            resp.credentials.sessionToken     = creds.sessionToken();
-            resp.credentials.expiration       = creds.expiration().getEpochSecond();
-
-            resp.assumedRoleUser = new AssumedRoleUserDto();
-            resp.assumedRoleUser.arn          = roleArn;
-            resp.assumedRoleUser.assumeRoleId = sessionName;
-
-            resp.podIdentityAssociation = new AssociationDto();
-            resp.podIdentityAssociation.associationArn = roleArn;
-            resp.podIdentityAssociation.associationId  = podIdentityAssociationService
-                    .generateAssociationId(clusterName, claims.getNamespace(), claims.getServiceAccount());
-
-            resp.subject = new SubjectDto();
-            resp.subject.namespace      = claims.getNamespace();
-            resp.subject.serviceAccount = claims.getServiceAccount();
-
-            resp.audience = TokenValidationService.EKS_POD_IDENTITY_AUDIENCE;
-
-            return Response.ok(resp).build();
+            return Response.status(result.statusCode())
+                .entity(result.body())
+                .type(MediaType.APPLICATION_JSON)
+                .build();
 
         } catch (SecurityException e) {
             return error(403, "AccessDeniedException", e.getMessage());
