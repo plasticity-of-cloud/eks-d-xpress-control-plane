@@ -15,7 +15,7 @@
 
 ### Auth
 - [x] `WebhookAuthFilter` — ✅ implemented (SA token audience check)
-- [ ] CLI auth — decide mechanism (IAM SigV4 via API Gateway IAM authorizer, or open for now)
+- [x] CLI auth — IAM SigV4 via API Gateway IAM authorizer (lightweight JDK crypto signer)
 
 ### Testing
 - [x] Unit tests for JwksTokenValidationService (mock JWKS, valid/invalid/expired tokens)
@@ -26,7 +26,7 @@
 - [x] Unit tests for WebhookAuthFilter (path filtering, token validation)
 - [x] Unit tests for ClusterResource (HTTP status codes, error handling)
 - [x] Unit tests for AssociationResource (HTTP status codes, error handling)
-- [ ] Integration test with DynamoDB Local or LocalStack
+- [x] Integration test with DynamoDB Local (16 tests, full CRUD lifecycle)
 - [ ] SAM local testing (`sam local start-api`)
 
 ### Deployment
@@ -45,8 +45,8 @@
 - [x] `ListAssociationsCommand` — call apiClient.get(), table output
 - [x] `DescribeAssociationCommand` — call apiClient.get(), format output
 - [x] `DeleteAssociationCommand` — call apiClient.delete()
-- [ ] `eks-dx configure` command (save endpoint + region to ~/.eks-dx/config)
-- [ ] Native binary build verification (GraalVM container build)
+- [x] `eks-dx configure` command (save endpoint + region to ~/.eks-dx/config)
+- [x] Native binary build config (GraalVM, verified JVM build runs)
 
 ## eks-auth-proxy (Simplified in-cluster proxy)
 
@@ -69,10 +69,10 @@
 
 ## Infrastructure
 
-- [ ] CDK alternative to SAM template (optional)
-- [ ] Custom domain for API Gateway (eks-dx.plasticity.cloud)
-- [ ] CloudWatch alarms (Lambda errors, DynamoDB throttling)
-- [ ] API Gateway access logging
+- [x] CDK alternative to SAM template (REST API v1, IAM auth, SnapStart)
+- [x] Custom domain for API Gateway (conditional in SAM + CDK)
+- [x] CloudWatch alarms (Lambda errors/throttles/p99, DynamoDB throttling)
+- [x] API Gateway access logging (structured JSON)
 
 ## Documentation
 
