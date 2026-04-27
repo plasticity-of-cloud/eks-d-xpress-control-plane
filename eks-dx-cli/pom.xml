@@ -13,7 +13,6 @@
 
   <properties>
     <skipITs>true</skipITs>
-    <fabric8.version>6.13.4</fabric8.version>
   </properties>
 
   <dependencyManagement>
@@ -43,7 +42,6 @@
     <dependency>
       <groupId>io.fabric8</groupId>
       <artifactId>kubernetes-client</artifactId>
-      <version>${fabric8.version}</version>
     </dependency>
 
     <!-- JSON parsing -->
