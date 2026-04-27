@@ -74,13 +74,6 @@
       </exclusions>
     </dependency>
 
-    <!-- Shared CRD model -->
-    <dependency>
-      <groupId>cloud.plasticity</groupId>
-      <artifactId>eks-pod-identity-crd</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-
     <!-- Test -->
     <dependency>
       <groupId>io.quarkus</groupId>

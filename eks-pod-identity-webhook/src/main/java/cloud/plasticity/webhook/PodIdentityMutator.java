@@ -4,7 +4,6 @@ import io.fabric8.kubernetes.api.model.*;
 import io.javaoperatorsdk.webhook.admission.AdmissionController;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
@@ -26,10 +25,7 @@ public class PodIdentityMutator {
     static final String TOKEN_AUDIENCE = "pods.eks.amazonaws.com";
 
     @Inject
-    PodIdentityAssociationLookup associationLookup;
-
-    @ConfigProperty(name = "eks.cluster-name")
-    String clusterName;
+    LambdaAssociationLookup associationLookup;
 
     public AdmissionController<Pod> controller() {
         return new AdmissionController<>((pod, operation) -> {
@@ -37,7 +33,7 @@ public class PodIdentityMutator {
             String serviceAccount = pod.getSpec().getServiceAccountName();
             if (serviceAccount == null || serviceAccount.isBlank()) serviceAccount = "default";
 
-            if (!associationLookup.hasAssociation(clusterName, namespace, serviceAccount)) {
+            if (!associationLookup.hasAssociation(namespace, serviceAccount)) {
                 LOG.debugf("No Pod Identity association for %s/%s, skipping", namespace, serviceAccount);
                 return pod;
             }
