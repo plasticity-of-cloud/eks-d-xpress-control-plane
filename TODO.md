@@ -3,24 +3,29 @@
 ## eks-dx-lambda (Lambda service)
 
 ### Service implementations
-- [ ] `DynamoDbClusterService` — registerCluster, describeCluster, listClusters, updateJwks, deregisterCluster
-- [ ] `DynamoDbAssociationService` — createAssociation, listAssociations, describeAssociation, deleteAssociation
-- [ ] `JwksTokenValidationService` — ✅ implemented (jose4j, DynamoDB-backed JWKS cache)
-- [ ] `AwsCredentialService` — ✅ implemented (STS AssumeRole + session tags)
+- [x] `DynamoDbClusterService` — registerCluster, describeCluster, listClusters, updateJwks, deregisterCluster
+- [x] `DynamoDbAssociationService` — createAssociation, listAssociations, describeAssociation, deleteAssociation
+- [x] `JwksTokenValidationService` — ✅ implemented (jose4j, DynamoDB-backed JWKS cache)
+- [x] `AwsCredentialService` — ✅ implemented (STS AssumeRole + session tags)
 
 ### Resource implementations
-- [ ] `ClusterResource` — wire up DynamoDbClusterService, request/response DTOs
-- [ ] `AssociationResource` — wire up DynamoDbAssociationService, request/response DTOs, generate associationId
-- [ ] `EksAuthResource` — ✅ implemented (credential exchange endpoint)
+- [x] `ClusterResource` — wire up DynamoDbClusterService, request/response DTOs
+- [x] `AssociationResource` — wire up DynamoDbAssociationService, request/response DTOs, generate associationId
+- [x] `EksAuthResource` — ✅ implemented (credential exchange endpoint)
 
 ### Auth
-- [ ] `WebhookAuthFilter` — ✅ implemented (SA token audience check)
+- [x] `WebhookAuthFilter` — ✅ implemented (SA token audience check)
 - [ ] CLI auth — decide mechanism (IAM SigV4 via API Gateway IAM authorizer, or open for now)
 
 ### Testing
-- [ ] Unit tests for JwksTokenValidationService (mock JWKS, valid/invalid/expired tokens)
-- [ ] Unit tests for DynamoDbAssociationService (mock DynamoDB)
-- [ ] Unit tests for DynamoDbClusterService (mock DynamoDB)
+- [x] Unit tests for JwksTokenValidationService (mock JWKS, valid/invalid/expired tokens)
+- [x] Unit tests for DynamoDbAssociationService (mock DynamoDB)
+- [x] Unit tests for DynamoDbClusterService (mock DynamoDB)
+- [x] Unit tests for AwsCredentialService (mock STS)
+- [x] Unit tests for EksAuthResource (mock services, full flow)
+- [x] Unit tests for WebhookAuthFilter (path filtering, token validation)
+- [x] Unit tests for ClusterResource (HTTP status codes, error handling)
+- [x] Unit tests for AssociationResource (HTTP status codes, error handling)
 - [ ] Integration test with DynamoDB Local or LocalStack
 - [ ] SAM local testing (`sam local start-api`)
 
