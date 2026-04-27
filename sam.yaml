@@ -267,3 +267,6 @@ Outputs:
     Value: !Ref EksDxFunction
   FunctionArn:
     Value: !GetAtt EksDxFunction.Arn
+  CliPolicyResource:
+    Description: IAM resource ARN for CLI execute-api:Invoke policy
+    Value: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${EksDxApi}/prod/*/*"

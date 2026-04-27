@@ -74,6 +74,21 @@ Outputs:
 
 ## Step 2: Configure the CLI
 
+The CLI user/role needs `execute-api:Invoke` permission on the API Gateway:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "execute-api:Invoke",
+    "Resource": "arn:aws:execute-api:REGION:ACCOUNT_ID:API_ID/prod/*/*"
+  }]
+}
+```
+
+The API ID is in the endpoint URL (`https://API_ID.execute-api.REGION.amazonaws.com/prod`).
+
 ```bash
 # Build the CLI
 mvn -pl eks-dx-cli package -DskipTests
@@ -81,7 +96,7 @@ CLI="java -jar eks-dx-cli/target/eks-dx-cli-*-runner.jar"
 
 # Configure endpoint
 $CLI configure \
-  --endpoint https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com \
+  --endpoint https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/prod \
   --region us-east-1
 ```
 
