@@ -6,6 +6,9 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.iam.IamClient;
+import software.amazon.awssdk.services.iam.model.GetRoleRequest;
+import software.amazon.awssdk.services.iam.model.NoSuchEntityException;
 
 import java.time.Instant;
 import java.util.*;
@@ -20,6 +23,8 @@ public class DynamoDbAssociationService {
     private static final Logger LOG = Logger.getLogger(DynamoDbAssociationService.class);
 
     @Inject DynamoDbClient dynamoDb;
+
+    @Inject IamClient iamClient;
 
     @ConfigProperty(name = "eks-dx.associations-table")
     String tableName;
@@ -54,6 +59,10 @@ public class DynamoDbAssociationService {
         if (roleArn == null || roleArn.isBlank()) {
             throw new IllegalArgumentException("roleArn is required");
         }
+
+        // Validate IAM role exists (matches real EKS CreatePodIdentityAssociation behavior)
+        // See: https://docs.aws.amazon.com/eks/latest/APIReference/API_CreatePodIdentityAssociation.html
+        validateRoleExists(roleArn);
 
         // Check for duplicate
         if (getRoleArn(clusterName, namespace, serviceAccount) != null) {
@@ -178,5 +187,26 @@ public class DynamoDbAssociationService {
             }
         }
         return result;
+    }
+
+    /**
+     * Validates that the IAM role exists. Matches real EKS behavior where
+     * CreatePodIdentityAssociation returns InvalidParameterException if the
+     * role does not exist.
+     *
+     * @see <a href="https://docs.aws.amazon.com/eks/latest/APIReference/API_CreatePodIdentityAssociation.html">
+     *      CreatePodIdentityAssociation API</a>
+     */
+    void validateRoleExists(String roleArn) {
+        // Extract role name from ARN: arn:aws:iam::123456789012:role/path/role-name
+        String roleName = roleArn.contains("/")
+            ? roleArn.substring(roleArn.lastIndexOf("/") + 1)
+            : roleArn;
+
+        try {
+            iamClient.getRole(GetRoleRequest.builder().roleName(roleName).build());
+        } catch (NoSuchEntityException e) {
+            throw new IllegalArgumentException("Role provided in the request does not exist: " + roleArn);
+        }
     }
 }

@@ -8,6 +8,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.services.iam.IamClient;
+import software.amazon.awssdk.services.iam.model.GetRoleRequest;
+import software.amazon.awssdk.services.iam.model.GetRoleResponse;
+import software.amazon.awssdk.services.iam.model.NoSuchEntityException;
+import software.amazon.awssdk.services.iam.model.Role;
 
 import java.util.List;
 import java.util.Map;
@@ -15,12 +20,14 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-
 @ExtendWith(MockitoExtension.class)
 class DynamoDbAssociationServiceTest {
 
     @Mock
     DynamoDbClient dynamoDb;
+
+    @Mock
+    IamClient iamClient;
 
     DynamoDbAssociationService service;
 
@@ -28,6 +35,7 @@ class DynamoDbAssociationServiceTest {
     void setUp() {
         service = new DynamoDbAssociationService();
         service.dynamoDb = dynamoDb;
+        service.iamClient = iamClient;
         service.tableName = "test-associations";
     }
 
@@ -90,6 +98,7 @@ class DynamoDbAssociationServiceTest {
     @Test
     void createAssociation_succeeds_whenNoExistingAssociation() {
         mockGetItemEmpty();
+        mockRoleExists();
         when(dynamoDb.putItem(any(PutItemRequest.class)))
             .thenReturn(PutItemResponse.builder().build());
 
@@ -107,6 +116,7 @@ class DynamoDbAssociationServiceTest {
     @Test
     void createAssociation_storesCorrectItem() {
         mockGetItemEmpty();
+        mockRoleExists();
         when(dynamoDb.putItem(any(PutItemRequest.class)))
             .thenReturn(PutItemResponse.builder().build());
 
@@ -317,6 +327,56 @@ class DynamoDbAssociationServiceTest {
         assertTrue(ex.getMessage().contains("Association not found"));
     }
 
+    // --- role validation (EPIA parity with real EKS) ---
+
+    @Test
+    void createAssociation_throws_whenRoleDoesNotExist() {
+        when(iamClient.getRole(any(GetRoleRequest.class)))
+            .thenThrow(NoSuchEntityException.builder()
+                .message("Role not found").build());
+
+        var ex = assertThrows(IllegalArgumentException.class,
+            () -> service.createAssociation("cluster", "default", "my-sa",
+                "arn:aws:iam::123456789012:role/nonexistent-role"));
+        assertTrue(ex.getMessage().contains("Role provided in the request does not exist"));
+    }
+
+    @Test
+    void createAssociation_validatesRoleBeforeDuplicateCheck() {
+        // Role validation should happen before the DynamoDB duplicate check
+        when(iamClient.getRole(any(GetRoleRequest.class)))
+            .thenThrow(NoSuchEntityException.builder()
+                .message("Role not found").build());
+
+        assertThrows(IllegalArgumentException.class,
+            () -> service.createAssociation("cluster", "default", "my-sa",
+                "arn:aws:iam::123456789012:role/missing"));
+        // DynamoDB should never be called if role doesn't exist
+        verify(dynamoDb, never()).getItem(any(GetItemRequest.class));
+    }
+
+    @Test
+    void validateRoleExists_extractsRoleNameFromArn() {
+        mockRoleExists();
+
+        service.validateRoleExists("arn:aws:iam::123456789012:role/my-role");
+
+        ArgumentCaptor<GetRoleRequest> captor = ArgumentCaptor.forClass(GetRoleRequest.class);
+        verify(iamClient).getRole(captor.capture());
+        assertEquals("my-role", captor.getValue().roleName());
+    }
+
+    @Test
+    void validateRoleExists_handlesPathInArn() {
+        mockRoleExists();
+
+        service.validateRoleExists("arn:aws:iam::123456789012:role/service-role/my-role");
+
+        ArgumentCaptor<GetRoleRequest> captor = ArgumentCaptor.forClass(GetRoleRequest.class);
+        verify(iamClient).getRole(captor.capture());
+        assertEquals("my-role", captor.getValue().roleName());
+    }
+
     // --- helpers ---
 
     private void mockGetItem(Map<String, AttributeValue> item) {
@@ -327,5 +387,12 @@ class DynamoDbAssociationServiceTest {
     private void mockGetItemEmpty() {
         when(dynamoDb.getItem(any(GetItemRequest.class)))
             .thenReturn(GetItemResponse.builder().build());
+    }
+
+    private void mockRoleExists() {
+        lenient().when(iamClient.getRole(any(GetRoleRequest.class)))
+            .thenReturn(GetRoleResponse.builder()
+                .role(Role.builder().roleName("test-role").arn("arn:aws:iam::123456789012:role/test-role").build())
+                .build());
     }
 }

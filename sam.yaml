@@ -77,6 +77,10 @@ Resources:
             Effect: Allow
             Action: [sts:AssumeRole, sts:TagSession]
             Resource: "arn:aws:iam::*:role/eks-dx-pod-*"
+        - Statement:
+            Effect: Allow
+            Action: iam:GetRole
+            Resource: "arn:aws:iam::*:role/*"
       Events:
         # Credential exchange — NO auth (token is in the body, validated by Lambda)
         Assets:

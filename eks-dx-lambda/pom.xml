@@ -71,6 +71,12 @@
       <artifactId>quarkus-amazon-sts</artifactId>
     </dependency>
 
+    <!-- IAM (role validation for EPIA creation) -->
+    <dependency>
+      <groupId>io.quarkiverse.amazonservices</groupId>
+      <artifactId>quarkus-amazon-iam</artifactId>
+    </dependency>
+
     <!-- JWT / JWKS validation -->
     <dependency>
       <groupId>io.quarkus</groupId>
