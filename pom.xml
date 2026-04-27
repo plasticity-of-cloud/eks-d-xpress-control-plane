@@ -16,6 +16,7 @@
     <module>eks-pod-identity-webhook</module>
     <module>eks-dx-lambda</module>
     <module>eks-dx-cli</module>
+    <module>infra</module>
   </modules>
 
   <properties>
