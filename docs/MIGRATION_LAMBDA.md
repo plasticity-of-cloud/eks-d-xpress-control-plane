@@ -1,43 +1,37 @@
-# Migration: eks-auth-proxy → Lambda (Quarkus)
+# Migration: eks-auth-proxy → Two-Tier Lambda Architecture
 
 ## Scope
 
-Migrate the `eks-auth-proxy` module from a Kubernetes Deployment to an AWS Lambda function behind API Gateway, using Quarkus Amazon Lambda REST extension. The Lambda replaces the in-cluster proxy as the central auth service.
+Split the current monolithic in-cluster proxy into:
+1. **eks-dx-lambda** — Lambda behind API Gateway: JWKS token validation, DynamoDB association lookup, STS AssumeRole, cluster + association management API
+2. **eks-auth-proxy** (simplified) — in-cluster: Kubernetes TokenReview (fast-fail) + forward raw token to Lambda
 
 ## What Changes
 
-| Aspect | Current (in-cluster) | Target (Lambda) |
-|--------|---------------------|-----------------|
-| Runtime | Kubernetes Deployment (JVM) | Lambda (SnapStart for fast cold start) |
-| HTTP layer | Quarkus REST (Vert.x) | API Gateway → `quarkus-amazon-lambda-rest` |
-| Token validation | Kubernetes TokenReview API | Direct JWT/JWKS validation (JWKS from DynamoDB) |
-| Association lookup | CRD via Fabric8 client | DynamoDB GetItem |
-| STS call | Same | Same (STS AssumeRole + TagSession) |
-| Cluster metadata | Not needed | DynamoDB `eks-dx-clusters` table |
-| Endpoint | `http://eks-auth-proxy.kube-system:8080` | `https://<api-gw-id>.execute-api.<region>.amazonaws.com` |
+| Aspect | Current | Target |
+|--------|---------|--------|
+| Token validation | Kubernetes TokenReview only | Proxy: TokenReview (fast-fail) + Lambda: JWKS validation (authoritative) |
+| Association storage | CRD (Fabric8 client) | DynamoDB |
+| STS AssumeRole | In-cluster (needs broker IAM role) | Lambda execution role (no IAM on node) |
+| Webhook association check | CRD lookup (Fabric8) | Projected SA token → Lambda API |
+| CLI | `eks-d-auth-cli` (CRD CRUD) | `eks-dx` (Lambda API via JDK HttpClient) |
+| Auth: proxy → Lambda | N/A (local) | Raw pod SA token (audience: `pods.eks.amazonaws.com`) |
+| Auth: webhook → Lambda | N/A (local CRD) | Projected SA token (audience: `eks-dx.plasticity.cloud`) |
+| Cluster registration | Not needed | `eks-dx create cluster` (sends JWKS to Lambda) |
 
 ## What Stays the Same
 
-- `POST /clusters/{clusterName}/assets` endpoint (wire-compatible with EKS Pod Identity Agent)
-- `AwsCredentialService` (STS AssumeRole with session tags)
-- Response format (camelCase JSON matching AWS Smithy model)
+- `POST /clusters/{clusterName}/assets` wire format (agent-compatible)
+- `AwsCredentialService` (STS AssumeRole + session tags) — moves to Lambda
 - `pods.eks.amazonaws.com` audience requirement
+- Response JSON format (camelCase, Smithy model)
+- EKS Pod Identity Agent (unchanged, just `--endpoint` points to proxy)
 
-## Quarkus Lambda Setup
+## New Module: eks-dx-lambda
 
 ### Dependencies
 
-Replace Kubernetes-specific dependencies with Lambda + DynamoDB:
-
 ```xml
-<!-- Remove -->
-<dependency>quarkus-kubernetes-client</dependency>
-<dependency>quarkus-kubernetes</dependency>
-<dependency>quarkus-helm</dependency>
-<dependency>quarkus-container-image-jib</dependency>
-<!-- eks-pod-identity-crd module dependency -->
-
-<!-- Add -->
 <dependency>
   <groupId>io.quarkus</groupId>
   <artifactId>quarkus-amazon-lambda-rest</artifactId>
@@ -50,158 +44,224 @@ Replace Kubernetes-specific dependencies with Lambda + DynamoDB:
   <groupId>io.quarkus</groupId>
   <artifactId>quarkus-smallrye-jwt</artifactId>
 </dependency>
+<dependency>
+  <groupId>software.amazon.awssdk</groupId>
+  <artifactId>sts</artifactId>
+</dependency>
 ```
 
-`quarkus-amazon-lambda-rest` automatically wraps JAX-RS endpoints as Lambda handlers — no code changes to `EksAuthAgentResource`.
+### Endpoints
 
-### Build Output
+```
+# Credential exchange (called by in-cluster proxy)
+POST /clusters/{clusterName}/assets
+  Auth: raw pod SA token (audience: pods.eks.amazonaws.com)
 
-```bash
-# JVM Lambda (with SnapStart)
-mvn -pl eks-auth-proxy package
+# Association check (called by webhook)
+GET /clusters/{clusterName}/pod-identity-associations
+  Auth: webhook SA token (audience: eks-dx.plasticity.cloud)
 
-# Produces:
-#   target/function.zip              → Lambda deployment package
-#   target/sam.jvm.yaml              → SAM template
-#   target/manage.sh                 → Helper script for create/update/delete
+# Cluster management (called by eks-dx CLI)
+POST   /clusters                                    (register)
+GET    /clusters/{name}                             (describe)
+GET    /clusters                                    (list)
+PUT    /clusters/{name}/jwks                        (refresh JWKS)
+DELETE /clusters/{name}                             (deregister)
 
-# Native Lambda (fastest cold start, ~200ms)
-mvn -pl eks-auth-proxy package -Pnative -Dquarkus.native.container-build=true
-
-# Produces:
-#   target/function.zip              → Native Lambda package
-#   target/sam.native.yaml           → SAM template
+# Association management (called by eks-dx CLI)
+POST   /clusters/{name}/pod-identity-associations              (create)
+GET    /clusters/{name}/pod-identity-associations              (list)
+GET    /clusters/{name}/pod-identity-associations/{id}         (describe)
+DELETE /clusters/{name}/pod-identity-associations/{id}         (delete)
 ```
 
-### application.properties Changes
+### Service Layer
 
-```properties
-# Remove
-quarkus.kubernetes.*
-quarkus.helm.*
-quarkus.container-image.*
-quarkus.http.ssl.*
-eks.pod-identity.configmap.*
-
-# Add
-quarkus.lambda.handler=rest-handler
-
-# DynamoDB tables
-eks-dx.clusters-table=eks-dx-clusters
-eks-dx.associations-table=eks-dx-associations
-
-# JWT validation (replaces TokenReview)
-# JWKS is loaded from DynamoDB at runtime, not from a static URL
-mp.jwt.verify.audiences=pods.eks.amazonaws.com
-
-# SnapStart (primes the Lambda during snapshot)
-quarkus.snapstart.enable=true
-
-# STS (unchanged)
-aws.sts.session-duration=PT1H
+```
+cloud.plasticity.eksdx.lambda/
+  resource/
+    EksAuthResource.java              # POST /clusters/{name}/assets
+    ClusterResource.java              # Cluster CRUD
+    AssociationResource.java          # Association CRUD
+  service/
+    JwksTokenValidationService.java   # JWT validation via JWKS from DynamoDB
+    DynamoDbAssociationService.java   # Association lookup
+    DynamoDbClusterService.java       # Cluster registration + JWKS storage
+    AwsCredentialService.java         # STS AssumeRole (moved from proxy)
+  auth/
+    TokenAudienceFilter.java          # Validates audience per endpoint
 ```
 
-## Service Layer Changes
-
-### TokenValidationService → JwksTokenValidationService
-
-Replace Kubernetes TokenReview with direct JWT validation:
+### Token Validation Flow
 
 ```java
-@ApplicationScoped
-public class JwksTokenValidationService {
+public TokenClaims validateToken(String token, String clusterName) {
+    // 1. Read cluster's JWKS from DynamoDB (cached in memory, 5min TTL)
+    JsonWebKeySet jwks = clusterService.getJwks(clusterName);
 
-    @Inject
-    DynamoDbClient dynamoDb;
+    // 2. Validate JWT: signature, audience, expiry, issuer
+    JwtConsumer consumer = new JwtConsumerBuilder()
+        .setVerificationKeyResolver(new JwksVerificationKeyResolver(jwks.getJsonWebKeys()))
+        .setExpectedAudience("pods.eks.amazonaws.com")
+        .setRequireExpirationTime()
+        .build();
 
-    @ConfigProperty(name = "eks-dx.clusters-table")
-    String clustersTable;
+    JwtClaims claims = consumer.processToClaims(token);
 
-    // Cache JWKS per cluster, refresh every 5 min
-    private final Map<String, CachedJwks> jwksCache = new ConcurrentHashMap<>();
-
-    public TokenClaims validateToken(String token, String clusterName) {
-        JsonWebKeySet jwks = getJwks(clusterName);
-
-        // Verify signature, audience, expiry, issuer
-        JwtConsumer consumer = new JwtConsumerBuilder()
-            .setVerificationKeyResolver(new JwksVerificationKeyResolver(jwks.getJsonWebKeys()))
-            .setExpectedAudience("pods.eks.amazonaws.com")
-            .setRequireExpirationTime()
-            .build();
-
-        JwtClaims claims = consumer.processToClaims(token);
-
-        String username = claims.getSubject(); // system:serviceaccount:<ns>:<sa>
-        String[] parts = username.split(":");
-        // ... extract namespace, serviceAccount, podName, podUid
-        return new TokenClaims(...);
-    }
-
-    private JsonWebKeySet getJwks(String clusterName) {
-        // Check cache (5 min TTL)
-        // On miss: read from DynamoDB eks-dx-clusters table
-    }
+    // 3. Extract claims
+    String subject = claims.getSubject(); // system:serviceaccount:<ns>:<sa>
+    // ... parse namespace, serviceAccount
 }
 ```
 
-### PodIdentityAssociationService → DynamoDbAssociationService
-
-Replace CRD lookup with DynamoDB:
+### Audience-Based Auth Filter
 
 ```java
-@ApplicationScoped
-public class DynamoDbAssociationService {
+@Provider
+public class TokenAudienceFilter implements ContainerRequestFilter {
 
-    @Inject
-    DynamoDbClient dynamoDb;
+    @Override
+    public void filter(ContainerRequestContext ctx) {
+        String path = ctx.getUriInfo().getPath();
 
-    @ConfigProperty(name = "eks-dx.associations-table")
-    String tableName;
-
-    public String getRoleArnForServiceAccount(String clusterName, String namespace, String serviceAccount) {
-        GetItemResponse response = dynamoDb.getItem(GetItemRequest.builder()
-            .tableName(tableName)
-            .key(Map.of(
-                "PK", AttributeValue.fromS("CLUSTER#" + clusterName),
-                "SK", AttributeValue.fromS(namespace + "#" + serviceAccount)))
-            .build());
-
-        if (response.hasItem()) {
-            return response.item().get("roleArn").s();
+        if (path.endsWith("/assets")) {
+            // Credential exchange — token is in the request body, validated by EksAuthResource
+            return;
         }
 
-        // Generated default fallback
-        String accountId = Optional.ofNullable(System.getenv("AWS_ACCOUNT_ID")).orElse("123456789012");
-        return String.format("arn:aws:iam::%s:role/eks-dx-pod-%s-%s", accountId, namespace, serviceAccount);
+        if (path.contains("/pod-identity-associations") && ctx.getMethod().equals("GET")) {
+            // Webhook query — validate Bearer token with eks-dx audience
+            String token = extractBearer(ctx);
+            validateToken(token, "eks-dx.plasticity.cloud",
+                "system:serviceaccount:kube-system:eks-pod-identity-webhook");
+            return;
+        }
+
+        // Management API (CLI) — no token auth, secured by API Gateway IAM or other mechanism
     }
 }
 ```
 
-### EksAuthAgentResource — No Changes
+## Simplified eks-auth-proxy
 
-The JAX-RS endpoint stays identical. `quarkus-amazon-lambda-rest` wraps it automatically:
+### Dependencies (reduced)
+
+```xml
+<!-- Keep -->
+<dependency>quarkus-rest-jackson</dependency>
+<dependency>quarkus-kubernetes-client</dependency>  <!-- TokenReview -->
+<dependency>quarkus-smallrye-health</dependency>
+<dependency>quarkus-kubernetes</dependency>
+<dependency>quarkus-helm</dependency>
+
+<!-- Remove -->
+<!-- quarkus-amazon-dynamodb — no DynamoDB -->
+<!-- software.amazon.awssdk:sts — no STS -->
+<!-- software.amazon.awssdk:eks — already removed -->
+<!-- eks-pod-identity-crd — no CRD lookup -->
+```
+
+### Simplified Service Layer
 
 ```java
-@Path("/clusters")
-public class EksAuthAgentResource {
-    @POST
-    @Path("/{clusterName}/assets")
-    public Response assumeRoleForPodIdentity(
-            @PathParam("clusterName") String clusterName,
-            AgentRequest request) {
-        // Same flow, different service implementations injected
+@POST
+@Path("/{clusterName}/assets")
+public Response assumeRoleForPodIdentity(
+        @PathParam("clusterName") String clusterName,
+        AgentRequest request) {
+
+    // 1. Fast-fail: TokenReview rejects bad tokens before network call
+    tokenValidationService.validateToken(request.token, clusterName);
+
+    // 2. Forward raw token to Lambda
+    var lambdaRequest = HttpRequest.newBuilder()
+        .uri(URI.create(eksDxEndpoint + "/clusters/" + clusterName + "/assets"))
+        .header("Content-Type", "application/json")
+        .POST(HttpRequest.BodyPublishers.ofString("{\"token\":\"" + request.token + "\"}"))
+        .build();
+
+    var lambdaResponse = httpClient.send(lambdaRequest, HttpResponse.BodyHandlers.ofString());
+
+    // 3. Pass through Lambda response to agent
+    return Response.status(lambdaResponse.statusCode())
+        .entity(lambdaResponse.body())
+        .build();
+}
+```
+
+### Configuration
+
+```properties
+# EKS-DX Lambda endpoint
+eks-dx.endpoint=${EKS_DX_ENDPOINT:https://eks-dx.us-east-1.plasticity.cloud}
+
+# Kubernetes (TokenReview)
+quarkus.kubernetes-client.trust-certs=true
+quarkus.kubernetes.service-account=eks-auth-proxy
+
+# Helm chart
+quarkus.helm.name=eks-auth-proxy
+quarkus.helm.description=EKS-DX in-cluster auth proxy (TokenReview + forward)
+quarkus.helm.create-tar-file=true
+```
+
+## Simplified eks-pod-identity-webhook
+
+### Association Check (Lambda API instead of CRD)
+
+```java
+@ApplicationScoped
+public class PodIdentityAssociationLookup {
+
+    @ConfigProperty(name = "eks-dx.endpoint")
+    String eksDxEndpoint;
+
+    @ConfigProperty(name = "eks.cluster-name")
+    String clusterName;
+
+    private final HttpClient httpClient = HttpClient.newHttpClient();
+
+    // Projected SA token mounted at this path
+    private static final String TOKEN_PATH = "/var/run/secrets/eks-dx/token";
+
+    public boolean hasAssociation(String clusterName, String namespace, String serviceAccount) {
+        String token = Files.readString(Path.of(TOKEN_PATH));
+
+        var request = HttpRequest.newBuilder()
+            .uri(URI.create(eksDxEndpoint + "/clusters/" + clusterName
+                + "/pod-identity-associations?namespace=" + namespace
+                + "&serviceAccount=" + serviceAccount))
+            .header("Authorization", "Bearer " + token)
+            .GET()
+            .build();
+
+        var response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        return response.statusCode() == 200 && !parseAssociations(response.body()).isEmpty();
     }
 }
 ```
 
-### AwsCredentialService — No Changes
+### Webhook Deployment (projected token volume)
 
-STS AssumeRole logic is identical.
+```yaml
+spec:
+  containers:
+  - name: eks-pod-identity-webhook
+    volumeMounts:
+    - name: eks-dx-token
+      mountPath: /var/run/secrets/eks-dx
+      readOnly: true
+  volumes:
+  - name: eks-dx-token
+    projected:
+      sources:
+      - serviceAccountToken:
+          audience: eks-dx.plasticity.cloud
+          expirationSeconds: 3600
+          path: token
+```
 
-## Infrastructure (CDK or SAM)
-
-### SAM Template (minimal)
+## SAM Template
 
 ```yaml
 AWSTemplateFormatVersion: '2010-09-09'
@@ -215,7 +275,7 @@ Globals:
       ApplyOn: PublishedVersions
 
 Resources:
-  EksDxAuthFunction:
+  EksDxFunction:
     Type: AWS::Serverless::Function
     Properties:
       Handler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
@@ -223,22 +283,45 @@ Resources:
       CodeUri: target/function.zip
       AutoPublishAlias: live
       Policies:
-        - DynamoDBReadPolicy:
+        - DynamoDBCrudPolicy:
             TableName: !Ref ClustersTable
-        - DynamoDBReadPolicy:
+        - DynamoDBCrudPolicy:
             TableName: !Ref AssociationsTable
         - Statement:
             Effect: Allow
-            Action:
-              - sts:AssumeRole
-              - sts:TagSession
+            Action: [sts:AssumeRole, sts:TagSession]
             Resource: "arn:aws:iam::*:role/eks-dx-pod-*"
       Events:
-        Api:
+        Assets:
           Type: HttpApi
           Properties:
             Path: /clusters/{clusterName}/assets
             Method: POST
+        Clusters:
+          Type: HttpApi
+          Properties:
+            Path: /clusters
+            Method: ANY
+        ClusterByName:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}
+            Method: ANY
+        ClusterJwks:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}/jwks
+            Method: PUT
+        Associations:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}/pod-identity-associations
+            Method: ANY
+        AssociationById:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}/pod-identity-associations/{id}
+            Method: ANY
 
   ClustersTable:
     Type: AWS::DynamoDB::Table
@@ -246,11 +329,9 @@ Resources:
       TableName: eks-dx-clusters
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: clusterName
-          AttributeType: S
+        - { AttributeName: clusterName, AttributeType: S }
       KeySchema:
-        - AttributeName: clusterName
-          KeyType: HASH
+        - { AttributeName: clusterName, KeyType: HASH }
 
   AssociationsTable:
     Type: AWS::DynamoDB::Table
@@ -258,72 +339,33 @@ Resources:
       TableName: eks-dx-associations
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: PK
-          AttributeType: S
-        - AttributeName: SK
-          AttributeType: S
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
       KeySchema:
-        - AttributeName: PK
-          KeyType: HASH
-        - AttributeName: SK
-          KeyType: RANGE
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+Outputs:
+  Endpoint:
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
 ```
-
-## Testing
-
-### Local Testing
-
-Quarkus provides a Lambda test harness:
-
-```java
-@QuarkusTest
-class LambdaAuthTest {
-    @Test
-    void testTokenExchange() {
-        // quarkus-amazon-lambda-rest provides a local HTTP server
-        // Tests hit the same JAX-RS endpoints as in production
-        given()
-            .contentType(ContentType.JSON)
-            .body(new AgentRequest("valid-token"))
-        .when()
-            .post("/clusters/my-k3s/assets")
-        .then()
-            .statusCode(200);
-    }
-}
-```
-
-DynamoDB local via `quarkus-amazon-dynamodb` test containers or LocalStack.
-
-### SAM Local
-
-```bash
-sam local start-api --template target/sam.jvm.yaml
-curl -X POST http://localhost:3000/clusters/my-k3s/assets -d '{"token":"..."}'
-```
-
-## Migration Steps
-
-1. **Create new module** `eks-dx-lambda` (or refactor `eks-auth-proxy` in place)
-2. **Swap dependencies**: Kubernetes client → DynamoDB + JWT
-3. **Rewrite TokenValidationService** → JWKS-based JWT validation
-4. **Rewrite PodIdentityAssociationService** → DynamoDB GetItem
-5. **Keep** `EksAuthAgentResource` and `AwsCredentialService` unchanged
-6. **Add SAM/CDK template** for Lambda + API Gateway + DynamoDB
-7. **Test** with SAM local + DynamoDB local
-8. **Deploy** and point agent `--endpoint` to API Gateway URL
 
 ## Module Structure (Post-Migration)
 
 ```
-eks-dx-lambda/                    # Lambda auth service (NEW)
-  src/main/java/cloud/plasticity/eksdx/
-    resource/EksAuthAgentResource.java    # Unchanged JAX-RS endpoint
-    service/JwksTokenValidationService.java  # JWT/JWKS validation
-    service/DynamoDbAssociationService.java  # DynamoDB lookup
-    service/AwsCredentialService.java        # STS AssumeRole (unchanged)
-eks-d-auth-cli/                   # CLI (DynamoDB CRUD instead of CRD)
-eks-pod-identity-webhook/         # Webhook (DynamoDB lookup, stays in-cluster)
-eks-pod-identity-crd/             # Deprecated (kept for offline mode)
-eks-auth-proxy/                   # Deprecated (kept for offline mode)
+eks-dx-lambda/                    # Lambda service (NEW)
+eks-dx-cli/                       # CLI tool (REWRITTEN — Lambda API via JDK HttpClient)
+eks-auth-proxy/                   # In-cluster proxy (SIMPLIFIED — TokenReview + forward)
+eks-pod-identity-webhook/         # Webhook (MODIFIED — Lambda API for association check)
+eks-pod-identity-crd/             # DEPRECATED (kept for offline/disconnected mode)
 ```
+
+## Migration Steps
+
+1. Create `eks-dx-lambda` module with DynamoDB + JWKS validation + STS
+2. Deploy Lambda + API Gateway + DynamoDB tables (SAM)
+3. Rewrite `eks-dx-cli` — Fabric8 for JWKS, JDK HttpClient for Lambda API
+4. Simplify `eks-auth-proxy` — remove STS/DynamoDB/CRD, add HTTP forward to Lambda
+5. Modify `eks-pod-identity-webhook` — projected SA token + Lambda API for association check
+6. Test end-to-end: `eks-dx create cluster` → `eks-dx create pod-identity-association` → pod gets credentials
+7. Deprecate `eks-pod-identity-crd` module
