@@ -32,8 +32,8 @@ This is a **multi-module Quarkus + CDK project** providing EKS Pod Identity auth
 │   └── src/main/java/cloud/plasticity/eksdx/infra/
 │       ├── InfraApp.java    # CDK app entry point
 │       └── EksDxStack.java  # Lambda, DynamoDB, API Gateway, CloudWatch alarms
-├── eks-pod-identity-crd/    # DEPRECATED — CRD model (replaced by DynamoDB)
-├── eks-d-auth-cli/          # DEPRECATED — old CLI (replaced by eks-dx-cli)
+├── eks-pod-identity-crd/    # REMOVED — was CRD model (replaced by DynamoDB)
+├── eks-d-auth-cli/          # REMOVED — was old CLI (replaced by eks-dx-cli)
 ├── sam.yaml                 # SAM template (Lambda + DynamoDB + API Gateway)
 └── .github/workflows/       # CI + Release pipelines
 ```

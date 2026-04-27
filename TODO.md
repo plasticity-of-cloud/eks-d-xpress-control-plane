@@ -5,28 +5,21 @@
 ### Service implementations
 - [x] `DynamoDbClusterService` — registerCluster, describeCluster, listClusters, updateJwks, deregisterCluster
 - [x] `DynamoDbAssociationService` — createAssociation, listAssociations, describeAssociation, deleteAssociation
-- [x] `JwksTokenValidationService` — ✅ implemented (jose4j, DynamoDB-backed JWKS cache)
-- [x] `AwsCredentialService` — ✅ implemented (STS AssumeRole + session tags)
+- [x] `JwksTokenValidationService` — jose4j, DynamoDB-backed JWKS cache
+- [x] `AwsCredentialService` — STS AssumeRole + session tags
 
 ### Resource implementations
 - [x] `ClusterResource` — wire up DynamoDbClusterService, request/response DTOs
 - [x] `AssociationResource` — wire up DynamoDbAssociationService, request/response DTOs, generate associationId
-- [x] `EksAuthResource` — ✅ implemented (credential exchange endpoint)
+- [x] `EksAuthResource` — credential exchange endpoint
 
 ### Auth
-- [x] `WebhookAuthFilter` — ✅ implemented (SA token audience check)
-- [x] CLI auth — IAM SigV4 via API Gateway IAM authorizer (lightweight JDK crypto signer)
+- [x] `WebhookAuthFilter` — SA token audience check
+- [x] CLI auth — IAM SigV4 via API Gateway IAM authorizer
 
 ### Testing
-- [x] Unit tests for JwksTokenValidationService (mock JWKS, valid/invalid/expired tokens)
-- [x] Unit tests for DynamoDbAssociationService (mock DynamoDB)
-- [x] Unit tests for DynamoDbClusterService (mock DynamoDB)
-- [x] Unit tests for AwsCredentialService (mock STS)
-- [x] Unit tests for EksAuthResource (mock services, full flow)
-- [x] Unit tests for WebhookAuthFilter (path filtering, token validation)
-- [x] Unit tests for ClusterResource (HTTP status codes, error handling)
-- [x] Unit tests for AssociationResource (HTTP status codes, error handling)
-- [x] Integration test with DynamoDB Local (16 tests, full CRUD lifecycle)
+- [x] Unit tests for all services and resources (123 tests)
+- [x] Integration test with DynamoDB Local (16 tests)
 - [ ] SAM local testing (`sam local start-api`)
 
 ### Deployment
@@ -36,54 +29,32 @@
 
 ## eks-dx-cli (Native binary CLI)
 
-- [x] `CreateClusterCommand` — parse OIDC issuer from JSON, call apiClient.post()
-- [x] `DescribeClusterCommand` — call apiClient.get(), format output
-- [x] `ListClustersCommand` — call apiClient.get(), table output
-- [x] `UpdateClusterCommand` — refresh JWKS via Fabric8, call apiClient.put()
-- [x] `DeleteClusterCommand` — call apiClient.delete()
-- [x] `CreateAssociationCommand` — call apiClient.post()
-- [x] `ListAssociationsCommand` — call apiClient.get(), table output
-- [x] `DescribeAssociationCommand` — call apiClient.get(), format output
-- [x] `DeleteAssociationCommand` — call apiClient.delete()
-- [x] `eks-dx configure` command (save endpoint + region to ~/.eks-dx/config)
-- [x] Native binary build config (GraalVM, verified JVM build runs)
+- [x] All 9 commands (cluster + association CRUD)
+- [x] `eks-dx configure` command
+- [x] IAM SigV4 signing (JDK crypto, no AWS SDK)
+- [x] Native binary build config
 
 ## eks-auth-proxy (Simplified in-cluster proxy)
 
-- [x] Remove STS, DynamoDB, CRD dependencies
-- [x] Remove EksClientProducer, PodIdentityAssociationService (CRD-based)
-- [x] Add JDK HttpClient forward to Lambda endpoint
-- [x] Add `EKS_DX_ENDPOINT` env var configuration
-- [x] TokenReview stays as fast-fail
-- [x] Update Helm chart (quarkus-helm) — remove unused volumes/secrets
-- [x] Update tests
+- [x] TokenReview fast-fail + Lambda forwarding (18 tests)
 
-## eks-pod-identity-webhook (Modified)
+## eks-pod-identity-webhook
 
-- [x] Replace CRD-based PodIdentityAssociationLookup with Lambda API call
-- [x] Add projected SA token volume (audience: eks-dx.plasticity.cloud)
-- [x] Add JDK HttpClient for Lambda API
-- [x] Remove Fabric8 CRD dependency
-- [x] Update Helm chart — add projected token volume, EKS_DX_ENDPOINT env
-- [x] Update tests
+- [x] Lambda-based association lookup (10 tests)
 
 ## Infrastructure
 
-- [x] CDK alternative to SAM template (REST API v1, IAM auth, SnapStart)
-- [x] Custom domain for API Gateway (conditional in SAM + CDK)
-- [x] CloudWatch alarms (Lambda errors/throttles/p99, DynamoDB throttling)
-- [x] API Gateway access logging (structured JSON)
+- [x] SAM template (IAM auth, custom domain, CloudWatch alarms, access logging)
+- [x] CDK stack (REST API v1, IAM auth, SnapStart, PITR, alarms)
 
 ## Documentation
 
-- [x] Update deploy/README.md for Lambda architecture
-- [x] Update AGENTS.md with new module structure
-- [x] End-to-end setup guide (deploy Lambda → register cluster → create association → test pod)
-- [ ] Architecture diagram (final version)
+- [x] deploy/README.md — end-to-end setup guide
+- [x] AGENTS.md — updated for Lambda architecture
+- [x] Architecture diagrams (10 Mermaid diagrams)
 
-## Deprecation
+## Cleanup
 
-- [x] Mark eks-pod-identity-crd as deprecated in pom.xml
-- [x] Mark eks-d-auth-cli as deprecated in pom.xml
-- [x] Update CI/release workflows for new module structure
-- [ ] Remove old modules after migration is validated
+- [x] Removed eks-pod-identity-crd module
+- [x] Removed eks-d-auth-cli module
+- [x] Updated CI/release workflows
