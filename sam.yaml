@@ -83,7 +83,7 @@ Resources:
           Type: Api
           Properties:
             RestApiId: !Ref EksDxApi
-            Path: /clusters/{clusterName}/assets
+            Path: /clusters/{name}/assets
             Method: POST
             Auth:
               Authorizer: NONE
