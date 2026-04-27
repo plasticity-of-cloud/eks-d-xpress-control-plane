@@ -36,15 +36,15 @@
 
 ## eks-dx-cli (Native binary CLI)
 
-- [ ] `CreateClusterCommand` — parse OIDC issuer from JSON, call apiClient.post()
-- [ ] `DescribeClusterCommand` — call apiClient.get(), format output
-- [ ] `ListClustersCommand` — call apiClient.get(), table output
-- [ ] `UpdateClusterCommand` — refresh JWKS via Fabric8, call apiClient.put()
-- [ ] `DeleteClusterCommand` — call apiClient.delete()
-- [ ] `CreateAssociationCommand` — call apiClient.post()
-- [ ] `ListAssociationsCommand` — call apiClient.get(), table output
-- [ ] `DescribeAssociationCommand` — call apiClient.get(), format output
-- [ ] `DeleteAssociationCommand` — call apiClient.delete()
+- [x] `CreateClusterCommand` — parse OIDC issuer from JSON, call apiClient.post()
+- [x] `DescribeClusterCommand` — call apiClient.get(), format output
+- [x] `ListClustersCommand` — call apiClient.get(), table output
+- [x] `UpdateClusterCommand` — refresh JWKS via Fabric8, call apiClient.put()
+- [x] `DeleteClusterCommand` — call apiClient.delete()
+- [x] `CreateAssociationCommand` — call apiClient.post()
+- [x] `ListAssociationsCommand` — call apiClient.get(), table output
+- [x] `DescribeAssociationCommand` — call apiClient.get(), format output
+- [x] `DeleteAssociationCommand` — call apiClient.delete()
 - [ ] `eks-dx configure` command (save endpoint + region to ~/.eks-dx/config)
 - [ ] Native binary build verification (GraalVM container build)
 
