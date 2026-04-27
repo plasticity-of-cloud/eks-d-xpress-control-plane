@@ -231,15 +231,38 @@ The proxy needs to authenticate to the Lambda. Options:
 |----|-----|---------|---------------|-----------|
 | `CLUSTER#my-k3s` | `default#my-app` | `arn:aws:iam::...:role/my-app` | `assoc-abc123` | `2026-04-26T22:00:00Z` |
 
-## Cost Estimate (per cluster)
+## Cost Estimate
 
-| Resource | Cost |
-|----------|------|
-| Lambda (1000 requests/day) | ~$0.20/month |
-| API Gateway | ~$3.50/month |
-| DynamoDB on-demand | ~$0.04/month |
-| In-cluster proxy (tiny pod) | ~0 (runs on existing node) |
-| **Total** | **~$4/month** |
+Uses API Gateway **HTTP API** (not REST API) — 10x cheaper, sufficient for this use case.
+
+### Single cluster (1,000 credential requests/day)
+
+| Resource | Pricing | Monthly cost |
+|----------|---------|-------------|
+| API Gateway HTTP API | $1.00 / million requests | $0.03 |
+| Lambda (512MB, ~200ms avg) | $0.20 / million requests + compute | $0.02 |
+| DynamoDB on-demand | $1.25 / million reads, $1.25 / million writes | $0.04 |
+| In-cluster proxy (tiny pod) | Runs on existing node | $0.00 |
+| **Total** | | **~$0.09/month** |
+
+### 10 clusters (10,000 requests/day each)
+
+| Resource | Monthly cost |
+|----------|-------------|
+| API Gateway | $3.00 |
+| Lambda | $2.00 |
+| DynamoDB | $4.00 |
+| **Total** | **~$9/month** |
+
+### Comparison
+
+| Solution | Cost per cluster/month |
+|----------|----------------------|
+| **EKS-DX (Lambda + DynamoDB)** | ~$0.09 |
+| **EKS managed control plane** | $73.00 |
+| **Savings** | **99.9%** |
+
+All services are pay-per-request with no minimum. A cluster with zero traffic costs $0.
 
 ## What This Eliminates
 
