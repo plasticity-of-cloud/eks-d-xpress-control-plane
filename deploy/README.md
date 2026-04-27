@@ -4,34 +4,36 @@ EKS Pod Identity for k3s, microk8s, and EKS-D clusters — powered by a serverle
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  k3s / microk8s / EKS-D node                                     │
-│                                                                   │
-│  ┌──────────┐   ┌─────────────────────┐   ┌──────────────────┐  │
-│  │  cluster  │   │ EKS Pod Identity    │   │ eks-auth-proxy   │  │
-│  │          │   │ Agent (DaemonSet)   │──▶│ (TokenReview +   │──┼──▶ Lambda API
-│  └──────────┘   │ 169.254.170.23:80   │   │  forwarding)     │  │    (API Gateway)
-│       │         └─────────────────────┘   └──────────────────┘  │
-│       │         ┌─────────────────────┐                          │
-│       └────────▶│ eks-pod-identity-   │──▶ Lambda API            │
-│                 │ webhook (admission) │   (association lookup)    │
-│                 └─────────────────────┘                          │
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Cluster["k3s / microk8s / EKS-D"]
+        Pod["Application Pod"]
+        Agent["Pod Identity Agent<br/>169.254.170.23"]
+        Proxy["eks-auth-proxy<br/>(TokenReview + forward)"]
+        Webhook["eks-pod-identity-webhook"]
+        KubeAPI["K8s API Server"]
+    end
 
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  AWS (serverless)                                                 │
-│                                                                   │
-│  API Gateway ──▶ Lambda (eks-dx-lambda)                          │
-│                    ├── JWKS validation (jose4j)                   │
-│                    ├── Association lookup (DynamoDB)              │
-│                    └── STS AssumeRole → temporary credentials     │
-│                                                                   │
-│  DynamoDB: eks-dx-clusters (JWKS + issuer)                       │
-│  DynamoDB: eks-dx-associations (namespace#sa → roleArn)          │
-└──────────────────────────────────────────────────────────────────┘
+    subgraph AWS["AWS (Serverless)"]
+        APIGW["API Gateway"]
+        Lambda["eks-dx-lambda<br/>(Java 21, SnapStart)"]
+        DDB1["DynamoDB<br/>eks-dx-clusters"]
+        DDB2["DynamoDB<br/>eks-dx-associations"]
+        STS["AWS STS"]
+    end
+
+    Pod -->|"1. AWS SDK"| Agent
+    Agent -->|"2. POST /assets"| Proxy
+    Proxy -->|"3. TokenReview"| KubeAPI
+    Proxy -->|"4. Forward"| APIGW
+    APIGW --> Lambda
+    Lambda -->|"5. JWKS"| DDB1
+    Lambda -->|"6. Lookup"| DDB2
+    Lambda -->|"7. AssumeRole"| STS
+    Lambda -->|"8. Credentials"| Proxy
+
+    KubeAPI -->|"AdmissionReview"| Webhook
+    Webhook -->|"Lookup"| APIGW
 ```
 
 ## Prerequisites

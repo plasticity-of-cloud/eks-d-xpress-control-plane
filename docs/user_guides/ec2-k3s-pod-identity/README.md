@@ -4,27 +4,35 @@ Run EKS Pod Identity on a plain EC2 instance with k3s — no managed EKS cluster
 
 ## Architecture
 
+```mermaid
+graph LR
+    subgraph EC2["EC2 Instance (k3s)"]
+        Pod["Application Pod"]
+        Agent["Pod Identity Agent<br/>169.254.170.23"]
+        Proxy["eks-auth-proxy<br/>(TokenReview + forward)"]
+        Webhook["eks-pod-identity-webhook"]
+        K3s["k3s API Server"]
+    end
+
+    subgraph AWS["AWS (Serverless)"]
+        APIGW["API Gateway"]
+        Lambda["eks-dx-lambda"]
+        DDB["DynamoDB<br/>(JWKS + associations)"]
+        STS["STS AssumeRole"]
+    end
+
+    Pod -->|"1. AWS SDK call"| Agent
+    Agent -->|"2. POST /assets"| Proxy
+    Proxy -->|"3. TokenReview"| K3s
+    Proxy -->|"4. Forward"| APIGW
+    APIGW --> Lambda
+    Lambda --> DDB
+    Lambda -->|"5. AssumeRole"| STS
+    Lambda -->|"6. Credentials"| Proxy
+
+    K3s -->|"AdmissionReview"| Webhook
+    Webhook -->|"Lookup"| APIGW
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  EC2 Instance (k3s)                                               │
-│                                                                   │
-│  ┌──────────┐   ┌─────────────────────┐   ┌──────────────────┐  │
-│  │  k3s     │   │ EKS Pod Identity    │   │ eks-auth-proxy   │  │
-│  │  cluster │   │ Agent (DaemonSet)   │──▶│ (TokenReview +   │──┼──▶ Lambda API
-│  └──────────┘   │ 169.254.170.23:80   │   │  forwarding)     │  │    (API Gateway)
-│       │         └─────────────────────┘   └──────────────────┘  │
-│       │         ┌─────────────────────┐                          │
-│       └────────▶│ eks-pod-identity-   │──▶ Lambda API            │
-│                 │ webhook (admission) │   (association lookup)    │
-│                 └─────────────────────┘                          │
-└──────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  AWS (serverless)                                                 │
-│  API Gateway → Lambda → DynamoDB (JWKS + associations)           │
-│                       → STS AssumeRole → temporary credentials    │
-└──────────────────────────────────────────────────────────────────┘
 
 Flow:
   1. Webhook queries Lambda API for associations → mutates pod
