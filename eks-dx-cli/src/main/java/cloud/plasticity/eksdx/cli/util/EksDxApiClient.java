@@ -1,7 +1,8 @@
 package cloud.plasticity.eksdx.cli.util;
 
+import cloud.plasticity.eksdx.cli.config.EksDxConfig;
+import jakarta.annotation.PostConstruct;
 import jakarta.enterprise.context.ApplicationScoped;
-import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,15 +11,25 @@ import java.net.http.HttpResponse;
 
 /**
  * JDK HttpClient wrapper for EKS-DX Lambda API calls.
- * No AWS SDK — all interactions go through the Lambda HTTP API.
+ * Reads endpoint from ~/.eks-dx/config → EKS_DX_ENDPOINT env → default.
+ * Signs management requests with AWS SigV4 when credentials are available.
  */
 @ApplicationScoped
 public class EksDxApiClient {
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
-    @ConfigProperty(name = "eks-dx.endpoint", defaultValue = "https://eks-dx.plasticity.cloud")
     String endpoint;
+    String region;
+    AwsSigV4Signer signer;
+
+    @PostConstruct
+    void init() {
+        EksDxConfig config = new EksDxConfig();
+        this.endpoint = config.getEndpoint();
+        this.region = config.getRegion();
+        this.signer = AwsSigV4Signer.create(region);
+    }
 
     public String post(String path, String body) {
         return send("POST", path, body);
@@ -38,14 +49,20 @@ public class EksDxApiClient {
 
     private String send(String method, String path, String body) {
         try {
+            URI uri = URI.create(endpoint + path);
             var builder = HttpRequest.newBuilder()
-                .uri(URI.create(endpoint + path))
+                .uri(uri)
                 .header("Content-Type", "application/json");
 
             if (body != null) {
                 builder.method(method, HttpRequest.BodyPublishers.ofString(body));
             } else {
                 builder.method(method, HttpRequest.BodyPublishers.noBody());
+            }
+
+            // Sign management API requests (not /assets which uses token auth)
+            if (signer != null && !path.contains("/assets")) {
+                signer.sign(builder, method, uri, body, "execute-api");
             }
 
             var response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
