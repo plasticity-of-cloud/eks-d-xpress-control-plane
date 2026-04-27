@@ -163,11 +163,11 @@ Response: {
 }
 ```
 
-The proxy sends pre-validated claims, not the raw token. The Lambda trusts the proxy (authenticated via IAM SigV4 or API key).
+The proxy forwards the raw token, not pre-validated claims. The Lambda validates it independently via JWKS.
 
 ## In-Cluster Proxy (Simplified)
 
-The proxy becomes much simpler — just TokenReview + forward:
+The proxy does TokenReview as a fast-fail, then forwards the raw token to the Lambda:
 
 ```java
 @POST
@@ -176,11 +176,12 @@ public Response assumeRoleForPodIdentity(
         @PathParam("clusterName") String clusterName,
         AgentRequest request) {
 
-    // 1. Validate token via Kubernetes TokenReview (existing code)
-    TokenClaims claims = tokenValidationService.validateToken(request.token, clusterName);
+    // 1. Fast-fail: validate token via Kubernetes TokenReview
+    //    Rejects expired/malformed tokens before they hit the network
+    tokenValidationService.validateToken(request.token, clusterName);
 
-    // 2. Forward validated claims to EKS-DX Lambda
-    Response lambdaResponse = eksDxClient.assumeRole(clusterName, claims);
+    // 2. Forward raw token to EKS-DX Lambda (Lambda does its own JWKS validation)
+    Response lambdaResponse = eksDxClient.assumeRole(clusterName, request.token);
 
     // 3. Return credentials to agent
     return lambdaResponse;
@@ -193,7 +194,7 @@ No DynamoDB, no STS, no association lookup. Just TokenReview + HTTP forward.
 
 None. The proxy doesn't call any AWS APIs. It:
 - Calls the Kubernetes TokenReview API (via ServiceAccount RBAC)
-- Calls the Lambda endpoint (HTTPS, authenticated via shared secret or mTLS)
+- Calls the Lambda endpoint (HTTPS)
 
 The EC2 instance profile can be empty or removed entirely.
 
@@ -201,29 +202,72 @@ The EC2 instance profile can be empty or removed entirely.
 
 | Component | Location | Responsibilities | AWS Permissions |
 |-----------|----------|-----------------|-----------------|
-| **EKS-DX Service** | Lambda | Association CRUD, cluster registration, STS AssumeRole | DynamoDB read/write, STS AssumeRole |
-| **eks-auth-proxy** | In-cluster | TokenReview, forward claims to Lambda | None (Kubernetes RBAC only) |
-| **eks-pod-identity-webhook** | In-cluster | Pod mutation (inject env vars + token volume) | Calls Lambda API to check association existence |
+| **EKS-DX Service** | Lambda | JWKS token validation, association lookup, STS AssumeRole, cluster + association CRUD | DynamoDB read/write, STS AssumeRole |
+| **eks-auth-proxy** | In-cluster | TokenReview (fast-fail), forward raw token to Lambda | None (Kubernetes RBAC only) |
+| **eks-pod-identity-webhook** | In-cluster | Pod mutation (inject env vars + token volume), association check via Lambda | None (uses projected SA token to auth) |
 | **EKS Pod Identity Agent** | In-cluster (DaemonSet) | Intercepts 169.254.170.23, forwards to proxy | None |
-| **eks-dx CLI** | Developer machine | Cluster registration, association management | Calls Lambda API (same as `aws eks` with `--endpoint-url`) |
+| **eks-dx CLI** | Developer machine | Cluster registration, association management | Calls Lambda API via HTTPS |
 
-## Proxy ↔ Lambda Authentication
+## Authentication to Lambda
 
-The proxy needs to authenticate to the Lambda. Options:
+All in-cluster components authenticate to the Lambda using **Kubernetes SA tokens validated via JWKS**. No API keys, no IAM credentials, no secrets in the cluster.
 
-1. **API Gateway API key** — simple, rotatable, passed as `x-api-key` header. Generated at cluster registration.
-2. **IAM SigV4** — standard AWS auth. Proxy would need minimal IAM creds (just `execute-api:Invoke`). But this reintroduces credentials on the node.
-3. **mTLS** — cert-based auth between proxy and API Gateway. Strong but complex.
+### Token Audiences
 
-**Recommendation**: API key per cluster, generated at registration, stored as a Kubernetes Secret. The proxy reads it at startup. If the key is compromised, revoke and re-register.
+Different audiences distinguish credential exchange from management queries:
+
+| Caller | Endpoint | Token audience | Lambda checks |
+|--------|----------|---------------|---------------|
+| **Proxy** (on behalf of pod) | `POST /clusters/{name}/assets` | `pods.eks.amazonaws.com` | Valid signature + audience + expiry → look up association → STS AssumeRole |
+| **Webhook** | `GET /clusters/{name}/pod-identity-associations` | `eks-dx.plasticity.cloud` | Valid signature + audience + subject is `system:serviceaccount:kube-system:eks-pod-identity-webhook` |
+
+### Proxy → Lambda (credential exchange)
+
+The proxy forwards the pod's raw SA token. The Lambda validates it using the cluster's JWKS from DynamoDB. The token IS the authentication — cryptographically signed by the cluster's kube-apiserver, short-lived, audience-bound. This is exactly how the real EKS Auth Service works.
+
+### Webhook → Lambda (association check)
+
+The webhook mounts a projected SA token with audience `eks-dx.plasticity.cloud`:
+
+```yaml
+volumes:
+- name: eks-dx-token
+  projected:
+    sources:
+    - serviceAccountToken:
+        audience: eks-dx.plasticity.cloud
+        expirationSeconds: 3600
+        path: token
+```
+
+It sends this token as a Bearer header when querying associations:
+
+```
+GET /clusters/my-k3s/pod-identity-associations?namespace=default&serviceAccount=my-app
+Authorization: Bearer <webhook-sa-token>
+```
+
+The Lambda:
+1. Validates JWT signature via JWKS (same mechanism as credential exchange)
+2. Checks audience = `eks-dx.plasticity.cloud` (not `pods.eks.amazonaws.com`)
+3. Checks subject = `system:serviceaccount:kube-system:eks-pod-identity-webhook`
+4. Returns associations
+
+### Why This Works
+
+- **No secrets in the cluster** — tokens are generated by the kube-apiserver, not stored
+- **No API keys to rotate** — tokens are short-lived (1h default)
+- **Same trust mechanism** for both paths — JWKS validation
+- **Scoped by audience** — a pod token (`pods.eks.amazonaws.com`) can't query the management API, and a webhook token (`eks-dx.plasticity.cloud`) can't exchange credentials
+- **Scoped by subject** — only the webhook SA can query associations, not any SA with the right audience
 
 ## DynamoDB Schema
 
 ### Table: `eks-dx-clusters`
 
-| PK (clusterName) | status | registeredAt | apiKey (hashed) |
-|-------------------|--------|--------------|-----------------|
-| `my-k3s` | `ACTIVE` | `2026-04-26T22:00:00Z` | `sha256:...` |
+| PK (clusterName) | issuer | jwks | status | registeredAt |
+|-------------------|--------|------|--------|--------------|
+| `my-k3s` | `https://kubernetes.default.svc` | `{"keys":[...]}` | `ACTIVE` | `2026-04-26T22:00:00Z` |
 
 ### Table: `eks-dx-associations`
 
@@ -266,8 +310,9 @@ All services are pay-per-request with no minimum. A cluster with zero traffic co
 
 ## What This Eliminates
 
-- ❌ JWKS sync agent (no longer needed — proxy does TokenReview locally)
+- ❌ JWKS sync agent (JWKS pushed once at registration, refreshed via `eks-dx update cluster --refresh-jwks`)
 - ❌ EC2 instance profile permissions (proxy has no AWS permissions)
-- ❌ DynamoDB access from inside the cluster (webhook calls Lambda API, not DynamoDB directly)
-- ❌ Custom CLI (replaced by `aws eks --endpoint-url`)
+- ❌ DynamoDB access from inside the cluster (webhook uses SA token to auth to Lambda)
+- ❌ API keys or secrets in the cluster (SA tokens are the authentication)
 - ❌ CRD resources (replaced by DynamoDB)
+- ❌ Custom CLI for associations (replaced by `eks-dx` CLI)
