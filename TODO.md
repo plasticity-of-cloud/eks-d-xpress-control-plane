@@ -76,14 +76,14 @@
 
 ## Documentation
 
-- [ ] Update deploy/README.md for Lambda architecture
-- [ ] Update AGENTS.md with new module structure
-- [ ] End-to-end setup guide (deploy Lambda → register cluster → create association → test pod)
+- [x] Update deploy/README.md for Lambda architecture
+- [x] Update AGENTS.md with new module structure
+- [x] End-to-end setup guide (deploy Lambda → register cluster → create association → test pod)
 - [ ] Architecture diagram (final version)
 
 ## Deprecation
 
 - [x] Mark eks-pod-identity-crd as deprecated in pom.xml
 - [x] Mark eks-d-auth-cli as deprecated in pom.xml
-- [ ] Update CI/release workflows for new module structure
+- [x] Update CI/release workflows for new module structure
 - [ ] Remove old modules after migration is validated
