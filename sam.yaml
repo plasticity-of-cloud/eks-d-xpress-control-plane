@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: EKS-DX Service — Pod Identity for k3s, microk8s, and EKS-D clusters
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    SnapStart:
+      ApplyOn: PublishedVersions
+
+Resources:
+  EksDxFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
+      Runtime: java21
+      CodeUri: eks-dx-lambda/target/function.zip
+      AutoPublishAlias: live
+      Environment:
+        Variables:
+          EKS_DX_CLUSTERS_TABLE: !Ref ClustersTable
+          EKS_DX_ASSOCIATIONS_TABLE: !Ref AssociationsTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ClustersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AssociationsTable
+        - Statement:
+            Effect: Allow
+            Action: [sts:AssumeRole, sts:TagSession]
+            Resource: "arn:aws:iam::*:role/eks-dx-pod-*"
+      Events:
+        Assets:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{clusterName}/assets
+            Method: POST
+        ClustersPost:
+          Type: HttpApi
+          Properties:
+            Path: /clusters
+            Method: POST
+        ClustersGet:
+          Type: HttpApi
+          Properties:
+            Path: /clusters
+            Method: GET
+        ClusterByName:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}
+            Method: ANY
+        ClusterJwks:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}/jwks
+            Method: PUT
+        AssociationsAny:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}/pod-identity-associations
+            Method: ANY
+        AssociationById:
+          Type: HttpApi
+          Properties:
+            Path: /clusters/{name}/pod-identity-associations/{id}
+            Method: ANY
+
+  ClustersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: eks-dx-clusters
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: clusterName, AttributeType: S }
+      KeySchema:
+        - { AttributeName: clusterName, KeyType: HASH }
+
+  AssociationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: eks-dx-associations
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: PK, AttributeType: S }
+        - { AttributeName: SK, AttributeType: S }
+      KeySchema:
+        - { AttributeName: PK, KeyType: HASH }
+        - { AttributeName: SK, KeyType: RANGE }
+
+Outputs:
+  Endpoint:
+    Description: EKS-DX API endpoint
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  ClustersTableName:
+    Value: !Ref ClustersTable
+  AssociationsTableName:
+    Value: !Ref AssociationsTable
