@@ -1,357 +1,334 @@
 # Data Models and Structures
 
-## Request/Response Models
+## Core Data Models
 
-### AssumeRoleForPodIdentityRequest
-**Purpose**: Main API request structure
-**Usage**: HTTP POST body for authentication endpoint
+### Authentication Models
 
+#### TokenClaims Record
 ```java
-public class AssumeRoleForPodIdentityRequest {
-    private String clusterName;  // Required: EKS cluster identifier
-    private String token;        // Required: Service account JWT token
+public record TokenClaims(
+    String subject,           // system:serviceaccount:namespace:service-account
+    String namespace,         // Kubernetes namespace
+    String serviceAccount,    // Service account name
+    String podName,          // Pod name (optional)
+    String podUid,           // Pod UID (optional)
+    String serviceAccountUid, // Service account UID
+    Instant expiration,      // Token expiration time
+    Map<String, String> sessionTags // AWS session tags
+) {
+    public Map<String, String> sessionTags() {
+        // Generate session tags from Kubernetes metadata
+    }
 }
 ```
 
-**Validation Rules**:
-- Both fields are required
-- `clusterName` must be non-empty string
-- `token` must be valid JWT format
-
-### AssumeRoleForPodIdentityResponse
-**Purpose**: Main API response structure
-**Usage**: HTTP response body with AWS credentials
-
+#### AgentRequest/Response Models
 ```java
-public class AssumeRoleForPodIdentityResponse {
-    private Subject subject;
-    private String audience;
-    private PodIdentityAssociation podIdentityAssociation;
-    private AssumedRoleUser assumedRoleUser;
-    private Credentials credentials;
+// Request from pod to authentication service
+public class AgentRequest {
+    private String clusterName;
+    private String token;
+}
+
+// Response with AWS credentials
+public class AgentResponse {
+    private SubjectDto subject;
+    private AssumedRoleUserDto assumedRoleUser;
+    private CredentialsDto credentials;
+}
+
+public class CredentialsDto {
+    private String accessKeyId;
+    private String secretAccessKey;
+    private String sessionToken;
+    private Instant expiration;
 }
 ```
 
-#### Nested Response Structures
+### Management Models
 
-**Subject**:
+#### Cluster Registration Models
 ```java
-public class Subject {
-    private String namespace;      // Kubernetes namespace
-    private String serviceAccount; // Service account name
+public class RegisterClusterRequest {
+    private String name;        // Cluster identifier
+    private String issuer;      // OIDC issuer URL
+    private String jwks;        // JSON Web Key Set
+}
+
+public class ClusterInfo {
+    private String name;
+    private String issuer;
+    private String jwks;
+    private Instant createdAt;
+    private Instant updatedAt;
 }
 ```
 
-**PodIdentityAssociation**:
+#### Association Models
 ```java
-public class PodIdentityAssociation {
-    private String associationArn; // Generated association ARN
-    private String associationId;  // Generated association ID
+public class CreateAssociationRequest {
+    private String clusterName;
+    private String namespace;
+    private String serviceAccount;
+    private String roleArn;
+}
+
+public class AssociationInfo {
+    private String associationId;
+    private String clusterName;
+    private String namespace;
+    private String serviceAccount;
+    private String roleArn;
+    private Instant createdAt;
 }
 ```
 
-**AssumedRoleUser**:
-```java
-public class AssumedRoleUser {
-    private String arn;           // Assumed role ARN
-    private String assumeRoleId;  // STS assume role ID
-}
+## Database Schema
+
+### DynamoDB Table Structures
+
+#### Clusters Table Schema
+```mermaid
+erDiagram
+    CLUSTERS {
+        string PK "CLUSTER#name"
+        string SK "METADATA"
+        string Name "Cluster name"
+        string Issuer "OIDC issuer URL"
+        string Jwks "JSON Web Key Set"
+        timestamp CreatedAt "Creation timestamp"
+        timestamp UpdatedAt "Last update timestamp"
+    }
 ```
 
-**Credentials**:
-```java
-public class Credentials {
-    private String accessKeyId;     // AWS access key
-    private String secretAccessKey; // AWS secret key
-    private String sessionToken;    // AWS session token
-    private Instant expiration;     // Credential expiration time
-}
+**Access Patterns:**
+- Get cluster by name: `PK = CLUSTER#name AND SK = METADATA`
+- List all clusters: `begins_with(PK, "CLUSTER#")`
+
+#### Associations Table Schema
+```mermaid
+erDiagram
+    ASSOCIATIONS {
+        string PK "CLUSTER#name"
+        string SK "ASSOCIATION#namespace#serviceaccount"
+        string AssociationId "UUID identifier"
+        string ClusterName "Cluster name"
+        string Namespace "Kubernetes namespace"
+        string ServiceAccount "Service account name"
+        string RoleArn "IAM role ARN"
+        timestamp CreatedAt "Creation timestamp"
+    }
 ```
 
-## Custom Resource Definitions
+**Access Patterns:**
+- Get association: `PK = CLUSTER#name AND SK = ASSOCIATION#ns#sa`
+- List cluster associations: `PK = CLUSTER#name AND begins_with(SK, "ASSOCIATION#")`
+- Filter by namespace: `PK = CLUSTER#name AND begins_with(SK, "ASSOCIATION#namespace#")`
 
-### PodIdentityAssociation CRD
-**Purpose**: Kubernetes custom resource for role associations
-**API Group**: `eks.amazonaws.com/v1`
+### Data Relationships
 
-```yaml
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: podidentityassociations.eks.amazonaws.com
-spec:
-  group: eks.amazonaws.com
-  names:
-    kind: PodIdentityAssociation
-    plural: podidentityassociations
-    singular: podidentityassociation
-  scope: Namespaced
-```
-
-### PodIdentityAssociationSpec
-**Purpose**: Specification schema for CRD instances
-
-```java
-public class PodIdentityAssociationSpec {
-    private String clusterName;    // Required: EKS cluster name
-    private String namespace;      // Required: Kubernetes namespace
-    private String serviceAccount; // Required: Service account name
-    private String roleArn;        // Required: AWS IAM role ARN
-}
-```
-
-**OpenAPI Schema**:
-```yaml
-schema:
-  openAPIV3Schema:
-    type: object
-    properties:
-      spec:
-        type: object
-        properties:
-          clusterName:
-            type: string
-            description: "EKS cluster name"
-          namespace:
-            type: string
-            description: "Kubernetes namespace"
-          serviceAccount:
-            type: string
-            description: "Service account name"
-          roleArn:
-            type: string
-            description: "IAM role ARN to assume"
-        required:
-        - clusterName
-        - namespace
-        - serviceAccount
-        - roleArn
-```
-
-## Internal Data Models
-
-### TokenClaims
-**Purpose**: JWT token claim extraction
-**Usage**: Internal representation of service account token data
-
-```java
-public class TokenClaims {
-    private String namespace;           // kubernetes.io/serviceaccount/namespace
-    private String serviceAccount;      // kubernetes.io/serviceaccount/service-account.name
-    private String serviceAccountUid;   // kubernetes.io/serviceaccount/service-account.uid
-    private String podName;            // kubernetes.io/pod/name
-    private String podUid;             // kubernetes.io/pod/uid
-    private String subject;            // sub claim
-    private Instant expiration;        // exp claim
-}
-```
-
-**Claim Mapping**:
-- Standard JWT claims: `sub`, `exp`, `aud`, `iss`
-- Kubernetes-specific claims in `kubernetes.io` namespace
-- Pod-specific metadata for session tagging
-
-### Session Tags
-**Purpose**: AWS STS session tag generation
-**Usage**: Metadata attached to assumed role sessions
-
-```java
-Map<String, String> sessionTags = Map.of(
-    "kubernetes.io/namespace", tokenClaims.getNamespace(),
-    "kubernetes.io/serviceaccount/name", tokenClaims.getServiceAccount(),
-    "kubernetes.io/pod/name", tokenClaims.getPodName(),
-    "kubernetes.io/cluster/name", clusterName
-);
+```mermaid
+erDiagram
+    CLUSTER ||--o{ ASSOCIATION : has
+    ASSOCIATION ||--|| IAM_ROLE : maps_to
+    SERVICE_ACCOUNT ||--|| ASSOCIATION : uses
+    
+    CLUSTER {
+        string name PK
+        string issuer
+        string jwks
+    }
+    
+    ASSOCIATION {
+        string cluster_name FK
+        string namespace
+        string service_account
+        string role_arn
+    }
+    
+    SERVICE_ACCOUNT {
+        string namespace
+        string name
+        string uid
+    }
+    
+    IAM_ROLE {
+        string arn
+        string trust_policy
+    }
 ```
 
 ## Configuration Data Models
 
-### ConfigMap Structure
-**Purpose**: Fallback role association mapping
-**Format**: Key-value pairs in Kubernetes ConfigMap
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pod-identity-associations
-  namespace: kube-system
-data:
-  # Format: "cluster:namespace:serviceaccount" -> "role-arn"
-  "my-cluster:default:my-app": "arn:aws:iam::123456789012:role/my-app-role"
-  "my-cluster:ci-cd:*": "arn:aws:iam::123456789012:role/ci-cd-role"
+### CLI Configuration Model
+```java
+public class EksDxConfig {
+    private String endpoint;    // API Gateway URL
+    private String region;      // AWS region
+    
+    public static Path configFile() {
+        return Paths.get(System.getProperty("user.home"), ".eks-dx", "config");
+    }
+}
 ```
-
-**Key Pattern**: `{clusterName}:{namespace}:{serviceAccount}`
-**Wildcard Support**: `*` in service account position matches any service account
 
 ### Application Configuration
-**Purpose**: Quarkus application properties structure
+```java
+// Quarkus configuration properties
+@ConfigMapping(prefix = "eks-dx")
+public interface EksDxConfiguration {
+    String clustersTable();      // DynamoDB clusters table
+    String associationsTable();  // DynamoDB associations table
+}
 
-```properties
-# HTTP Configuration
-quarkus.http.port=8080
-quarkus.http.host=0.0.0.0
-
-# EKS Pod Identity Configuration
-eks.pod-identity.configmap.name=pod-identity-associations
-eks.pod-identity.configmap.namespace=kube-system
-
-# AWS STS Configuration
-aws.sts.session-duration=PT1H
-
-# JWT Validation Configuration
-mp.jwt.verify.issuer=https://kubernetes.default.svc
-mp.jwt.verify.publickey.location=https://kubernetes.default.svc/openid/v1/jwks
-mp.jwt.verify.audiences=pods.eks.amazonaws.com
+@ConfigMapping(prefix = "aws.sts")
+public interface StsConfiguration {
+    Duration sessionDuration();  // STS session duration
+}
 ```
 
-## Kubernetes Admission Webhook Models
+## JWT Token Data Models
 
-### AdmissionReview Request
-**Purpose**: Kubernetes admission controller input
-**Usage**: Webhook receives this for pod mutation
-
+### JWKS (JSON Web Key Set) Structure
 ```json
 {
-  "apiVersion": "admission.k8s.io/v1",
-  "kind": "AdmissionReview",
-  "request": {
-    "uid": "request-uid",
-    "kind": {"group": "", "version": "v1", "kind": "Pod"},
-    "resource": {"group": "", "version": "v1", "resource": "pods"},
+  "keys": [
+    {
+      "kty": "RSA",
+      "use": "sig",
+      "kid": "key-id-1",
+      "n": "base64-encoded-modulus",
+      "e": "AQAB",
+      "alg": "RS256"
+    }
+  ]
+}
+```
+
+### Service Account Token Structure
+```json
+{
+  "iss": "https://kubernetes.default.svc.cluster.local",
+  "aud": ["pods.eks.amazonaws.com"],
+  "sub": "system:serviceaccount:namespace:service-account",
+  "exp": 1704067200,
+  "iat": 1704063600,
+  "kubernetes.io": {
     "namespace": "default",
-    "operation": "CREATE",
-    "object": {
-      // Complete Pod specification
+    "serviceaccount": {
+      "name": "my-service-account",
+      "uid": "abc-def-123"
+    },
+    "pod": {
+      "name": "my-pod-123",
+      "uid": "def-ghi-456"
     }
   }
 }
 ```
 
-### AdmissionReview Response
-**Purpose**: Webhook response with mutations
-**Usage**: Returns pod modifications as JSON patches
+## AWS Integration Data Models
 
-```json
-{
-  "apiVersion": "admission.k8s.io/v1",
-  "kind": "AdmissionReview",
-  "response": {
-    "uid": "request-uid",
-    "allowed": true,
-    "patchType": "JSONPatch",
-    "patch": "W3sib3AiOiJhZGQiLCJwYXRoIjoiL3NwZWMvY29udGFpbmVycy8wL2VudiIsInZhbHVlIjpbXX1d"
-  }
+### STS AssumeRole Request
+```java
+public class AssumeRoleRequest {
+    private String roleArn;
+    private String roleSessionName;
+    private Integer durationSeconds;
+    private List<Tag> tags;           // Session tags from Kubernetes metadata
+}
+
+public class Tag {
+    private String key;
+    private String value;
 }
 ```
 
-### JSON Patch Operations
-**Purpose**: Pod specification mutations
-**Format**: RFC 6902 JSON Patch operations
-
-```json
-[
-  {
-    "op": "add",
-    "path": "/spec/containers/0/env",
-    "value": [
-      {
-        "name": "AWS_CONTAINER_CREDENTIALS_FULL_URI",
-        "value": "http://eks-pod-identity-agent.kube-system:80/v1/credentials"
-      }
-    ]
-  },
-  {
-    "op": "add",
-    "path": "/spec/volumes",
-    "value": [
-      {
-        "name": "aws-iam-token",
-        "projected": {
-          "sources": [
-            {
-              "serviceAccountToken": {
-                "audience": "pods.eks.amazonaws.com",
-                "expirationSeconds": 86400,
-                "path": "token"
-              }
-            }
-          ]
-        }
-      }
-    ]
-  }
-]
+### Session Tags Mapping
+```java
+// Kubernetes metadata → AWS session tags
+Map<String, String> sessionTags = Map.of(
+    "kubernetes-namespace", tokenClaims.namespace(),
+    "kubernetes-service-account", tokenClaims.serviceAccount(),
+    "kubernetes-pod-name", tokenClaims.podName(),
+    "kubernetes-pod-uid", tokenClaims.podUid(),
+    "eks-cluster-name", clusterName
+);
 ```
 
-## Error Response Models
+## Kubernetes Integration Models
 
-### HTTP Error Response
-**Purpose**: Standardized error format for REST API
+### Pod Mutation Models
+```java
+// Kubernetes Pod specification modifications
+public class PodMutation {
+    private List<EnvVar> envVars;           // Environment variables to inject
+    private List<Volume> volumes;           // Projected token volumes
+    private List<VolumeMount> volumeMounts; // Volume mount specifications
+}
 
-```json
-{
-  "error": "string",      // Error type/category
-  "message": "string",    // Human-readable error message
-  "details": "string",    // Additional error context
-  "timestamp": "string",  // ISO 8601 timestamp
-  "path": "string"        // Request path that caused error
+public class EnvVar {
+    private String name;    // AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE
+    private String value;   // Role ARN, token file path
 }
 ```
 
-### CLI Error Output
-**Purpose**: Command-line error reporting
+### TokenReview Models
+```java
+public class TokenReviewRequest {
+    private String token;
+    private List<String> audiences;  // ["pods.eks.amazonaws.com"]
+}
 
-```json
-{
-  "error": "ValidationError",
-  "message": "Invalid role ARN format",
-  "field": "roleArn",
-  "value": "invalid-arn"
+public class TokenReviewResponse {
+    private boolean authenticated;
+    private UserInfo user;
+    private Map<String, Object> extra;  // Kubernetes metadata
 }
 ```
 
-## Data Flow Patterns
+## Error Models
 
-### Authentication Flow Data
-```mermaid
-graph LR
-    A[JWT Token] --> B[TokenClaims]
-    B --> C[SessionTags]
-    C --> D[STS Request]
-    D --> E[AWS Credentials]
-    E --> F[Response Model]
+### API Error Responses
+```java
+public class ErrorResponse {
+    private String error;
+    private String message;
+    private int status;
+    private String timestamp;
+}
+
+// Common error types
+public enum ErrorType {
+    INVALID_TOKEN,
+    CLUSTER_NOT_FOUND,
+    ASSOCIATION_NOT_FOUND,
+    ROLE_NOT_FOUND,
+    DUPLICATE_ASSOCIATION,
+    VALIDATION_ERROR
+}
 ```
 
-### CRD Management Flow Data
-```mermaid
-graph LR
-    A[CLI Input] --> B[CRD Spec]
-    B --> C[Kubernetes API]
-    C --> D[CRD Resource]
-    D --> E[Association Lookup]
+## Data Validation Models
+
+### Input Validation Rules
+```java
+// Cluster name validation
+@Pattern(regexp = "^[a-zA-Z0-9][a-zA-Z0-9-_]*[a-zA-Z0-9]$")
+private String clusterName;
+
+// IAM role ARN validation
+@Pattern(regexp = "^arn:aws:iam::[0-9]{12}:role/.*$")
+private String roleArn;
+
+// Kubernetes namespace validation
+@Pattern(regexp = "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+private String namespace;
 ```
 
-### Webhook Mutation Flow Data
-```mermaid
-graph LR
-    A[Pod Spec] --> B[Association Check]
-    B --> C[JSON Patches]
-    C --> D[Mutated Pod]
-```
-
-## Validation Rules
-
-### Input Validation
-- **ClusterName**: Non-empty string, valid Kubernetes name format
-- **Token**: Valid JWT format, non-expired
-- **RoleArn**: Valid AWS ARN format, IAM role type
-- **Namespace**: Valid Kubernetes namespace name
-- **ServiceAccount**: Valid Kubernetes service account name
-
-### Business Logic Validation
-- Token audience must match configured audience
-- Token must be issued by trusted Kubernetes cluster
-- Role ARN must be assumable by the service
-- Association must exist (CRD, ConfigMap, or default generation)
+### Business Logic Constraints
+- **Cluster Names**: Must be unique across the system
+- **Associations**: One association per cluster/namespace/service-account combination
+- **Role ARNs**: Must exist and have proper trust policies
+- **Token Audience**: Must match `pods.eks.amazonaws.com`
+- **Session Duration**: Between 15 minutes and 12 hours

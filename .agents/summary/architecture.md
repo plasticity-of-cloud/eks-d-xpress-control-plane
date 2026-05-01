@@ -1,234 +1,183 @@
 # System Architecture
 
 ## Overview
-
-The AWS EKS Auth Service Proxy is a multi-module system that replicates AWS EKS Pod Identity authentication for local development and CI/CD environments. It follows a microservices architecture with clear separation of concerns.
+EKS-DX Control Plane implements a distributed authentication system that replicates AWS EKS Pod Identity for non-EKS Kubernetes environments. The architecture follows a microservices pattern with serverless backend components.
 
 ## High-Level Architecture
 
 ```mermaid
 graph TB
-    subgraph "Client Layer"
-        A[AWS SDK Applications]
-        B[kubectl/CLI Tools]
-    end
-    
     subgraph "Kubernetes Cluster"
-        C[EKS Pod Identity Agent]
-        D[Service Accounts]
-        E[Pods with Workloads]
+        Pod[Application Pod]
+        Webhook[Pod Identity Webhook]
+        Proxy[EKS Auth Proxy]
+        SA[Service Account Token]
     end
     
-    subgraph "Auth Service Proxy"
-        F[REST API Endpoint]
-        G[Token Validation Service]
-        H[Pod Identity Association Service]
-        I[AWS Credential Service]
+    subgraph "AWS Cloud"
+        APIGW[API Gateway]
+        Lambda[EKS-DX Lambda]
+        DDB[(DynamoDB)]
+        STS[AWS STS]
     end
     
-    subgraph "Configuration Layer"
-        J[CRD Resources]
-        K[ConfigMap Fallback]
-        L[Generated Defaults]
+    subgraph "Management"
+        CLI[EKS-DX CLI]
+        CDK[CDK Infrastructure]
     end
     
-    subgraph "External Services"
-        M[Kubernetes API Server]
-        N[AWS STS]
-        O[AWS EKS API]
-    end
-    
-    A --> C
-    C --> F
-    F --> G
-    G --> M
-    F --> H
-    H --> J
-    H --> K
-    H --> L
-    F --> I
-    I --> N
-    H --> O
-    
-    B --> J
+    Pod -->|Projected Token| SA
+    Webhook -->|Mutate Pod| Pod
+    Pod -->|HTTP Request| Proxy
+    Proxy -->|TokenReview| K8sAPI[Kubernetes API]
+    Proxy -->|Forward Token| APIGW
+    APIGW --> Lambda
+    Lambda -->|Query| DDB
+    Lambda -->|AssumeRole| STS
+    CLI -->|Manage| APIGW
+    CDK -->|Deploy| AWS[AWS Resources]
 ```
 
-## Authentication Flow
+## Component Architecture
+
+### Authentication Flow Components
 
 ```mermaid
-sequenceDiagram
-    participant App as AWS SDK App
-    participant Agent as Pod Identity Agent
-    participant Proxy as Auth Service Proxy
-    participant K8s as Kubernetes API
-    participant STS as AWS STS
-    
-    App->>Agent: AWS API Call
-    Agent->>Proxy: POST / (ClusterName + Token)
-    
-    Note over Proxy: 1. Pod Identity Association Lookup
-    Proxy->>K8s: List/Describe CRDs
-    alt CRD Found
-        K8s-->>Proxy: Role ARN from CRD
-    else ConfigMap Fallback
-        Proxy->>K8s: Get ConfigMap
-        K8s-->>Proxy: Role ARN from ConfigMap
-    else Generated Default
-        Proxy->>Proxy: Generate default ARN
+graph LR
+    subgraph "Request Path"
+        A[Pod Request] --> B[EKS Auth Proxy]
+        B --> C[TokenReview Validation]
+        B --> D[Lambda Forwarding]
+        D --> E[JWKS Validation]
+        E --> F[Association Lookup]
+        F --> G[STS AssumeRole]
+        G --> H[AWS Credentials]
+    end
+```
+
+### Data Flow Architecture
+
+```mermaid
+graph TD
+    subgraph "Control Plane"
+        CLI[CLI Commands] --> API[Management API]
+        API --> Clusters[(Clusters Table)]
+        API --> Associations[(Associations Table)]
     end
     
-    Note over Proxy: 2. Token Validation
-    Proxy->>K8s: TokenReview API
-    K8s-->>Proxy: Token validation result
-    
-    Note over Proxy: 3. AWS Role Assumption
-    Proxy->>STS: AssumeRole
-    STS-->>Proxy: Temporary credentials
-    
-    Proxy-->>Agent: Credentials response
-    Agent-->>App: AWS credentials
-```
-
-## Module Architecture
-
-### eks-auth-proxy (Core Service)
-
-```mermaid
-classDiagram
-    class EksAuthResource {
-        +assumeRoleForPodIdentity()
-    }
-    
-    class TokenValidationService {
-        +validateToken()
-        +getSessionTags()
-    }
-    
-    class PodIdentityAssociationService {
-        +getRoleArnForServiceAccount()
-        +getRoleArnFromCrd()
-        +getRoleArnFromConfigMap()
-    }
-    
-    class AwsCredentialService {
-        +assumeRole()
-        +buildSessionTags()
-    }
-    
-    EksAuthResource --> TokenValidationService
-    EksAuthResource --> PodIdentityAssociationService
-    EksAuthResource --> AwsCredentialService
-```
-
-### eks-d-auth-cli (Management Tool)
-
-```mermaid
-classDiagram
-    class PodIdentityCommand {
-        +run()
-    }
-    
-    class CreateCommand {
-        +run()
-    }
-    
-    class ListCommand {
-        +run()
-    }
-    
-    class DeleteCommand {
-        +run()
-    }
-    
-    class DescribeCommand {
-        +run()
-    }
-    
-    PodIdentityCommand <|-- CreateCommand
-    PodIdentityCommand <|-- ListCommand
-    PodIdentityCommand <|-- DeleteCommand
-    PodIdentityCommand <|-- DescribeCommand
-```
-
-### eks-pod-identity-webhook (Admission Controller)
-
-```mermaid
-classDiagram
-    class WebhookEndpoint {
-        +mutate()
-    }
-    
-    class PodIdentityMutator {
-        +injectTokenVolume()
-        +injectEnvVars()
-    }
-    
-    class PodIdentityAssociationLookup {
-        +hasAssociation()
-    }
-    
-    WebhookEndpoint --> PodIdentityMutator
-    PodIdentityMutator --> PodIdentityAssociationLookup
+    subgraph "Data Plane"
+        Token[Service Account Token] --> Validation[Token Validation]
+        Validation --> Lookup[Association Lookup]
+        Lookup --> Associations
+        Lookup --> Role[IAM Role ARN]
+        Role --> STS[STS AssumeRole]
+    end
 ```
 
 ## Design Patterns
 
-### Dependency Injection (CDI)
-- Quarkus CDI for service management
-- Producer methods for AWS clients
-- Scoped beans for lifecycle management
+### Microservices Pattern
+- **Service Separation**: Each component has a single responsibility
+- **Independent Deployment**: Components can be deployed separately
+- **Technology Diversity**: Different components use optimal technologies
 
-### Fallback Strategy Pattern
-1. **Primary**: EKS API for pod identity associations
-2. **Secondary**: Kubernetes ConfigMap
-3. **Tertiary**: Generated default role ARN
+### Event-Driven Architecture
+- **Stateless Components**: No local state, all data in DynamoDB
+- **Async Processing**: Non-blocking HTTP clients
+- **Reactive Patterns**: Quarkus reactive extensions
 
-### Validation Chain Pattern
-1. **Request validation**: JSON structure and required fields
-2. **Token validation**: Kubernetes TokenReview API
-3. **Authorization**: Role mapping and AWS permissions
+### Security-First Design
+- **Defense in Depth**: Multiple validation layers
+- **Principle of Least Privilege**: Minimal IAM permissions
+- **Token Validation**: Multi-stage JWT verification
 
-### Configuration Hierarchy
-1. **Environment variables**: Runtime configuration
-2. **Application properties**: Default settings
-3. **CRD resources**: Dynamic associations
-4. **ConfigMap**: Static fallback mappings
+## Infrastructure Patterns
+
+### Serverless-First
+```mermaid
+graph TB
+    subgraph "Serverless Components"
+        Lambda[AWS Lambda]
+        APIGW[API Gateway]
+        DDB[(DynamoDB)]
+    end
+    
+    subgraph "Container Components"
+        Proxy[EKS Auth Proxy]
+        Webhook[Pod Identity Webhook]
+    end
+    
+    subgraph "Native Components"
+        CLI[Native CLI Binary]
+    end
+```
+
+### Infrastructure as Code
+- **CDK Primary**: Complete infrastructure definition
+- **SAM Alternative**: Simplified serverless deployment
+- **Immutable Infrastructure**: No manual AWS console changes
+
+## Scalability Architecture
+
+### Horizontal Scaling
+- **Lambda Auto-scaling**: Automatic concurrency management
+- **DynamoDB On-Demand**: Pay-per-request scaling
+- **Stateless Design**: Easy horizontal scaling
+
+### Performance Optimization
+- **JWKS Caching**: Reduced external API calls
+- **Connection Pooling**: Efficient HTTP client usage
+- **Native Compilation**: Fast startup times (CLI)
 
 ## Security Architecture
 
-### Token Security
-- JWT signature validation via Kubernetes API
-- Audience validation (`pods.eks.amazonaws.com`)
-- Token expiration enforcement
-- Bearer token prefix handling
+### Authentication Layers
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Proxy
+    participant Lambda
+    participant K8s as Kubernetes API
+    participant DDB as DynamoDB
+    participant STS as AWS STS
+    
+    Client->>Proxy: Service Account Token
+    Proxy->>K8s: TokenReview Request
+    K8s-->>Proxy: Token Valid/Invalid
+    Proxy->>Lambda: Forward Valid Token
+    Lambda->>Lambda: JWKS Signature Validation
+    Lambda->>DDB: Association Lookup
+    Lambda->>STS: AssumeRole with Session Tags
+    STS-->>Lambda: Temporary Credentials
+    Lambda-->>Client: AWS Credentials
+```
 
-### AWS Security
-- IAM role assumption with session tags
-- Temporary credential generation
-- Session duration limits (1 hour default)
-- Least privilege principle
+### Security Controls
+- **JWT Signature Verification**: JWKS-based validation
+- **Audience Validation**: Strict audience checking
+- **Session Tagging**: Kubernetes metadata in AWS sessions
+- **IAM Role Validation**: Trust policy verification
 
-### Kubernetes Security
-- Service account token validation
-- RBAC for CRD access
-- Admission webhook TLS
-- Namespace isolation
+## Deployment Architecture
 
-## Scalability Considerations
+### Multi-Environment Support
+- **Development**: Local DynamoDB, mock services
+- **Staging**: Shared AWS resources, isolated data
+- **Production**: Dedicated AWS account, monitoring
 
-### Horizontal Scaling
-- Stateless service design
-- Multiple proxy instances supported
-- Load balancer compatible
+### Container Strategy
+- **Quarkus Native**: Fast startup, low memory
+- **Multi-stage Builds**: Optimized container images
+- **Distroless Base**: Minimal attack surface
 
-### Performance Optimizations
-- Native compilation for CLI (GraalVM)
-- Async HTTP processing (Vert.x)
-- Connection pooling for AWS clients
-- Kubernetes client caching
+## Monitoring and Observability
 
-### Resource Management
-- Memory limits (10GB build, 8GB runtime)
-- CPU limits (4 cores build)
-- Container resource requests/limits
-- JVM heap optimization
+### CloudWatch Integration
+- **Lambda Metrics**: Duration, errors, throttles
+- **DynamoDB Metrics**: Read/write capacity, throttles
+- **Custom Metrics**: Authentication success/failure rates
+
+### Logging Strategy
+- **Structured Logging**: JSON format for parsing
+- **Correlation IDs**: Request tracing across components
+- **Security Events**: Authentication attempts and failures

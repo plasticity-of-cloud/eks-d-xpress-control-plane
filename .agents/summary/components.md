@@ -1,269 +1,210 @@
-# System Components
+# Major Components
 
-## Core Components Overview
+## Component Overview
 
-The system consists of four main modules, each with distinct responsibilities in the EKS Pod Identity authentication flow.
-
-## eks-auth-proxy Module
-
-### Primary Components
-
-#### EksAuthResource
-- **Purpose**: REST API endpoint for pod identity authentication
-- **Key Method**: `assumeRoleForPodIdentity()`
-- **Responsibilities**:
-  - Handles HTTP POST requests to root path (`/`)
-  - Orchestrates the four-step validation process
-  - Returns AWS temporary credentials
-- **Dependencies**: All service components
-
-#### TokenValidationService
-- **Purpose**: Kubernetes service account token validation
-- **Key Methods**: 
-  - `validateToken()`: Validates JWT via TokenReview API
-  - `getSessionTags()`: Extracts metadata for AWS session tags
-- **Responsibilities**:
-  - JWT signature verification (delegated to K8s API)
-  - Audience validation
-  - Claims extraction (namespace, service account, pod info)
-- **Integration**: Kubernetes API server via TokenReview
-
-#### PodIdentityAssociationService
-- **Purpose**: Role ARN lookup with fallback strategy
-- **Key Methods**:
-  - `getRoleArnForServiceAccount()`: Main lookup orchestrator
-  - `getRoleArnFromCrd()`: Primary CRD-based lookup
-  - `getRoleArnFromConfigMap()`: ConfigMap fallback
-  - `getDefaultRoleArn()`: Generated default fallback
-- **Responsibilities**:
-  - CRD resource querying
-  - ConfigMap pattern matching (supports wildcards)
-  - Default role ARN generation
-- **Integration**: Kubernetes API, AWS EKS API
-
-#### AwsCredentialService
-- **Purpose**: AWS STS integration for credential generation
-- **Key Methods**:
-  - `assumeRole()`: Main STS AssumeRole operation
-  - `buildSessionTags()`: Creates session metadata
-  - `generateSessionName()`: Creates unique session identifiers
-- **Responsibilities**:
-  - STS AssumeRole API calls
-  - Session tag generation from token claims
-  - Credential response formatting
-- **Integration**: AWS STS service
-
-### Supporting Components
-
-#### EksClientProducer & StsClientProducer
-- **Purpose**: CDI producers for AWS SDK clients
-- **Responsibilities**: AWS client configuration and lifecycle management
-
-#### Model Classes
-- `AssumeRoleForPodIdentityRequest`: Request DTO
-- `AssumeRoleForPodIdentityResponse`: Response DTO with nested structures
-
-## eks-d-auth-cli Module
-
-### Command Structure
-
-```mermaid
-classDiagram
-    class PodIdentityCommand {
-        <<abstract>>
-        +run()
-    }
-    
-    class CreateCommand {
-        +clusterName: String
-        +namespace: String
-        +serviceAccount: String
-        +roleArn: String
-        +run()
-    }
-    
-    class ListCommand {
-        +clusterName: String
-        +namespace: String
-        +run()
-    }
-    
-    class DeleteCommand {
-        +clusterName: String
-        +namespace: String
-        +serviceAccount: String
-        +run()
-    }
-    
-    class DescribeCommand {
-        +clusterName: String
-        +namespace: String
-        +serviceAccount: String
-        +run()
-    }
-    
-    PodIdentityCommand <|-- CreateCommand
-    PodIdentityCommand <|-- ListCommand
-    PodIdentityCommand <|-- DeleteCommand
-    PodIdentityCommand <|-- DescribeCommand
-```
-
-#### CreateCommand
-- **Purpose**: Create new pod identity associations
-- **Parameters**: cluster, namespace, service account, role ARN
-- **Operation**: Creates CRD resource in Kubernetes
-
-#### ListCommand
-- **Purpose**: List existing associations
-- **Parameters**: cluster name, optional namespace filter
-- **Operation**: Queries CRD resources with filtering
-
-#### DeleteCommand
-- **Purpose**: Remove pod identity associations
-- **Parameters**: cluster, namespace, service account
-- **Operation**: Deletes specific CRD resource
-
-#### DescribeCommand
-- **Purpose**: Show detailed association information
-- **Parameters**: cluster, namespace, service account
-- **Operation**: Retrieves and displays CRD resource details
-
-#### CliMain
-- **Purpose**: Application entry point
-- **Framework**: PicoCLI integration with Quarkus
-- **Features**: Help generation, version display, command routing
-
-## eks-pod-identity-webhook Module
-
-### Webhook Components
-
-#### WebhookEndpoint
-- **Purpose**: Kubernetes admission webhook handler
-- **Key Method**: `mutate()`
-- **Responsibilities**:
-  - Receives admission review requests
-  - Delegates to mutator for pod modifications
-  - Returns admission response with patches
-- **Integration**: Kubernetes admission controller framework
-
-#### PodIdentityMutator
-- **Purpose**: Pod specification mutation logic
-- **Key Methods**:
-  - `injectTokenVolume()`: Adds service account token volume
-  - `injectEnvVars()`: Injects AWS credential environment variables
-- **Responsibilities**:
-  - Pod spec modification for EKS Pod Identity compatibility
-  - Environment variable injection
-  - Volume and volume mount configuration
-- **Conditions**: Only mutates pods with associated service accounts
-
-#### PodIdentityAssociationLookup
-- **Purpose**: Association existence checking
-- **Key Method**: `hasAssociation()`
-- **Responsibilities**:
-  - Determines if pod's service account has identity association
-  - Queries CRD resources
-- **Usage**: Guards mutation logic
-
-## eks-pod-identity-crd Module
-
-### CRD Components
-
-#### PodIdentityAssociation
-- **Purpose**: Custom resource definition for associations
-- **API Group**: `eks.amazonaws.com/v1`
-- **Scope**: Namespaced
-- **Usage**: Kubernetes custom resource instances
-
-#### PodIdentityAssociationSpec
-- **Purpose**: Specification schema for associations
-- **Fields**:
-  - `clusterName`: EKS cluster identifier
-  - `namespace`: Kubernetes namespace
-  - `serviceAccount`: Service account name
-  - `roleArn`: AWS IAM role ARN
-- **Validation**: All fields required
-
-## Component Interactions
-
-### Service Dependencies
+The EKS-DX Control Plane consists of five major components, each with distinct responsibilities in the authentication and management workflow.
 
 ```mermaid
 graph TB
-    subgraph "HTTP Layer"
-        A[EksAuthResource]
+    subgraph "Core Services"
+        Lambda[eks-dx-lambda<br/>Authentication Service]
+        Proxy[eks-auth-proxy<br/>In-Cluster Proxy]
+        Webhook[eks-pod-identity-webhook<br/>Admission Controller]
     end
     
-    subgraph "Business Logic"
-        B[TokenValidationService]
-        C[PodIdentityAssociationService]
-        D[AwsCredentialService]
+    subgraph "Management Tools"
+        CLI[eks-dx-cli<br/>Management CLI]
+        Infra[infra<br/>Infrastructure]
     end
     
-    subgraph "External APIs"
-        E[Kubernetes API]
-        F[AWS EKS API]
-        G[AWS STS API]
-    end
-    
-    subgraph "Data Layer"
-        H[CRD Resources]
-        I[ConfigMap]
-    end
-    
-    A --> B
-    A --> C
-    A --> D
-    
-    B --> E
-    C --> E
-    C --> F
-    C --> H
-    C --> I
-    D --> G
+    CLI --> Lambda
+    Proxy --> Lambda
+    Webhook --> Lambda
+    Infra --> AWS[AWS Resources]
 ```
 
-### Cross-Module Dependencies
+## eks-dx-lambda (Core Authentication Service)
 
+### Purpose
+Central authentication service that validates JWT tokens and exchanges them for AWS credentials.
+
+### Key Classes
+- **EksAuthResource**: Main API endpoint for credential exchange
+- **ClusterResource**: Cluster registration and management
+- **AssociationResource**: Pod identity association CRUD operations
+- **JwksTokenValidationService**: JWT signature validation with JWKS
+- **DynamoDbClusterService**: Cluster data persistence
+- **DynamoDbAssociationService**: Association data persistence
+- **AwsCredentialService**: STS integration for credential exchange
+
+### Responsibilities
+- JWT token validation using JWKS
+- Association lookup in DynamoDB
+- AWS STS AssumeRole operations
+- Session tag propagation from Kubernetes metadata
+- RESTful API for management operations
+
+### Integration Points
+- **DynamoDB**: Cluster and association storage
+- **AWS STS**: Credential exchange
+- **Kubernetes JWKS**: Token signature validation
+
+## eks-dx-cli (Management CLI)
+
+### Purpose
+Native command-line interface for managing clusters and pod identity associations.
+
+### Key Classes
+- **EksDxCommand**: Main CLI entry point with picocli
+- **CreateClusterCommand**: Cluster registration with JWKS discovery
+- **CreateAssociationCommand**: Association creation
+- **EksDxApiClient**: HTTP client with AWS SigV4 authentication
+- **AwsSigV4Signer**: Custom AWS signature implementation
+- **EksDxConfig**: Configuration management (~/.eks-dx/config)
+
+### Responsibilities
+- Cluster lifecycle management (create, update, delete, list, describe)
+- Association lifecycle management (create, delete, list, describe)
+- JWKS discovery from Kubernetes API servers
+- AWS SigV4 request signing for API authentication
+- Configuration management and persistence
+
+### Integration Points
+- **EKS-DX Lambda API**: All management operations
+- **Kubernetes API**: JWKS endpoint discovery
+- **AWS Credentials**: SigV4 signing for API requests
+
+## eks-auth-proxy (In-Cluster Proxy)
+
+### Purpose
+In-cluster component that provides fast-fail token validation and forwards requests to the Lambda service.
+
+### Key Classes
+- **EksAuthAgentResource**: Main proxy endpoint
+- **TokenValidationService**: Kubernetes TokenReview integration
+- **LambdaForwardingService**: HTTP forwarding to Lambda API
+
+### Responsibilities
+- Kubernetes TokenReview validation (fast-fail)
+- HTTP request forwarding to Lambda service
+- Error handling and status code translation
+- Health check endpoints for Kubernetes probes
+
+### Integration Points
+- **Kubernetes API**: TokenReview for signature validation
+- **EKS-DX Lambda**: Token forwarding for credential exchange
+
+## eks-pod-identity-webhook (Admission Controller)
+
+### Purpose
+Kubernetes admission webhook that mutates pods to inject AWS credentials environment variables and projected service account tokens.
+
+### Key Classes
+- **WebhookEndpoint**: Admission controller HTTP endpoint
+- **PodIdentityMutator**: Pod mutation logic
+- **LambdaAssociationLookup**: Association existence checking
+
+### Responsibilities
+- Pod mutation for identity injection
+- Environment variable injection (AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE)
+- Projected token volume mounting
+- Association existence validation before mutation
+
+### Integration Points
+- **Kubernetes API**: Admission webhook registration
+- **EKS-DX Lambda**: Association lookup API
+
+## infra (Infrastructure as Code)
+
+### Purpose
+AWS CDK infrastructure definitions for deploying the complete system.
+
+### Key Classes
+- **InfraApp**: CDK application entry point
+- **EksDxStack**: Complete AWS infrastructure stack
+
+### Responsibilities
+- Lambda function deployment with SnapStart
+- DynamoDB table creation with PITR
+- API Gateway configuration with IAM authentication
+- CloudWatch alarms and monitoring setup
+- IAM roles and policies for Lambda execution
+
+### Integration Points
+- **AWS CDK**: Infrastructure deployment framework
+- **AWS Services**: Lambda, DynamoDB, API Gateway, CloudWatch
+
+## Component Interactions
+
+### Authentication Flow
 ```mermaid
-graph LR
-    subgraph "CLI Module"
-        A[eks-d-auth-cli]
-    end
+sequenceDiagram
+    participant Pod
+    participant Webhook
+    participant Proxy
+    participant Lambda
+    participant DDB
+    participant STS
     
-    subgraph "Webhook Module"
-        B[eks-pod-identity-webhook]
-    end
+    Note over Webhook: Pod Creation
+    Webhook->>Lambda: Check Association
+    Webhook->>Pod: Inject Identity (if exists)
     
-    subgraph "Proxy Module"
-        C[eks-auth-proxy]
-    end
-    
-    subgraph "CRD Module"
-        D[eks-pod-identity-crd]
-    end
-    
-    A --> D
-    B --> D
-    C --> D
+    Note over Pod: Runtime Authentication
+    Pod->>Proxy: Service Account Token
+    Proxy->>Proxy: TokenReview Validation
+    Proxy->>Lambda: Forward Valid Token
+    Lambda->>DDB: Lookup Association
+    Lambda->>STS: AssumeRole
+    STS-->>Lambda: AWS Credentials
+    Lambda-->>Pod: Credentials Response
 ```
+
+### Management Flow
+```mermaid
+sequenceDiagram
+    participant CLI
+    participant Lambda
+    participant DDB
+    participant K8s as Kubernetes API
+    
+    Note over CLI: Cluster Registration
+    CLI->>K8s: Discover JWKS Endpoint
+    CLI->>Lambda: Register Cluster + JWKS
+    Lambda->>DDB: Store Cluster Info
+    
+    Note over CLI: Association Management
+    CLI->>Lambda: Create Association
+    Lambda->>Lambda: Validate IAM Role
+    Lambda->>DDB: Store Association
+```
+
+## Component Dependencies
+
+### Runtime Dependencies
+- **eks-dx-lambda**: DynamoDB, AWS STS, jose4j
+- **eks-dx-cli**: JDK HttpClient, picocli, AWS credentials
+- **eks-auth-proxy**: Kubernetes client, JDK HttpClient
+- **eks-pod-identity-webhook**: Kubernetes client, JDK HttpClient
+- **infra**: AWS CDK, AWS SDK
+
+### Build Dependencies
+- **All Components**: Maven, Quarkus BOM
+- **CLI**: GraalVM native-image
+- **Containers**: Quarkus container-image extension
+- **Infrastructure**: AWS CDK CLI
 
 ## Component Configuration
 
-### Service Configuration
-- **Quarkus Properties**: Application-level settings
-- **Environment Variables**: Runtime configuration
-- **CDI Injection**: Dependency management
-- **Health Checks**: Liveness and readiness probes
+### Environment Variables
+| Component | Key Variables | Purpose |
+|-----------|---------------|---------|
+| eks-dx-lambda | `eks-dx.clusters-table`, `eks-dx.associations-table` | DynamoDB table names |
+| eks-auth-proxy | `EKS_DX_ENDPOINT` | Lambda API Gateway URL |
+| eks-pod-identity-webhook | `EKS_CLUSTER_NAME`, `EKS_DX_ENDPOINT` | Cluster identification and API URL |
 
-### Build Configuration
-- **Maven Modules**: Multi-module project structure
-- **Quarkus Extensions**: Framework capabilities
-- **Native Compilation**: GraalVM configuration for CLI
-- **Container Images**: Jib configuration for Docker builds
-
-### Deployment Configuration
-- **Kubernetes Manifests**: Service and deployment specs
-- **Resource Limits**: Memory and CPU constraints
-- **Security Context**: Pod security settings
-- **Service Accounts**: RBAC and permissions
+### Configuration Files
+| Component | File | Purpose |
+|-----------|------|---------|
+| eks-dx-cli | `~/.eks-dx/config` | API endpoint and region |
+| All | `application.properties` | Quarkus configuration |

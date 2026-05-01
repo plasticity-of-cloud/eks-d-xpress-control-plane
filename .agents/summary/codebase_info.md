@@ -1,90 +1,76 @@
 # Codebase Information
 
-## Overview
-- **Total Files**: 526
-- **Prioritized Files**: 33 (key implementation files)
-- **Lines of Code**: 2,858
-- **Size Category**: Large (L)
-- **Primary Language**: Java
-- **Framework**: Quarkus
+## Project Overview
+**EKS-DX Control Plane** - A Quarkus-based service that replicates the AWS EKS Auth Service for local development and CI/CD environments.
+
+## Statistics
+- **Total Files**: 1,562
+- **Prioritized Files**: 68
+- **Lines of Code**: 6,485
+- **Functions**: 363
+- **Classes/Structs/Enums**: 75
+
+## Programming Languages
+- **Primary**: Java 21
+- **Build**: Maven
+- **Infrastructure**: AWS CDK (TypeScript/Java)
+- **Deployment**: SAM YAML
 
 ## Module Structure
-
-```mermaid
-graph TB
-    subgraph "Core Modules"
-        A[eks-auth-proxy] --> D[eks-pod-identity-crd]
-        B[eks-d-auth-cli] --> D
-        C[eks-pod-identity-webhook] --> D
-    end
-    
-    subgraph "Infrastructure"
-        E[build.sh] --> A
-        E --> B
-        E --> C
-        F[deploy.sh] --> A
-        F --> B
-        F --> C
-    end
-    
-    subgraph "External Dependencies"
-        G[AWS SDK] --> A
-        H[Kubernetes Client] --> A
-        H --> B
-        H --> C
-        I[Quarkus] --> A
-        I --> B
-        I --> C
-    end
+```
+eks-dx-control-plane/
+├── eks-dx-lambda/           # Core Lambda service (150+ LOC)
+├── eks-dx-cli/              # Native CLI tool (200+ LOC)  
+├── eks-auth-proxy/          # In-cluster proxy (180+ LOC)
+├── eks-pod-identity-webhook/ # K8s admission webhook (190+ LOC)
+├── infra/                   # CDK infrastructure (190+ LOC)
+└── docs/                    # User guides and scripts
 ```
 
-## File Distribution by Module
+## Key Metrics by Module
 
-| Module | Files | Key Components | Purpose |
-|--------|-------|----------------|---------|
-| `eks-auth-proxy` | ~200 | REST API, Services, Tests | Main authentication service |
-| `eks-d-auth-cli` | ~50 | CLI Commands | Management tool for associations |
-| `eks-pod-identity-webhook` | ~30 | Webhook handlers | Kubernetes admission controller |
-| `eks-pod-identity-crd` | ~20 | CRD definitions | Custom resource schemas |
-| Root | ~226 | Build/deploy scripts | Infrastructure automation |
+### eks-dx-lambda (Core Service)
+- **Files**: 15 prioritized
+- **Classes**: 25
+- **Functions**: 120+
+- **Purpose**: JWT validation, DynamoDB operations, STS integration
 
-## Technology Stack
+### eks-dx-cli (Management CLI)
+- **Files**: 20 prioritized  
+- **Classes**: 15
+- **Functions**: 80+
+- **Purpose**: Cluster and association management commands
 
-### Core Technologies
-- **Java 21**: Primary programming language
-- **Quarkus 3.20.3**: Application framework
-- **Maven**: Build system
-- **Docker/Jib**: Containerization
-- **GraalVM**: Native compilation (CLI)
+### eks-auth-proxy (In-Cluster Component)
+- **Files**: 8 prioritized
+- **Classes**: 8
+- **Functions**: 25+
+- **Purpose**: TokenReview validation and Lambda forwarding
 
-### AWS Integration
-- **AWS SDK for Java**: EKS and STS clients
-- **IAM**: Role assumption and policies
-- **EKS**: Pod Identity associations
-- **STS**: Temporary credential generation
+### eks-pod-identity-webhook (Kubernetes Integration)
+- **Files**: 6 prioritized
+- **Classes**: 5
+- **Functions**: 15+
+- **Purpose**: Pod mutation for identity injection
 
-### Kubernetes Integration
-- **Fabric8 Kubernetes Client**: K8s API interactions
-- **Custom Resource Definitions**: Pod identity associations
-- **Admission Webhooks**: Pod mutation
-- **Service Account Tokens**: JWT validation
+### infra (Infrastructure as Code)
+- **Files**: 2 prioritized
+- **Classes**: 2
+- **Functions**: 5+
+- **Purpose**: AWS resource provisioning via CDK
 
-## Build and Deployment
+## Technology Dependencies
+- **Framework**: Quarkus 3.x
+- **Cloud**: AWS SDK v2
+- **Database**: DynamoDB
+- **Authentication**: jose4j (JWT/JWKS)
+- **HTTP Client**: JDK HttpClient
+- **Testing**: JUnit 5, Mockito, WireMock
+- **Build**: Maven 3.8+, GraalVM (native compilation)
 
-### Build System
-- Multi-module Maven project
-- Jib for container image building
-- Native compilation support for CLI
-- Resource limits configured (10GB memory, 4 CPU)
-
-### Deployment Options
-- Docker containers via Jib
-- Kubernetes manifests
-- ECR integration
-- Local development mode
-
-## Testing Strategy
-- Unit tests with JUnit 5
-- Integration tests with real AWS resources
-- Mock server testing with WireMock
-- Kubernetes client mocking with Fabric8
+## Architecture Pattern
+**Microservices with Serverless Backend**
+- Event-driven authentication flow
+- Stateless components with DynamoDB persistence
+- Container-native deployment (Quarkus)
+- Infrastructure as Code (CDK + SAM)

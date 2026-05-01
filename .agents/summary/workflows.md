@@ -1,392 +1,309 @@
-# Workflows and Processes
+# Key Workflows and Processes
 
-## Core Authentication Workflow
+## Authentication Workflow
 
-The main authentication process follows a four-step validation pattern that mirrors the AWS EKS Auth Service behavior.
-
-### Primary Authentication Flow
+The core authentication workflow enables Kubernetes pods to obtain AWS credentials using service account tokens.
 
 ```mermaid
 sequenceDiagram
-    participant App as AWS SDK Application
-    participant Agent as EKS Pod Identity Agent
-    participant Proxy as Auth Service Proxy
-    participant K8s as Kubernetes API Server
-    participant EKS as AWS EKS API
+    participant Pod as Application Pod
+    participant Proxy as EKS Auth Proxy
+    participant K8s as Kubernetes API
+    participant Lambda as EKS-DX Lambda
+    participant DDB as DynamoDB
     participant STS as AWS STS
     
-    Note over App,STS: Step 1: Request Initiation
-    App->>Agent: AWS API Call (intercepted)
-    Agent->>Proxy: POST / {ClusterName, Token}
+    Note over Pod: Pod starts with projected SA token
+    Pod->>Proxy: POST / {ClusterName, Token}
     
-    Note over Proxy,EKS: Step 2: Pod Identity Association Lookup
-    alt Primary: EKS API Available
-        Proxy->>EKS: ListPodIdentityAssociations
-        EKS-->>Proxy: Association List
-        Proxy->>EKS: DescribePodIdentityAssociation
-        EKS-->>Proxy: Role ARN
-    else Fallback: CRD Resources
-        Proxy->>K8s: List PodIdentityAssociation CRDs
-        K8s-->>Proxy: CRD Resources
-        Proxy->>Proxy: Match by cluster/namespace/serviceaccount
-    else Fallback: ConfigMap
-        Proxy->>K8s: Get ConfigMap pod-identity-associations
-        K8s-->>Proxy: ConfigMap Data
-        Proxy->>Proxy: Pattern match (supports wildcards)
-    else Fallback: Generated Default
-        Proxy->>Proxy: Generate arn:aws:iam::{account}:role/eks-pod-identity-{ns}-{sa}
-    end
+    Note over Proxy: Fast-fail validation
+    Proxy->>K8s: TokenReview {token, audience}
+    K8s-->>Proxy: {authenticated: true, user: {...}}
     
-    Note over Proxy,K8s: Step 3: Token Validation
-    Proxy->>K8s: TokenReview API Call
-    K8s->>K8s: Validate JWT signature & audience
-    K8s-->>Proxy: TokenReview Response
-    Proxy->>Proxy: Extract claims (namespace, serviceaccount, pod info)
+    Note over Proxy: Forward to Lambda if valid
+    Proxy->>Lambda: POST /clusters/{name}/assets
     
-    Note over Proxy,STS: Step 4: AWS Role Assumption
-    Proxy->>Proxy: Build session tags from token claims
-    Proxy->>STS: AssumeRole with session tags
-    STS-->>Proxy: Temporary AWS Credentials
+    Note over Lambda: Multi-stage validation
+    Lambda->>Lambda: Parse JWT claims
+    Lambda->>DDB: Get cluster JWKS
+    Lambda->>Lambda: Verify JWT signature
+    Lambda->>DDB: Lookup association
     
-    Note over Proxy,App: Step 5: Response
-    Proxy-->>Agent: Credentials Response
-    Agent-->>App: AWS Credentials (transparent to app)
+    Note over Lambda: AWS credential exchange
+    Lambda->>STS: AssumeRole with session tags
+    STS-->>Lambda: Temporary credentials
+    
+    Lambda-->>Proxy: AWS credentials response
+    Proxy-->>Pod: Credentials {AccessKey, SecretKey, SessionToken}
 ```
 
-### Fallback Strategy Details
+### Authentication Steps
 
-The system implements a robust fallback strategy for role association lookup:
+1. **Token Acquisition**: Pod uses projected service account token with audience `pods.eks.amazonaws.com`
+2. **Proxy Validation**: EKS Auth Proxy performs TokenReview with Kubernetes API for fast-fail
+3. **Token Forwarding**: Valid tokens are forwarded to Lambda service
+4. **JWT Validation**: Lambda validates JWT signature using cached JWKS
+5. **Association Lookup**: Lambda queries DynamoDB for pod identity association
+6. **Credential Exchange**: Lambda calls STS AssumeRole with Kubernetes metadata as session tags
+7. **Response**: AWS credentials returned to pod for use with AWS SDKs
 
-```mermaid
-graph TD
-    A[Role Lookup Request] --> B{EKS API Available?}
-    B -->|Yes| C[Query EKS ListPodIdentityAssociations]
-    B -->|No| D[Query CRD Resources]
-    
-    C --> E{Association Found?}
-    E -->|Yes| F[Return Role ARN from EKS]
-    E -->|No| D
-    
-    D --> G{CRD Match Found?}
-    G -->|Yes| H[Return Role ARN from CRD]
-    G -->|No| I[Query ConfigMap]
-    
-    I --> J{ConfigMap Pattern Match?}
-    J -->|Yes| K[Return Role ARN from ConfigMap]
-    J -->|No| L[Generate Default Role ARN]
-    
-    F --> M[Continue to Token Validation]
-    H --> M
-    K --> M
-    L --> M
-```
+## Cluster Management Workflow
 
-## CLI Management Workflows
-
-### Association Creation Workflow
+Cluster registration enables the system to validate tokens from specific Kubernetes clusters.
 
 ```mermaid
 sequenceDiagram
-    participant User as CLI User
-    participant CLI as eks-d-auth-cli
+    participant CLI as EKS-DX CLI
     participant K8s as Kubernetes API
+    participant Lambda as EKS-DX Lambda
+    participant DDB as DynamoDB
     
-    User->>CLI: create --cluster X --namespace Y --service-account Z --role-arn ARN
-    CLI->>CLI: Validate input parameters
-    CLI->>CLI: Build CRD resource specification
-    CLI->>K8s: Create PodIdentityAssociation CRD
-    K8s-->>CLI: Creation confirmation
-    CLI-->>User: Success message with association details
+    Note over CLI: Cluster registration
+    CLI->>K8s: GET /.well-known/openid_configuration
+    K8s-->>CLI: {issuer, jwks_uri}
+    CLI->>K8s: GET {jwks_uri}
+    K8s-->>CLI: JWKS {keys: [...]}
+    
+    CLI->>Lambda: POST /clusters {name, issuer, jwks}
+    Lambda->>Lambda: Validate cluster data
+    Lambda->>DDB: Store cluster info
+    Lambda-->>CLI: 201 Created
+    
+    Note over CLI: JWKS refresh (optional)
+    CLI->>Lambda: PUT /clusters/{name}/jwks
+    Lambda->>K8s: Fetch fresh JWKS
+    Lambda->>DDB: Update cluster JWKS
+    Lambda-->>CLI: 200 OK
 ```
 
-### Association Listing Workflow
+### Cluster Management Steps
+
+1. **OIDC Discovery**: CLI discovers OIDC configuration from Kubernetes API
+2. **JWKS Retrieval**: CLI fetches JSON Web Key Set for token validation
+3. **Registration**: CLI registers cluster with Lambda service
+4. **Validation**: Lambda validates cluster data and stores in DynamoDB
+5. **JWKS Refresh**: Periodic JWKS updates to handle key rotation
+
+## Association Management Workflow
+
+Pod identity associations map Kubernetes service accounts to AWS IAM roles.
 
 ```mermaid
 sequenceDiagram
-    participant User as CLI User
-    participant CLI as eks-d-auth-cli
+    participant CLI as EKS-DX CLI
+    participant Lambda as EKS-DX Lambda
+    participant IAM as AWS IAM
+    participant DDB as DynamoDB
+    
+    Note over CLI: Create association
+    CLI->>Lambda: POST /clusters/{name}/associations
+    Note right of CLI: {namespace, serviceAccount, roleArn}
+    
+    Lambda->>IAM: GetRole {RoleName}
+    IAM-->>Lambda: Role details + trust policy
+    Lambda->>Lambda: Validate trust policy
+    
+    Lambda->>DDB: Check for duplicate
+    Lambda->>DDB: Store association
+    Lambda-->>CLI: 201 Created {associationId}
+    
+    Note over CLI: List associations
+    CLI->>Lambda: GET /clusters/{name}/associations?namespace=default
+    Lambda->>DDB: Query associations
+    Lambda-->>CLI: Association list
+```
+
+### Association Management Steps
+
+1. **Role Validation**: Lambda validates IAM role exists and has proper trust policy
+2. **Duplicate Check**: Lambda ensures no duplicate associations exist
+3. **Storage**: Association stored in DynamoDB with generated ID
+4. **Querying**: Associations can be filtered by namespace and service account
+
+## Pod Identity Injection Workflow
+
+The admission webhook automatically injects identity configuration into pods.
+
+```mermaid
+sequenceDiagram
     participant K8s as Kubernetes API
-    
-    User->>CLI: list --cluster X [--namespace Y]
-    CLI->>K8s: List PodIdentityAssociation CRDs
-    alt Namespace Filter Applied
-        K8s-->>CLI: Filtered CRD list
-    else No Filter
-        K8s-->>CLI: All CRDs for cluster
-    end
-    CLI->>CLI: Format output table
-    CLI-->>User: Formatted association list
-```
-
-## Webhook Mutation Workflow
-
-### Pod Admission Process
-
-```mermaid
-sequenceDiagram
-    participant K8s as Kubernetes API Server
     participant Webhook as Pod Identity Webhook
-    participant CRD as CRD Resources
+    participant Lambda as EKS-DX Lambda
+    participant Pod as Application Pod
     
-    Note over K8s,CRD: Pod Creation Intercepted
-    K8s->>Webhook: AdmissionReview (Pod CREATE)
-    Webhook->>Webhook: Extract pod serviceAccount
-    Webhook->>CRD: Check for PodIdentityAssociation
+    Note over K8s: Pod creation request
+    K8s->>Webhook: AdmissionReview {pod spec}
     
-    alt Association Exists
-        CRD-->>Webhook: Association found
-        Webhook->>Webhook: Generate JSON patches
-        Note over Webhook: Inject AWS_CONTAINER_CREDENTIALS_FULL_URI
-        Note over Webhook: Add service account token volume
-        Webhook-->>K8s: AdmissionReview (allowed=true, patches)
-        K8s->>K8s: Apply patches to pod spec
-    else No Association
-        CRD-->>Webhook: No association found
-        Webhook-->>K8s: AdmissionReview (allowed=true, no patches)
-        K8s->>K8s: Create pod without modifications
-    end
-```
-
-### Mutation Details
-
-The webhook applies specific mutations to pods with associated service accounts:
-
-**Environment Variable Injection**:
-```yaml
-env:
-- name: AWS_CONTAINER_CREDENTIALS_FULL_URI
-  value: "http://eks-pod-identity-agent.kube-system:80/v1/credentials"
-- name: AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE
-  value: "/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/token"
-```
-
-**Volume and Volume Mount Injection**:
-```yaml
-volumes:
-- name: aws-iam-token
-  projected:
-    sources:
-    - serviceAccountToken:
-        audience: pods.eks.amazonaws.com
-        expirationSeconds: 86400
-        path: token
-
-volumeMounts:
-- name: aws-iam-token
-  mountPath: /var/run/secrets/pods.eks.amazonaws.com/serviceaccount
-  readOnly: true
-```
-
-## Build and Deployment Workflows
-
-### Multi-Module Build Process
-
-```mermaid
-graph TB
-    A[build.sh] --> B{Target Selection}
-    B -->|all| C[Build All Modules]
-    B -->|proxy| D[Build eks-auth-proxy]
-    B -->|cli| E[Build eks-d-auth-cli]
-    B -->|webhook| F[Build eks-pod-identity-webhook]
+    Webhook->>Lambda: Check association exists
+    Lambda-->>Webhook: Association found/not found
     
-    C --> G[Build CRD Module]
-    D --> G
-    E --> G
-    F --> G
-    
-    G --> H{Build Type}
-    H -->|JVM| I[Maven Package]
-    H -->|Native| J[GraalVM Native Build]
-    
-    I --> K[Jib Container Build]
-    J --> L[Native Container Build]
-    
-    K --> M{Push Enabled?}
-    L --> M
-    M -->|Yes| N[Push to Registry]
-    M -->|No| O[Local Image Only]
-```
-
-### Deployment Process
-
-```mermaid
-sequenceDiagram
-    participant User as Operator
-    participant Deploy as deploy.sh
-    participant K8s as Kubernetes Cluster
-    participant CertMgr as Cert Manager
-    
-    User->>Deploy: ./deploy.sh --cluster X --region Y
-    
-    Note over Deploy,CertMgr: Step 1: Prerequisites
-    Deploy->>K8s: Check cert-manager installation
-    alt Cert Manager Missing
-        Deploy->>K8s: Install cert-manager
-        Deploy->>Deploy: Wait for cert-manager ready
+    alt Association exists
+        Webhook->>Webhook: Inject environment variables
+        Note right of Webhook: AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE
+        Webhook->>Webhook: Add projected token volume
+        Webhook-->>K8s: Mutated pod spec
+    else No association
+        Webhook-->>K8s: Original pod spec (no changes)
     end
     
-    Note over Deploy,K8s: Step 2: CRD Installation
-    Deploy->>K8s: Apply PodIdentityAssociation CRD
-    
-    Note over Deploy,K8s: Step 3: Auth Proxy Deployment
-    Deploy->>K8s: Apply proxy deployment & service
-    Deploy->>K8s: Apply RBAC resources
-    
-    Note over Deploy,K8s: Step 4: CLI Deployment
-    Deploy->>K8s: Apply CLI job/deployment
-    
-    Note over Deploy,K8s: Step 5: Webhook Deployment
-    Deploy->>K8s: Apply webhook deployment
-    Deploy->>K8s: Apply MutatingAdmissionWebhook
-    Deploy->>CertMgr: Request TLS certificate
-    
-    Note over Deploy,K8s: Step 6: Sample Associations
-    Deploy->>K8s: Apply sample PodIdentityAssociation CRDs
-    
-    Deploy-->>User: Deployment complete
+    K8s->>Pod: Create pod with identity (if injected)
 ```
+
+### Pod Injection Steps
+
+1. **Admission Review**: Kubernetes sends pod creation request to webhook
+2. **Association Check**: Webhook queries Lambda for existing association
+3. **Conditional Mutation**: Pod is mutated only if association exists
+4. **Environment Injection**: AWS_ROLE_ARN and AWS_WEB_IDENTITY_TOKEN_FILE added
+5. **Volume Mounting**: Projected service account token volume mounted
 
 ## Error Handling Workflows
 
 ### Authentication Error Flow
-
 ```mermaid
-graph TD
-    A[Authentication Request] --> B{Request Valid?}
+flowchart TD
+    A[Token Request] --> B{TokenReview Valid?}
     B -->|No| C[Return 400 Bad Request]
-    B -->|Yes| D[Token Validation]
-    
-    D --> E{Token Valid?}
-    E -->|No| F[Return 400 Token Invalid]
-    E -->|Yes| G[Role Association Lookup]
-    
-    G --> H{Association Found?}
-    H -->|No| I[Return 400 No Association]
-    H -->|Yes| J[AWS STS AssumeRole]
-    
-    J --> K{STS Success?}
-    K -->|No| L[Return 500 STS Error]
-    K -->|Yes| M[Return 200 Credentials]
+    B -->|Yes| D{JWT Signature Valid?}
+    D -->|No| E[Return 403 Forbidden]
+    D -->|Yes| F{Association Exists?}
+    F -->|No| G[Return 404 Not Found]
+    F -->|Yes| H{STS AssumeRole Success?}
+    H -->|No| I[Return 500 Internal Error]
+    H -->|Yes| J[Return 200 with Credentials]
 ```
 
-### CLI Error Handling
-
+### Management Error Flow
 ```mermaid
-graph TD
-    A[CLI Command] --> B{Input Valid?}
-    B -->|No| C[Print Usage & Exit 1]
-    B -->|Yes| D[Kubernetes API Call]
-    
-    D --> E{API Success?}
-    E -->|No| F{Network Error?}
-    F -->|Yes| G[Print Connection Error & Exit 1]
-    F -->|No| H[Print API Error & Exit 1]
-    E -->|Yes| I[Process Response]
-    
-    I --> J{Operation Success?}
-    J -->|No| K[Print Operation Error & Exit 1]
-    J -->|Yes| L[Print Success & Exit 0]
+flowchart TD
+    A[Management Request] --> B{Authentication Valid?}
+    B -->|No| C[Return 401 Unauthorized]
+    B -->|Yes| D{Input Validation?}
+    D -->|No| E[Return 400 Bad Request]
+    D -->|Yes| F{Resource Exists?}
+    F -->|No| G[Return 404 Not Found]
+    F -->|Yes| H{Operation Success?}
+    H -->|No| I[Return 500 Internal Error]
+    H -->|Yes| J[Return Success Response]
 ```
 
-## Configuration Management Workflows
+## Configuration Workflows
 
-### Dynamic Configuration Updates
-
+### CLI Configuration Setup
 ```mermaid
 sequenceDiagram
-    participant Admin as Administrator
-    participant CLI as eks-d-auth-cli
-    participant K8s as Kubernetes API
-    participant Proxy as Auth Service Proxy
+    participant User
+    participant CLI as EKS-DX CLI
+    participant Config as ~/.eks-dx/config
     
-    Note over Admin,Proxy: Runtime Configuration Update
-    Admin->>CLI: create/update/delete association
-    CLI->>K8s: Modify CRD resource
-    K8s-->>CLI: Confirmation
+    User->>CLI: eks-dx configure --endpoint URL --region REGION
+    CLI->>Config: Create/update config file
+    CLI-->>User: Configuration saved
     
-    Note over K8s,Proxy: Next Authentication Request
-    Proxy->>K8s: Query CRD resources
-    K8s-->>Proxy: Updated association list
-    Proxy->>Proxy: Use new configuration
+    Note over CLI: Subsequent commands
+    CLI->>Config: Load configuration
+    CLI->>CLI: Merge with CLI flags and env vars
 ```
 
-### ConfigMap Fallback Management
-
+### Environment Variable Resolution
 ```mermaid
-sequenceDiagram
-    participant Admin as Administrator
-    participant K8s as Kubernetes API
-    participant Proxy as Auth Service Proxy
-    
-    Admin->>K8s: Update ConfigMap pod-identity-associations
-    K8s-->>Admin: ConfigMap updated
-    
-    Note over Proxy: Next Authentication (CRD lookup fails)
-    Proxy->>K8s: Get ConfigMap
-    K8s-->>Proxy: Updated ConfigMap data
-    Proxy->>Proxy: Parse key patterns & wildcards
+flowchart TD
+    A[Component Startup] --> B[Load application.properties]
+    B --> C[Override with environment variables]
+    C --> D[Override with CLI flags]
+    D --> E[Final configuration]
 ```
 
 ## Monitoring and Observability Workflows
 
-### Health Check Process
-
+### CloudWatch Metrics Flow
 ```mermaid
 sequenceDiagram
-    participant K8s as Kubernetes
-    participant Proxy as Auth Service Proxy
-    participant Deps as Dependencies
+    participant Lambda as EKS-DX Lambda
+    participant CW as CloudWatch
+    participant Alarms as CloudWatch Alarms
+    participant SNS as SNS Topic
     
-    loop Every 10 seconds
-        K8s->>Proxy: GET /health/live
-        Proxy-->>K8s: 200 OK (service running)
-    end
+    Lambda->>CW: Emit custom metrics
+    Note right of Lambda: Authentication success/failure rates
+    CW->>Alarms: Evaluate alarm conditions
     
-    loop Every 30 seconds
-        K8s->>Proxy: GET /health/ready
-        Proxy->>Deps: Check AWS connectivity
-        Proxy->>Deps: Check Kubernetes connectivity
-        alt All Dependencies OK
-            Proxy-->>K8s: 200 OK (ready)
-        else Dependency Issue
-            Proxy-->>K8s: 503 Service Unavailable
-        end
+    alt Threshold breached
+        Alarms->>SNS: Send notification
+        SNS-->>Admin: Alert notification
     end
 ```
 
-### Metrics Collection
-
+### Logging Workflow
 ```mermaid
-graph LR
-    A[HTTP Requests] --> B[Micrometer Metrics]
-    C[JVM Metrics] --> B
-    D[Custom Business Metrics] --> B
-    B --> E[Prometheus Format]
-    E --> F[GET /metrics]
-    F --> G[Prometheus Scraper]
+flowchart TD
+    A[Component Operation] --> B[Structured Logging]
+    B --> C[CloudWatch Logs]
+    C --> D[Log Aggregation]
+    D --> E[Monitoring Dashboard]
+    E --> F[Alerting Rules]
 ```
 
-## Integration Workflows
+## Deployment Workflows
 
-### EKS Pod Identity Agent Integration
-
-```mermaid
-sequenceDiagram
-    participant App as Application
-    participant Agent as EKS Pod Identity Agent
-    participant Proxy as Auth Service Proxy
-    
-    Note over App,Proxy: Transparent AWS SDK Integration
-    App->>Agent: AWS API call (intercepted by agent)
-    Agent->>Agent: Check credential cache
-    alt Credentials Cached & Valid
-        Agent-->>App: Return cached credentials
-    else Need New Credentials
-        Agent->>Proxy: POST / with service account token
-        Proxy-->>Agent: New AWS credentials
-        Agent->>Agent: Cache credentials
-        Agent-->>App: Return new credentials
-    end
+### SAM Deployment
+```bash
+# Build and deploy workflow
+mvn -pl eks-dx-lambda package -DskipTests
+sam validate
+sam deploy --guided
 ```
 
-This integration allows existing AWS SDK applications to work without code changes, as the EKS Pod Identity Agent transparently handles credential acquisition and caching.
+### CDK Deployment
+```bash
+# Infrastructure as Code workflow
+mvn -pl eks-dx-lambda package -DskipTests
+cd infra
+cdk bootstrap  # First time only
+cdk deploy
+```
+
+### Container Deployment
+```bash
+# Build container images
+mvn -pl eks-auth-proxy package -DskipTests \
+  -Dquarkus.container-image.build=true
+
+mvn -pl eks-pod-identity-webhook package -DskipTests \
+  -Dquarkus.container-image.build=true
+
+# Deploy to Kubernetes
+kubectl apply -f k8s-manifests/
+```
+
+## Testing Workflows
+
+### Unit Testing
+```bash
+# Run all unit tests
+mvn test
+
+# Run specific module tests
+mvn -pl eks-dx-lambda test
+```
+
+### Integration Testing
+```bash
+# Start DynamoDB Local
+docker run -d -p 18000:8000 \
+  public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
+
+# Run integration tests
+mvn -pl eks-dx-lambda test \
+  -Dtest=DynamoDbIntegrationTest \
+  -Dintegration.dynamodb=true
+```
+
+### End-to-End Testing
+```bash
+# Full integration test with real AWS resources
+mvn -pl eks-auth-proxy test \
+  -Dintegration.aws=true \
+  -Dintegration.cluster=my-cluster \
+  -Daws.region=us-east-1
+```
