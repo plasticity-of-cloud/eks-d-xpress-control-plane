@@ -5,11 +5,13 @@
 # Prerequisites:
 #   - Lambda backend deployed (sam deploy)
 #   - AWS CLI v2 configured
-#   - An existing EC2 key pair
 #
 # Usage:
 #   ./setup.sh --key-pair my-key --region us-east-1 \
 #     --eks-dx-endpoint https://xxx.execute-api.us-east-1.amazonaws.com/prod
+#
+# The key pair will be created automatically if it does not exist.
+# The private key is saved to ./<key-pair-name>.pem
 #
 set -euo pipefail
 
@@ -21,7 +23,7 @@ err()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 REGION="${AWS_REGION:-us-east-1}"
 CLUSTER_NAME="k3s-pod-id"
 INSTANCE_TYPE="t4g.medium"
-KEY_PAIR=""
+KEY_PAIR="k3s-pod-id-key"
 EKS_DX_ENDPOINT=""
 SG_NAME="k3s-pod-id-sg"
 
@@ -30,7 +32,7 @@ usage() {
 Usage: $0 --key-pair NAME --eks-dx-endpoint URL [OPTIONS]
 
 Required:
-  --key-pair NAME           EC2 key pair name
+  --key-pair NAME           EC2 key pair name (created if absent, default: k3s-pod-id-key)
   --eks-dx-endpoint URL     EKS-DX Lambda API endpoint
 
 Options:
@@ -54,11 +56,25 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -z "$KEY_PAIR" ]] && err "--key-pair is required"
 [[ -z "$EKS_DX_ENDPOINT" ]] && err "--eks-dx-endpoint is required"
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 log "Account: $ACCOUNT_ID  Region: $REGION  Cluster: $CLUSTER_NAME"
+
+# ── 0. Key pair ──────────────────────────────────────────────────────
+PEM_FILE="${KEY_PAIR}.pem"
+if aws ec2 describe-key-pairs --key-names "$KEY_PAIR" --region "$REGION" &>/dev/null; then
+  warn "Key pair '$KEY_PAIR' already exists in AWS — skipping creation"
+  [[ ! -f "$PEM_FILE" ]] && warn "Private key $PEM_FILE not found locally — make sure you have it"
+else
+  log "Creating key pair '$KEY_PAIR' ..."
+  aws ec2 create-key-pair \
+    --key-name "$KEY_PAIR" \
+    --query 'KeyMaterial' --output text \
+    --region "$REGION" > "$PEM_FILE"
+  chmod 600 "$PEM_FILE"
+  log "Private key saved to $PEM_FILE"
+fi
 
 # ── 1. Security group ────────────────────────────────────────────────
 log "Creating security group ($SG_NAME) ..."
@@ -74,9 +90,11 @@ SG_ID=$(aws ec2 create-security-group \
   aws ec2 describe-security-groups --group-names "$SG_NAME" \
   --query 'SecurityGroups[0].GroupId' --output text --region "$REGION")
 
+MY_IP=$(curl -sf https://checkip.amazonaws.com) || err "Could not determine public IP"
 aws ec2 authorize-security-group-ingress \
-  --group-id "$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 \
+  --group-id "$SG_ID" --protocol tcp --port 22 --cidr "${MY_IP}/32" \
   --region "$REGION" 2>/dev/null || true
+log "SSH access restricted to $MY_IP"
 
 # ── 2. Launch EC2 with k3s ───────────────────────────────────────────
 read -r -d '' USERDATA <<'CLOUD_INIT' || true
