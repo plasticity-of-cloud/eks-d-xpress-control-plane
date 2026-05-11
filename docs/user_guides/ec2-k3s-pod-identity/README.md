@@ -171,14 +171,23 @@ kubectl set env deployment/eks-dx-pod-identity-webhook -n kube-system \
 kubectl apply -f eks-dx-pod-identity-webhook/k8s/mutating-webhook-configuration.yaml
 
 # EKS Pod Identity Agent
-git clone https://github.com/aws/eks-pod-identity-agent.git /tmp/eks-pod-identity-agent
+git clone --depth=1 https://github.com/aws/eks-pod-identity-agent.git /tmp/eks-pod-identity-agent
+
+# Pull secret for the agent image (hosted in AWS ECR us-west-2)
+kubectl create secret docker-registry ecr-secret-us-west-2 \
+  --namespace kube-system \
+  --docker-server=602401143452.dkr.ecr.us-west-2.amazonaws.com \
+  --docker-username=AWS \
+  --docker-password="$(aws ecr get-login-password --region us-west-2)"
+
 helm install eks-pod-identity-agent \
   /tmp/eks-pod-identity-agent/charts/eks-pod-identity-agent \
   --namespace kube-system \
-  --set clusterName="my-k3s" \
+  --set clusterName="$CLUSTER_NAME" \
   --set env.AWS_REGION="us-east-1" \
   --set "agent.additionalArgs.--endpoint=http://eks-dx-auth-proxy.kube-system.svc.cluster.local:8080" \
-  --set "affinity="
+  --set "affinity=" \
+  --set "imagePullSecrets[0].name=ecr-secret-us-west-2"
 ```
 
 ### 6. Test
