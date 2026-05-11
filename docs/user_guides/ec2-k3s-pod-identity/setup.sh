@@ -21,7 +21,7 @@ warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 err()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 
 REGION="${AWS_REGION:-us-east-1}"
-CLUSTER_NAME="k3s-pod-id"
+CLUSTER_NAME="eks-dx-control-plane-k3s"
 INSTANCE_TYPE="t4g.medium"
 KEY_PAIR="k3s-pod-id-key"
 EKS_DX_ENDPOINT=""
