@@ -3,7 +3,7 @@ kind: MutatingWebhookConfiguration
 metadata:
   name: eks-dx-pod-identity-webhook
   annotations:
-    cert-manager.io/inject-ca-from: kube-system/eks-dx-pod-identity-webhook-cert
+    cert-manager.io/inject-ca-from: kube-system/eks-dx-pod-identity-webhook-ca
 webhooks:
   - name: pod-identity.plasticity.cloud
     rules:
