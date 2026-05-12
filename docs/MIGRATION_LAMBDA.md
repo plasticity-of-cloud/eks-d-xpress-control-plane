@@ -16,7 +16,7 @@ Split the current monolithic in-cluster proxy into:
 | Webhook association check | CRD lookup (Fabric8) | Projected SA token → Lambda API |
 | CLI | `eks-d-auth-cli` (CRD CRUD) | `eks-dx` (Lambda API via JDK HttpClient) |
 | Auth: proxy → Lambda | N/A (local) | Raw pod SA token (audience: `pods.eks.amazonaws.com`) |
-| Auth: webhook → Lambda | N/A (local CRD) | Projected SA token (audience: `eks-dx.plasticity.cloud`) |
+| Auth: webhook → Lambda | N/A (local CRD) | Projected SA token (audience: `eks-dx.codriverlabs.ai`) |
 | Cluster registration | Not needed | `eks-dx create cluster` (sends JWKS to Lambda) |
 
 ## What Stays the Same
@@ -59,7 +59,7 @@ POST /clusters/{clusterName}/assets
 
 # Association check (called by webhook)
 GET /clusters/{clusterName}/pod-identity-associations
-  Auth: webhook SA token (audience: eks-dx.plasticity.cloud)
+  Auth: webhook SA token (audience: eks-dx.codriverlabs.ai)
 
 # Cluster management (called by eks-dx CLI)
 POST   /clusters                                    (register)
@@ -132,7 +132,7 @@ public class TokenAudienceFilter implements ContainerRequestFilter {
         if (path.contains("/pod-identity-associations") && ctx.getMethod().equals("GET")) {
             // Webhook query — validate Bearer token with eks-dx audience
             String token = extractBearer(ctx);
-            validateToken(token, "eks-dx.plasticity.cloud",
+            validateToken(token, "eks-dx.codriverlabs.ai",
                 "system:serviceaccount:kube-system:eks-dx-pod-identity-webhook");
             return;
         }
@@ -193,7 +193,7 @@ public Response assumeRoleForPodIdentity(
 
 ```properties
 # EKS-DX Lambda endpoint
-eks-dx.endpoint=${EKS_DX_ENDPOINT:https://eks-dx.us-east-1.plasticity.cloud}
+eks-dx.endpoint=${EKS_DX_ENDPOINT:https://eks-dx.us-east-1.codriverlabs.ai}
 
 # Kubernetes (TokenReview)
 quarkus.kubernetes-client.trust-certs=true
@@ -256,7 +256,7 @@ spec:
     projected:
       sources:
       - serviceAccountToken:
-          audience: eks-dx.plasticity.cloud
+          audience: eks-dx.codriverlabs.ai
           expirationSeconds: 3600
           path: token
 ```

@@ -26,7 +26,7 @@ CLUSTER_NAME="eks-dx-k3s"
 INSTANCE_TYPE="t4g.medium"
 EKS_DX_ENDPOINT=""
 EKS_DX_VERSION=""          # e.g. 1.0.0 — pulls from GHCR when set
-GITHUB_ORG="plasticity-of-cloud"
+GITHUB_ORG="codriverlabs"
 SG_NAME=""  # derived from cluster name after arg parsing
 KEY_PAIR=""  # derived from cluster name after arg parsing
 

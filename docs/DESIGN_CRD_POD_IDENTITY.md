@@ -23,9 +23,9 @@ Pod Token → eks-dx-auth-proxy → CRD lookup (local cluster) → STS AssumeRol
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: podidentityassociations.eks.plasticity.cloud
+  name: podidentityassociations.eks.codriverlabs.ai
 spec:
-  group: eks.plasticity.cloud
+  group: eks.codriverlabs.ai
   names:
     kind: PodIdentityAssociation
     plural: podidentityassociations
@@ -91,7 +91,7 @@ rules:
 - apiGroups: ["authentication.k8s.io"]
   resources: ["tokenreviews"]
   verbs: ["create"]
-- apiGroups: ["eks.plasticity.cloud"]
+- apiGroups: ["eks.codriverlabs.ai"]
   resources: ["podidentityassociations"]
   verbs: ["get", "list", "watch"]
 ```

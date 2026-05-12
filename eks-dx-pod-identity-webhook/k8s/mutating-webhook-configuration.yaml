@@ -5,7 +5,7 @@ metadata:
   annotations:
     cert-manager.io/inject-ca-from: kube-system/eks-dx-pod-identity-webhook-ca
 webhooks:
-  - name: pod-identity.plasticity.cloud
+  - name: pod-identity.codriverlabs.ai
     rules:
       - apiGroups:   [""]
         apiVersions: ["v1"]

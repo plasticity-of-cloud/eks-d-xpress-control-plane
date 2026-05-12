@@ -91,7 +91,7 @@ curl http://localhost:8080/metrics
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `eks-dx.endpoint` | `https://eks-dx.plasticity.cloud` | EKS-DX Lambda API Gateway endpoint |
+| `eks-dx.endpoint` | `https://eks-dx.codriverlabs.ai` | EKS-DX Lambda API Gateway endpoint |
 
 ### Environment Variables
 

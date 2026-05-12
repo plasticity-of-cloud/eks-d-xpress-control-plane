@@ -10,15 +10,15 @@ Two deployment paths:
 ## GitHub Release Artifacts
 
 Each `v*` tag publishes to:
-- **GHCR** (`ghcr.io/plasticity-of-cloud/`) — Docker images and Helm charts (OCI), **free for public repos, no auth required to pull**
+- **GHCR** (`ghcr.io/codriverlabs/`) — Docker images and Helm charts (OCI), **free for public repos, no auth required to pull**
 - **GitHub Releases** — CLI binaries, Lambda zip, SAM template, Helm chart tarballs
 
 | Artifact | Location |
 |----------|----------|
-| Docker images | `ghcr.io/plasticity-of-cloud/eks-dx-auth-proxy:<version>` |
-| | `ghcr.io/plasticity-of-cloud/eks-dx-pod-identity-webhook:<version>` |
-| Helm charts (OCI) | `oci://ghcr.io/plasticity-of-cloud/helm/eks-dx-auth-proxy` |
-| | `oci://ghcr.io/plasticity-of-cloud/helm/eks-dx-pod-identity-webhook` |
+| Docker images | `ghcr.io/codriverlabs/eks-dx-auth-proxy:<version>` |
+| | `ghcr.io/codriverlabs/eks-dx-pod-identity-webhook:<version>` |
+| Helm charts (OCI) | `oci://ghcr.io/codriverlabs/helm/eks-dx-auth-proxy` |
+| | `oci://ghcr.io/codriverlabs/helm/eks-dx-pod-identity-webhook` |
 | Helm charts (tarball) | GitHub Releases `eks-dx-auth-proxy-<version>.tar.gz` |
 | Lambda zip | GitHub Releases `eks-dx-lambda-<version>.zip` |
 | SAM template | GitHub Releases `eks-dx-sam-<version>.tar.gz` |
@@ -29,7 +29,7 @@ Each `v*` tag publishes to:
 ```bash
 VERSION=1.0.0
 ARCH=arm64   # or amd64
-BASE=https://github.com/plasticity-of-cloud/eks-dx-control-plane/releases/download/v${VERSION}
+BASE=https://github.com/codriverlabs/eks-dx-control-plane/releases/download/v${VERSION}
 
 # CLI
 curl -Lo eks-dx ${BASE}/eks-dx-cli-${VERSION}-linux-${ARCH}
@@ -66,19 +66,19 @@ eks-dx create cluster --name my-k3s --region us-east-1
 No registry login required for public images.
 
 ```bash
-helm install eks-dx-auth-proxy oci://ghcr.io/plasticity-of-cloud/helm/eks-dx-auth-proxy \
+helm install eks-dx-auth-proxy oci://ghcr.io/codriverlabs/helm/eks-dx-auth-proxy \
   --version ${VERSION} \
   --namespace kube-system \
   --set app.imageConfig.registry=ghcr.io \
-  --set app.imageConfig.repository=plasticity-of-cloud/eks-dx-auth-proxy \
+  --set app.imageConfig.repository=codriverlabs/eks-dx-auth-proxy \
   --set app.imageConfig.tag=${VERSION} \
   --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT}
 
-helm install eks-dx-pod-identity-webhook oci://ghcr.io/plasticity-of-cloud/helm/eks-dx-pod-identity-webhook \
+helm install eks-dx-pod-identity-webhook oci://ghcr.io/codriverlabs/helm/eks-dx-pod-identity-webhook \
   --version ${VERSION} \
   --namespace kube-system \
   --set app.imageConfig.registry=ghcr.io \
-  --set app.imageConfig.repository=plasticity-of-cloud/eks-dx-pod-identity-webhook \
+  --set app.imageConfig.repository=codriverlabs/eks-dx-pod-identity-webhook \
   --set app.imageConfig.tag=${VERSION} \
   --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT} \
   --set app.envs.EKS_CLUSTER_NAME=my-k3s
@@ -197,7 +197,7 @@ Both charts expose the following values for image configuration:
 app:
   imageConfig:
     registry: 864899852480.dkr.ecr.us-east-1.amazonaws.com  # override per environment
-    repository: plcloud/eks-dx-auth-proxy                    # or eks-dx-pod-identity-webhook
+    repository: codriverlabs/eks-dx-auth-proxy                    # or eks-dx-pod-identity-webhook
     tag: 1.0.0
 ```
 

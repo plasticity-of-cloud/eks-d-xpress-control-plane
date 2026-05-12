@@ -1,4 +1,4 @@
-# Org Migration: plasticity-of-cloud → codriverlabs.ai
+# Org Migration: codriverlabs → codriverlabs.ai
 
 Pre-migration snapshot tagged: **v1.0.1**
 
@@ -6,15 +6,15 @@ Pre-migration snapshot tagged: **v1.0.1**
 
 | Category | Old | New |
 |----------|-----|-----|
-| GitHub org | `plasticity-of-cloud` | `codriverlabs` |
-| Domain | `plasticity.cloud` | `codriverlabs.ai` |
+| GitHub org | `codriverlabs` | `codriverlabs` |
+| Domain | `codriverlabs.ai` | `codriverlabs.ai` |
 | Java package root | `cloud.plasticity` | `ai.codriverlabs` |
 | Maven groupId | `cloud.plasticity` | `ai.codriverlabs` |
-| Container image group | `plcloud` | `codriverlabs` |
-| GHCR registry path | `ghcr.io/plasticity-of-cloud/` | `ghcr.io/codriverlabs/` |
-| Default API endpoint | `https://eks-dx.plasticity.cloud` | `https://eks-dx.codriverlabs.ai` |
-| Webhook audience | `eks-dx.plasticity.cloud` | `eks-dx.codriverlabs.ai` |
-| Webhook name | `pod-identity.plasticity.cloud` | `pod-identity.codriverlabs.ai` |
+| Container image group | `codriverlabs` | `codriverlabs` |
+| GHCR registry path | `ghcr.io/codriverlabs/` | `ghcr.io/codriverlabs/` |
+| Default API endpoint | `https://eks-dx.codriverlabs.ai` | `https://eks-dx.codriverlabs.ai` |
+| Webhook audience | `eks-dx.codriverlabs.ai` | `eks-dx.codriverlabs.ai` |
+| Webhook name | `pod-identity.codriverlabs.ai` | `pod-identity.codriverlabs.ai` |
 
 ## Files to Change
 
@@ -55,36 +55,36 @@ All `pom.xml` files (root + 5 modules):
 
 | Property | Old value | New value |
 |----------|-----------|-----------|
-| `eks-dx.endpoint` default | `https://eks-dx.plasticity.cloud` | `https://eks-dx.codriverlabs.ai` |
+| `eks-dx.endpoint` default | `https://eks-dx.codriverlabs.ai` | `https://eks-dx.codriverlabs.ai` |
 | `quarkus.log.category` | `"cloud.plasticity"` | `"ai.codriverlabs"` |
-| `quarkus.container-image.group` | `plcloud` | `codriverlabs` |
+| `quarkus.container-image.group` | `codriverlabs` | `codriverlabs` |
 | `quarkus.container-image.registry` | `864899852480.dkr.ecr...` | unchanged (ECR stays) |
-| `quarkus.kubernetes.env.vars.EKS_DX_ENDPOINT` | `https://eks-dx.plasticity.cloud` | `https://eks-dx.codriverlabs.ai` |
+| `quarkus.kubernetes.env.vars.EKS_DX_ENDPOINT` | `https://eks-dx.codriverlabs.ai` | `https://eks-dx.codriverlabs.ai` |
 
 ### Runtime constants (code changes)
 
 | File | Constant | Old | New |
 |------|----------|-----|-----|
-| `JwksTokenValidationService.java` | `EKS_DX_AUDIENCE` | `eks-dx.plasticity.cloud` | `eks-dx.codriverlabs.ai` |
-| `JwksTokenValidationServiceTest.java` | `DX_AUDIENCE` | `eks-dx.plasticity.cloud` | `eks-dx.codriverlabs.ai` |
-| `EksDxConfig.java` | default endpoint | `https://eks-dx.plasticity.cloud` | `https://eks-dx.codriverlabs.ai` |
-| `LambdaAssociationLookup.java` | comment | `eks-dx.plasticity.cloud` | `eks-dx.codriverlabs.ai` |
+| `JwksTokenValidationService.java` | `EKS_DX_AUDIENCE` | `eks-dx.codriverlabs.ai` | `eks-dx.codriverlabs.ai` |
+| `JwksTokenValidationServiceTest.java` | `DX_AUDIENCE` | `eks-dx.codriverlabs.ai` | `eks-dx.codriverlabs.ai` |
+| `EksDxConfig.java` | default endpoint | `https://eks-dx.codriverlabs.ai` | `https://eks-dx.codriverlabs.ai` |
+| `LambdaAssociationLookup.java` | comment | `eks-dx.codriverlabs.ai` | `eks-dx.codriverlabs.ai` |
 
 ### Kubernetes / Helm manifests
 
 | File | Field | Old | New |
 |------|-------|-----|-----|
-| `deploy/eks-dx-auth-proxy.yaml` | `image` | `plcloud/eks-dx-auth-proxy` | `codriverlabs/eks-dx-auth-proxy` |
-| `eks-dx-pod-identity-webhook/k8s/deployment.yaml` | `image` | `plcloud/eks-dx-pod-identity-webhook` | `codriverlabs/eks-dx-pod-identity-webhook` |
-| `eks-dx-pod-identity-webhook/k8s/mutating-webhook-configuration.yaml` | `name` | `pod-identity.plasticity.cloud` | `pod-identity.codriverlabs.ai` |
-| `eks-dx-auth-proxy/src/main/helm/values.yaml` | `repository` | `plcloud/eks-dx-auth-proxy` | `codriverlabs/eks-dx-auth-proxy` |
-| `eks-dx-pod-identity-webhook/src/main/helm/values.yaml` | `repository` | `plcloud/eks-dx-pod-identity-webhook` | `codriverlabs/eks-dx-pod-identity-webhook` |
-| `eks-dx-pod-identity-webhook/src/main/kubernetes/kubernetes.yml` | webhook name | `pod-identity.plasticity.cloud` | `pod-identity.codriverlabs.ai` |
+| `deploy/eks-dx-auth-proxy.yaml` | `image` | `codriverlabs/eks-dx-auth-proxy` | `codriverlabs/eks-dx-auth-proxy` |
+| `eks-dx-pod-identity-webhook/k8s/deployment.yaml` | `image` | `codriverlabs/eks-dx-pod-identity-webhook` | `codriverlabs/eks-dx-pod-identity-webhook` |
+| `eks-dx-pod-identity-webhook/k8s/mutating-webhook-configuration.yaml` | `name` | `pod-identity.codriverlabs.ai` | `pod-identity.codriverlabs.ai` |
+| `eks-dx-auth-proxy/src/main/helm/values.yaml` | `repository` | `codriverlabs/eks-dx-auth-proxy` | `codriverlabs/eks-dx-auth-proxy` |
+| `eks-dx-pod-identity-webhook/src/main/helm/values.yaml` | `repository` | `codriverlabs/eks-dx-pod-identity-webhook` | `codriverlabs/eks-dx-pod-identity-webhook` |
+| `eks-dx-pod-identity-webhook/src/main/kubernetes/kubernetes.yml` | webhook name | `pod-identity.codriverlabs.ai` | `pod-identity.codriverlabs.ai` |
 
 **Delete (CRD no longer used — associations are stored in DynamoDB):**
 - `eks-dx-auth-proxy/src/main/helm/crds/pod-identity-association-crd.yaml`
 
-**Remove dead RBAC rules (the `eks.plasticity.cloud` apiGroup block) from:**
+**Remove dead RBAC rules (the `eks.codriverlabs.ai` apiGroup block) from:**
 - `deploy/eks-dx-auth-proxy.yaml`
 - `eks-dx-pod-identity-webhook/k8s/deployment.yaml`
 
@@ -92,15 +92,15 @@ All `pom.xml` files (root + 5 modules):
 
 | File | Change |
 |------|--------|
-| `.github/workflows/release.yml` | `GITHUB_ORG` / registry paths: `plasticity-of-cloud` → `codriverlabs` |
-| `docs/user_guides/ec2-k3s-pod-identity/setup.sh` | `GITHUB_ORG="plasticity-of-cloud"` → `GITHUB_ORG="codriverlabs"` |
+| `.github/workflows/release.yml` | `GITHUB_ORG` / registry paths: `codriverlabs` → `codriverlabs` |
+| `docs/user_guides/ec2-k3s-pod-identity/setup.sh` | `GITHUB_ORG="codriverlabs"` → `GITHUB_ORG="codriverlabs"` |
 
 ### Documentation
 
 Global find-and-replace across `docs/`, `README.md`, `AGENTS.md`:
-- `plasticity-of-cloud` → `codriverlabs`
-- `plasticity.cloud` → `codriverlabs.ai`
-- `plcloud` → `codriverlabs`
+- `codriverlabs` → `codriverlabs`
+- `codriverlabs.ai` → `codriverlabs.ai`
+- `codriverlabs` → `codriverlabs`
 
 ## Execution Order
 
@@ -113,7 +113,7 @@ Global find-and-replace across `docs/`, `README.md`, `AGENTS.md`:
 7. Update CI/CD workflows and setup scripts
 8. Update documentation
 9. Run `mvn verify` — all 192 unit tests + 16 integration tests must pass
-10. Commit as single atomic commit: `refactor: migrate org from plasticity-of-cloud to codriverlabs.ai`
+10. Commit as single atomic commit: `refactor: migrate org from codriverlabs to codriverlabs.ai`
 
 ## Notes
 

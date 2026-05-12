@@ -72,7 +72,7 @@ public class CreateClusterCommand implements Runnable {
     @Option(names = "--region", required = true)
     String region;
 
-    @Option(names = "--endpoint", defaultValue = "https://eks-dx.plasticity.cloud")
+    @Option(names = "--endpoint", defaultValue = "https://eks-dx.codriverlabs.ai")
     String eksDxEndpoint;
 
     @Override
@@ -158,9 +158,9 @@ The CLI needs to know the EKS-DX service endpoint. Resolution order:
 1. `--endpoint` flag
 2. `EKS_DX_ENDPOINT` environment variable
 3. `~/.eks-dx/config` file
-4. Default: `https://eks-dx.plasticity.cloud`
+4. Default: `https://eks-dx.codriverlabs.ai`
 
 ```bash
 # Or configure once:
-eks-dx configure --endpoint https://eks-dx.us-east-1.plasticity.cloud --region us-east-1
+eks-dx configure --endpoint https://eks-dx.us-east-1.codriverlabs.ai --region us-east-1
 ```

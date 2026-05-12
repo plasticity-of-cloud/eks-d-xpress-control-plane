@@ -126,8 +126,8 @@ mvn test -Dintegration.dynamodb=true
 | Java packages | `cloud.plasticity.*` | `cloud.plasticity.eksdx.lambda.service` |
 | Maven groupId | `cloud.plasticity` | `<groupId>cloud.plasticity</groupId>` |
 | CLI config | `~/.eks-dx/config` | endpoint, region |
-| Container images | `plasticity.cloud/` prefix or ECR | `plasticity.cloud/eks-dx-auth-proxy` |
-| API Gateway | `eks-dx.plasticity.cloud` | Custom domain (optional) |
+| Container images | `codriverlabs.ai/` prefix or ECR | `codriverlabs.ai/eks-dx-auth-proxy` |
+| API Gateway | `eks-dx.codriverlabs.ai` | Custom domain (optional) |
 
 ## Infrastructure
 
