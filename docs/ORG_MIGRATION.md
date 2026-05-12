@@ -14,7 +14,6 @@ Pre-migration snapshot tagged: **v1.0.1**
 | GHCR registry path | `ghcr.io/plasticity-of-cloud/` | `ghcr.io/codriverlabs/` |
 | Default API endpoint | `https://eks-dx.plasticity.cloud` | `https://eks-dx.codriverlabs.ai` |
 | Webhook audience | `eks-dx.plasticity.cloud` | `eks-dx.codriverlabs.ai` |
-| CRD group | `eks.plasticity.cloud` | `eks.codriverlabs.ai` |
 | Webhook name | `pod-identity.plasticity.cloud` | `pod-identity.codriverlabs.ai` |
 
 ## Files to Change
@@ -75,16 +74,19 @@ All `pom.xml` files (root + 5 modules):
 
 | File | Field | Old | New |
 |------|-------|-----|-----|
-| `deploy/eks-dx-auth-proxy.yaml` | `apiGroups` | `eks.plasticity.cloud` | `eks.codriverlabs.ai` |
 | `deploy/eks-dx-auth-proxy.yaml` | `image` | `plcloud/eks-dx-auth-proxy` | `codriverlabs/eks-dx-auth-proxy` |
-| `eks-dx-pod-identity-webhook/k8s/deployment.yaml` | `apiGroups` | `eks.plasticity.cloud` | `eks.codriverlabs.ai` |
 | `eks-dx-pod-identity-webhook/k8s/deployment.yaml` | `image` | `plcloud/eks-dx-pod-identity-webhook` | `codriverlabs/eks-dx-pod-identity-webhook` |
 | `eks-dx-pod-identity-webhook/k8s/mutating-webhook-configuration.yaml` | `name` | `pod-identity.plasticity.cloud` | `pod-identity.codriverlabs.ai` |
-| `eks-dx-auth-proxy/src/main/helm/crds/*.yaml` | `group` | `eks.plasticity.cloud` | `eks.codriverlabs.ai` |
 | `eks-dx-auth-proxy/src/main/helm/values.yaml` | `repository` | `plcloud/eks-dx-auth-proxy` | `codriverlabs/eks-dx-auth-proxy` |
 | `eks-dx-pod-identity-webhook/src/main/helm/values.yaml` | `repository` | `plcloud/eks-dx-pod-identity-webhook` | `codriverlabs/eks-dx-pod-identity-webhook` |
-| `eks-dx-auth-proxy/src/main/kubernetes/kubernetes.yml` | `apiGroups` | `eks.plasticity.cloud` | `eks.codriverlabs.ai` |
-| `eks-dx-pod-identity-webhook/src/main/kubernetes/kubernetes.yml` | `apiGroups` + webhook name | `eks.plasticity.cloud` / `pod-identity.plasticity.cloud` | `eks.codriverlabs.ai` / `pod-identity.codriverlabs.ai` |
+| `eks-dx-pod-identity-webhook/src/main/kubernetes/kubernetes.yml` | webhook name | `pod-identity.plasticity.cloud` | `pod-identity.codriverlabs.ai` |
+
+**Delete (CRD no longer used — associations are stored in DynamoDB):**
+- `eks-dx-auth-proxy/src/main/helm/crds/pod-identity-association-crd.yaml`
+
+**Remove dead RBAC rules (the `eks.plasticity.cloud` apiGroup block) from:**
+- `deploy/eks-dx-auth-proxy.yaml`
+- `eks-dx-pod-identity-webhook/k8s/deployment.yaml`
 
 ### CI/CD
 
@@ -116,5 +118,4 @@ Global find-and-replace across `docs/`, `README.md`, `AGENTS.md`:
 ## Notes
 
 - The **webhook audience** (`eks-dx.codriverlabs.ai`) is a runtime value embedded in deployed tokens. Any existing clusters must re-register and re-deploy the webhook after migration.
-- The **CRD group** change (`eks.codriverlabs.ai`) requires deleting and re-applying CRDs in existing clusters.
 - ECR registry (`864899852480.dkr.ecr.us-east-1.amazonaws.com`) is unchanged — only the image group/repository path changes.
