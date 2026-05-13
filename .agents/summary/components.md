@@ -1,210 +1,149 @@
-# Major Components
+# Components
 
-## Component Overview
+## eks-dx-lambda
 
-The EKS-DX Control Plane consists of five major components, each with distinct responsibilities in the authentication and management workflow.
+The serverless backend. Runs as an AWS Lambda function behind API Gateway.
 
 ```mermaid
-graph TB
-    subgraph "Core Services"
-        Lambda[eks-dx-lambda<br/>Authentication Service]
-        Proxy[eks-dx-auth-proxy<br/>In-Cluster Proxy]
-        Webhook[eks-dx-pod-identity-webhook<br/>Admission Controller]
-    end
-    
-    subgraph "Management Tools"
-        CLI[eks-dx-cli<br/>Management CLI]
-        Infra[infra<br/>Infrastructure]
-    end
-    
-    CLI --> Lambda
-    Proxy --> Lambda
-    Webhook --> Lambda
-    Infra --> AWS[AWS Resources]
+classDiagram
+    class EksAuthResource {
+        +assumeRoleForPodIdentity(clusterName, request) Response
+    }
+    class ClusterResource {
+        +registerCluster(request) Response
+        +listClusters() Response
+        +describeCluster(name) Response
+        +deregisterCluster(name) Response
+        +refreshJwks(name, body) Response
+    }
+    class AssociationResource {
+        +createAssociation(name, request) Response
+        +listAssociations(name, ns, sa) Response
+        +describeAssociation(name, id) Response
+        +deleteAssociation(name, id) Response
+    }
+    class WebhookAuthFilter {
+        +filter(ctx) void
+    }
+    class JwksTokenValidationService {
+        -contextCache: Map~String,CachedContext~
+        +validateToken(token, cluster) TokenClaims
+        +validateWebhookToken(token, cluster, subject) void
+    }
+    class DynamoDbClusterService {
+        +registerCluster(name, issuer, jwks) Map
+        +describeCluster(name) Map
+        +listClusters() List
+        +updateJwks(name, jwks) void
+        +deregisterCluster(name) void
+        +getJwks(name) String
+        +getIssuer(name) String
+    }
+    class DynamoDbAssociationService {
+        +createAssociation(cluster, ns, sa, roleArn) Map
+        +listAssociations(cluster, ns, sa) List
+        +describeAssociation(cluster, id) Map
+        +deleteAssociation(cluster, id) void
+        +getRoleArn(cluster, ns, sa) String
+        +getAssociationId(cluster, ns, sa) String
+        +validateRoleExists(roleArn) void
+    }
+    class AwsCredentialService {
+        +assumeRole(roleArn, sessionName, cluster, tags) Credentials
+    }
+    class TokenClaims {
+        +namespace: String
+        +serviceAccount: String
+        +serviceAccountUid: String
+        +podName: String
+        +podUid: String
+        +subject: String
+        +sessionTags() Map
+    }
+
+    EksAuthResource --> JwksTokenValidationService
+    EksAuthResource --> DynamoDbAssociationService
+    EksAuthResource --> AwsCredentialService
+    ClusterResource --> DynamoDbClusterService
+    AssociationResource --> DynamoDbAssociationService
+    WebhookAuthFilter --> JwksTokenValidationService
+    JwksTokenValidationService --> DynamoDbClusterService
+    JwksTokenValidationService ..> TokenClaims
+    DynamoDbAssociationService --> IamClient
+    AwsCredentialService --> StsClient
 ```
 
-## eks-dx-lambda (Core Authentication Service)
+**Key behaviors:**
+- `WebhookAuthFilter` only intercepts `GET /clusters/{name}/pod-identity-associations` with a `Bearer` token; all other auth is handled by API Gateway IAM or the token-in-body pattern.
+- `JwksTokenValidationService` caches `JWTAuthContextInfo` per `clusterName|audience` with a 5-minute TTL.
+- `DynamoDbAssociationService.validateRoleExists()` calls IAM `GetRole` and checks the trust policy for `sts:AssumeRole` or `sts:*` before creating an association.
+- STS `AssumeRole` always adds `eks-cluster-name` tag plus Kubernetes metadata tags (`kubernetes-namespace`, `kubernetes-service-account`, `kubernetes-pod-name`, `kubernetes-pod-uid`).
 
-### Purpose
-Central authentication service that validates JWT tokens and exchanges them for AWS credentials.
+---
 
-### Key Classes
-- **EksAuthResource**: Main API endpoint for credential exchange
-- **ClusterResource**: Cluster registration and management
-- **AssociationResource**: Pod identity association CRUD operations
-- **JwksTokenValidationService**: JWT signature validation with JWKS
-- **DynamoDbClusterService**: Cluster data persistence
-- **DynamoDbAssociationService**: Association data persistence
-- **AwsCredentialService**: STS integration for credential exchange
+## eks-dx-auth-proxy
 
-### Responsibilities
-- JWT token validation using JWKS
-- Association lookup in DynamoDB
-- AWS STS AssumeRole operations
-- Session tag propagation from Kubernetes metadata
-- RESTful API for management operations
+In-cluster Quarkus service. Runs as a Deployment. Exposes the same API surface as the EKS Pod Identity Agent.
 
-### Integration Points
-- **DynamoDB**: Cluster and association storage
-- **AWS STS**: Credential exchange
-- **Kubernetes JWKS**: Token signature validation
+| Class | Responsibility |
+|-------|---------------|
+| `EksAuthAgentResource` | Handles `POST /clusters/{name}/assets` and `/clusters/{name}/assume-role-for-pod-identity` |
+| `TokenValidationService` | Calls Kubernetes TokenReview API (Fabric8); extracts namespace/sa/pod from status |
+| `LambdaForwardingService` | Forwards the original request body to the Lambda API Gateway endpoint via JDK `HttpClient` |
+| `HealthResource` | `/health/live` and `/health/ready` endpoints |
 
-## eks-dx-cli (Management CLI)
+**Key behaviors:**
+- TokenReview is submitted with audience `pods.eks.amazonaws.com`.
+- Pod name/UID are extracted from `extra["authentication.kubernetes.io/pod-name"]` and `pod-uid` in the TokenReview response.
+- On TokenReview rejection, returns 400 immediately without calling Lambda.
+- Prometheus metrics exposed via Micrometer.
 
-### Purpose
-Native command-line interface for managing clusters and pod identity associations.
+---
 
-### Key Classes
-- **EksDxCommand**: Main CLI entry point with picocli
-- **CreateClusterCommand**: Cluster registration with JWKS discovery
-- **CreateAssociationCommand**: Association creation
-- **EksDxApiClient**: HTTP client with AWS SigV4 authentication
-- **AwsSigV4Signer**: Custom AWS signature implementation
-- **EksDxConfig**: Configuration management (~/.eks-dx/config)
+## eks-dx-pod-identity-webhook
 
-### Responsibilities
-- Cluster lifecycle management (create, update, delete, list, describe)
-- Association lifecycle management (create, delete, list, describe)
-- JWKS discovery from Kubernetes API servers
-- AWS SigV4 request signing for API authentication
-- Configuration management and persistence
+Kubernetes MutatingAdmissionWebhook. Runs as a Deployment. Uses JOSDK Webhooks framework.
 
-### Integration Points
-- **EKS-DX Lambda API**: All management operations
-- **Kubernetes API**: JWKS endpoint discovery
-- **AWS Credentials**: SigV4 signing for API requests
+| Class | Responsibility |
+|-------|---------------|
+| `WebhookEndpoint` | `POST /mutate` — delegates to `PodIdentityMutator.controller()` |
+| `PodIdentityMutator` | Injects `AWS_CONTAINER_CREDENTIALS_FULL_URI`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, and projected token volume into all containers |
+| `LambdaAssociationLookup` | Queries Lambda API for associations; authenticates with a projected SA token (audience `eks-dx.codriverlabs.ai`) |
 
-## eks-dx-auth-proxy (In-Cluster Proxy)
+**Injected values:**
+- `AWS_CONTAINER_CREDENTIALS_FULL_URI` = `http://169.254.170.23/v1/credentials`
+- `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE` = `/var/run/secrets/pods.eks.amazonaws.com/serviceaccount/eks-pod-identity-token`
+- Volume: projected `ServiceAccountToken` with audience `pods.eks.amazonaws.com`, expiry 86400s, path `eks-pod-identity-token`
 
-### Purpose
-In-cluster component that provides fast-fail token validation and forwards requests to the Lambda service.
+**Key behavior:** Idempotent — checks for existing env vars and volumes before injecting to avoid duplicates.
 
-### Key Classes
-- **EksAuthAgentResource**: Main proxy endpoint
-- **TokenValidationService**: Kubernetes TokenReview integration
-- **LambdaForwardingService**: HTTP forwarding to Lambda API
+---
 
-### Responsibilities
-- Kubernetes TokenReview validation (fast-fail)
-- HTTP request forwarding to Lambda service
-- Error handling and status code translation
-- Health check endpoints for Kubernetes probes
+## eks-dx-cli
 
-### Integration Points
-- **Kubernetes API**: TokenReview for signature validation
-- **EKS-DX Lambda**: Token forwarding for credential exchange
+Native binary (GraalVM). Manages clusters and associations via the Lambda API.
 
-## eks-dx-pod-identity-webhook (Admission Controller)
-
-### Purpose
-Kubernetes admission webhook that mutates pods to inject AWS credentials environment variables and projected service account tokens.
-
-### Key Classes
-- **WebhookEndpoint**: Admission controller HTTP endpoint
-- **PodIdentityMutator**: Pod mutation logic
-- **LambdaAssociationLookup**: Association existence checking
-
-### Responsibilities
-- Pod mutation for identity injection
-- Environment variable injection (AWS_ROLE_ARN, AWS_WEB_IDENTITY_TOKEN_FILE)
-- Projected token volume mounting
-- Association existence validation before mutation
-
-### Integration Points
-- **Kubernetes API**: Admission webhook registration
-- **EKS-DX Lambda**: Association lookup API
-
-## infra (Infrastructure as Code)
-
-### Purpose
-AWS CDK infrastructure definitions for deploying the complete system.
-
-### Key Classes
-- **InfraApp**: CDK application entry point
-- **EksDxStack**: Complete AWS infrastructure stack
-
-### Responsibilities
-- Lambda function deployment with SnapStart
-- DynamoDB table creation with PITR
-- API Gateway configuration with IAM authentication
-- CloudWatch alarms and monitoring setup
-- IAM roles and policies for Lambda execution
-
-### Integration Points
-- **AWS CDK**: Infrastructure deployment framework
-- **AWS Services**: Lambda, DynamoDB, API Gateway, CloudWatch
-
-## Component Interactions
-
-### Authentication Flow
 ```mermaid
-sequenceDiagram
-    participant Pod
-    participant Webhook
-    participant Proxy
-    participant Lambda
-    participant DDB
-    participant STS
-    
-    Note over Webhook: Pod Creation
-    Webhook->>Lambda: Check Association
-    Webhook->>Pod: Inject Identity (if exists)
-    
-    Note over Pod: Runtime Authentication
-    Pod->>Proxy: Service Account Token
-    Proxy->>Proxy: TokenReview Validation
-    Proxy->>Lambda: Forward Valid Token
-    Lambda->>DDB: Lookup Association
-    Lambda->>STS: AssumeRole
-    STS-->>Lambda: AWS Credentials
-    Lambda-->>Pod: Credentials Response
+graph LR
+    EksDxCommand --> ClusterCmds["cluster\n(create/describe/list/update/delete)"]
+    EksDxCommand --> AssocCmds["association\n(create/describe/list/delete)"]
+    EksDxCommand --> ConfigureCommand
+    ClusterCmds --> EksDxApiClient
+    AssocCmds --> EksDxApiClient
+    EksDxApiClient --> AwsSigV4Signer
+    EksDxApiClient --> EksDxConfig
+    CreateClusterCommand --> KubernetesClient["Fabric8 KubernetesClient\n(reads JWKS from kube-apiserver\nOIDC discovery)"]
 ```
 
-### Management Flow
-```mermaid
-sequenceDiagram
-    participant CLI
-    participant Lambda
-    participant DDB
-    participant K8s as Kubernetes API
-    
-    Note over CLI: Cluster Registration
-    CLI->>K8s: Discover JWKS Endpoint
-    CLI->>Lambda: Register Cluster + JWKS
-    Lambda->>DDB: Store Cluster Info
-    
-    Note over CLI: Association Management
-    CLI->>Lambda: Create Association
-    Lambda->>Lambda: Validate IAM Role
-    Lambda->>DDB: Store Association
-```
+**Config resolution order** (`EksDxConfig`): CLI flag → `EKS_DX_ENDPOINT` / `AWS_REGION` env vars → `~/.eks-dx/config` → defaults (`https://eks-dx.codriverlabs.ai`, `us-east-1`).
 
-## Component Dependencies
+`CreateClusterCommand` auto-discovers the cluster issuer and JWKS by querying the kube-apiserver's OIDC discovery endpoint (`/.well-known/openid-configuration` and `/openid/v1/jwks`).
 
-### Runtime Dependencies
-- **eks-dx-lambda**: DynamoDB, AWS STS, jose4j
-- **eks-dx-cli**: JDK HttpClient, picocli, AWS credentials
-- **eks-dx-auth-proxy**: Kubernetes client, JDK HttpClient
-- **eks-dx-pod-identity-webhook**: Kubernetes client, JDK HttpClient
-- **infra**: AWS CDK, AWS SDK
+---
 
-### Build Dependencies
-- **All Components**: Maven, Quarkus BOM
-- **CLI**: GraalVM native-image
-- **Containers**: Quarkus container-image extension
-- **Infrastructure**: AWS CDK CLI
+## infra
 
-## Component Configuration
-
-### Environment Variables
-| Component | Key Variables | Purpose |
-|-----------|---------------|---------|
-| eks-dx-lambda | `eks-dx.clusters-table`, `eks-dx.associations-table` | DynamoDB table names |
-| eks-dx-auth-proxy | `EKS_DX_ENDPOINT` | Lambda API Gateway URL |
-| eks-dx-pod-identity-webhook | `EKS_CLUSTER_NAME`, `EKS_DX_ENDPOINT` | Cluster identification and API URL |
-
-### Configuration Files
-| Component | File | Purpose |
-|-----------|------|---------|
-| eks-dx-cli | `~/.eks-dx/config` | API endpoint and region |
-| All | `application.properties` | Quarkus configuration |
+CDK app (`InfraApp` → `EksDxStack`). Provisions the same resources as `sam.yaml` plus:
+- DynamoDB PITR (`pointInTimeRecovery: true`)
+- `RemovalPolicy.RETAIN` on both tables
+- JSON-format API Gateway access logs

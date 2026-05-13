@@ -1,286 +1,149 @@
-# Interfaces and Integration Points
+# Interfaces
 
-## API Interfaces
+## Lambda API (API Gateway REST v1)
 
-### EKS-DX Lambda REST API
+Base URL: `https://{api-id}.execute-api.{region}.amazonaws.com/prod` (or custom domain `https://eks-dx.codriverlabs.ai`)
 
-The core Lambda service exposes RESTful endpoints for both authentication and management operations.
+### Credential Exchange — No Auth (token validated by Lambda)
 
-#### Authentication Endpoint
-```http
-POST /clusters/{clusterName}/assets
-Content-Type: application/json
-Authorization: Bearer <service-account-token>
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/clusters/{name}/assets` | Exchange SA token for AWS credentials |
 
-{
-  "ClusterName": "my-cluster",
-  "Token": "eyJ..."
-}
+**Request:**
+```json
+{ "token": "eyJ..." }
 ```
 
-**Response:**
+**Response 200:**
 ```json
 {
-  "Subject": {
-    "Namespace": "default",
-    "ServiceAccount": "my-sa",
-    "PodName": "my-pod-123",
-    "PodUid": "abc-def-123"
+  "credentials": {
+    "accessKeyId": "ASIA...",
+    "secretAccessKey": "...",
+    "sessionToken": "...",
+    "expiration": 1234567890
   },
-  "AssumedRoleUser": {
-    "Arn": "arn:aws:sts::123456789012:assumed-role/MyRole/session",
-    "AssumedRoleId": "AROABC123:session"
-  },
-  "Credentials": {
-    "AccessKeyId": "ASIA...",
-    "SecretAccessKey": "...",
-    "SessionToken": "...",
-    "Expiration": "2024-01-01T12:00:00Z"
-  }
+  "assumedRoleUser": { "arn": "arn:aws:iam::...", "assumeRoleId": "ns-sa" },
+  "podIdentityAssociation": { "associationArn": "...", "associationId": "assoc-..." },
+  "subject": { "namespace": "default", "serviceAccount": "my-sa" },
+  "audience": "pods.eks.amazonaws.com"
 }
 ```
 
-#### Management Endpoints
+### Cluster Management — IAM Auth (SigV4)
 
-**Cluster Management:**
-```http
-# Register cluster
-POST /clusters
-Authorization: AWS4-HMAC-SHA256 ...
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/clusters` | Register a cluster |
+| GET | `/clusters` | List all clusters |
+| GET | `/clusters/{name}` | Describe a cluster |
+| DELETE | `/clusters/{name}` | Deregister a cluster |
+| PUT | `/clusters/{name}/jwks` | Refresh JWKS for a cluster |
 
-# List clusters  
-GET /clusters
-
-# Describe cluster
-GET /clusters/{name}
-
-# Update cluster JWKS
-PUT /clusters/{name}/jwks
-
-# Deregister cluster
-DELETE /clusters/{name}
-```
-
-**Association Management:**
-```http
-# Create association
-POST /clusters/{clusterName}/associations
-Authorization: AWS4-HMAC-SHA256 ...
-
-# List associations
-GET /clusters/{clusterName}/associations?namespace=default&serviceAccount=my-sa
-
-# Describe association
-GET /clusters/{clusterName}/associations/{associationId}
-
-# Delete association
-DELETE /clusters/{clusterName}/associations/{associationId}
-```
-
-### EKS Auth Proxy Interface
-
-The in-cluster proxy mimics the AWS EKS Pod Identity Agent API.
-
-```http
-POST /
-Content-Type: application/json
-
-{
-  "ClusterName": "my-cluster", 
-  "Token": "eyJ..."
-}
-```
-
-### Pod Identity Webhook Interface
-
-Kubernetes admission webhook following the standard admission controller protocol.
-
-```http
-POST /mutate
-Content-Type: application/json
-
-{
-  "kind": "AdmissionReview",
-  "apiVersion": "admission.k8s.io/v1",
-  "request": {
-    "object": {
-      "kind": "Pod",
-      "spec": {...}
-    }
-  }
-}
-```
-
-## External System Integrations
-
-### AWS Services Integration
-
-```mermaid
-graph LR
-    subgraph "EKS-DX Components"
-        Lambda[eks-dx-lambda]
-        CLI[eks-dx-cli]
-    end
-    
-    subgraph "AWS Services"
-        STS[AWS STS]
-        DDB[(DynamoDB)]
-        IAM[AWS IAM]
-        APIGW[API Gateway]
-    end
-    
-    Lambda -->|AssumeRole| STS
-    Lambda -->|Read/Write| DDB
-    Lambda -->|Validate Roles| IAM
-    CLI -->|HTTP Requests| APIGW
-    APIGW --> Lambda
-```
-
-#### AWS STS Integration
-- **AssumeRole API**: Exchange validated tokens for temporary credentials
-- **Session Tags**: Propagate Kubernetes metadata to AWS sessions
-- **Session Duration**: Configurable credential lifetime (default: 1 hour)
-
-#### DynamoDB Integration
-- **Clusters Table**: Store cluster registration and JWKS data
-- **Associations Table**: Store pod identity associations
-- **Query Patterns**: Efficient lookups by cluster name and association keys
-
-#### AWS IAM Integration
-- **Role Validation**: Verify IAM role existence and trust policies
-- **Trust Policy Checking**: Ensure roles can be assumed by the service
-- **Permission Boundaries**: Support for IAM permission boundaries
-
-### Kubernetes Integration
-
-```mermaid
-graph LR
-    subgraph "Kubernetes Cluster"
-        API[Kubernetes API Server]
-        Webhook[Admission Webhook]
-        Proxy[EKS Auth Proxy]
-        Pods[Application Pods]
-    end
-    
-    subgraph "EKS-DX Components"
-        WebhookSvc[Pod Identity Webhook]
-        ProxySvc[Auth Proxy Service]
-        CLI[EKS-DX CLI]
-    end
-    
-    API -->|TokenReview| ProxySvc
-    API -->|AdmissionReview| WebhookSvc
-    API -->|JWKS Discovery| CLI
-    Webhook --> WebhookSvc
-    Proxy --> ProxySvc
-    Pods -->|Service Account Tokens| Proxy
-```
-
-#### Kubernetes API Server Integration
-- **TokenReview API**: Validate service account token signatures
-- **JWKS Endpoint**: Discover public keys for token validation
-- **Admission Webhooks**: Register pod mutation webhook
-
-#### Service Account Token Integration
-- **Projected Tokens**: Use projected service account tokens with custom audience
-- **Token Audience**: Validate audience matches `pods.eks.amazonaws.com`
-- **Token Claims**: Extract namespace, service account, pod metadata
-
-## Data Interfaces
-
-### DynamoDB Schema
-
-#### Clusters Table
+**Register cluster request:**
 ```json
-{
-  "PK": "CLUSTER#cluster-name",
-  "SK": "METADATA",
-  "Name": "cluster-name",
-  "Issuer": "https://kubernetes.default.svc.cluster.local",
-  "Jwks": "{\"keys\":[...]}",
-  "CreatedAt": "2024-01-01T00:00:00Z",
-  "UpdatedAt": "2024-01-01T00:00:00Z"
-}
+{ "name": "my-cluster", "issuer": "https://...", "jwks": "{\"keys\":[...]}" }
 ```
 
-#### Associations Table
+### Association Management — Mixed Auth
+
+`POST` and `DELETE` require IAM auth. `GET` endpoints accept either IAM or a Bearer SA token (validated by `WebhookAuthFilter` for the webhook SA).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/clusters/{name}/pod-identity-associations` | Create association |
+| GET | `/clusters/{name}/pod-identity-associations` | List associations (query: `namespace`, `serviceAccount`) |
+| GET | `/clusters/{name}/pod-identity-associations/{id}` | Describe association |
+| DELETE | `/clusters/{name}/pod-identity-associations/{id}` | Delete association |
+
+**Create association request:**
 ```json
-{
-  "PK": "CLUSTER#cluster-name",
-  "SK": "ASSOCIATION#namespace#service-account",
-  "AssociationId": "uuid-1234",
-  "ClusterName": "cluster-name",
-  "Namespace": "default",
-  "ServiceAccount": "my-service-account",
-  "RoleArn": "arn:aws:iam::123456789012:role/MyRole",
-  "CreatedAt": "2024-01-01T00:00:00Z"
-}
+{ "namespace": "default", "serviceAccount": "my-sa", "roleArn": "arn:aws:iam::123:role/eks-dx-pod-my-role" }
 ```
 
-### JWT Token Structure
+### Error Response Format
 
-#### Service Account Token Claims
+All errors follow:
 ```json
-{
-  "iss": "https://kubernetes.default.svc.cluster.local",
-  "aud": ["pods.eks.amazonaws.com"],
-  "sub": "system:serviceaccount:namespace:service-account",
-  "exp": 1704067200,
-  "iat": 1704063600,
-  "kubernetes.io": {
-    "namespace": "default",
-    "serviceaccount": {
-      "name": "my-service-account",
-      "uid": "abc-def-123"
-    },
-    "pod": {
-      "name": "my-pod-123",
-      "uid": "def-ghi-456"
-    }
-  }
-}
+{ "__type": "ErrorCode", "message": "Human-readable message" }
 ```
+
+Common codes: `InvalidParameterException` (400), `AccessDeniedException` (403), `NotFoundException` (404), `ConflictException` (409), `InternalServerException` (500).
+
+---
+
+## In-Cluster Proxy API (eks-dx-auth-proxy)
+
+Exposes the same credential exchange endpoint as the Lambda, plus a compatibility alias:
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/clusters/{name}/assets` | Primary endpoint (used by Pod Identity Agent) |
+| POST | `/clusters/{name}/assume-role-for-pod-identity` | Alias |
+| GET | `/health/live` | Liveness probe |
+| GET | `/health/ready` | Readiness probe |
+| GET | `/metrics` | Prometheus metrics (Micrometer) |
+
+---
+
+## Webhook Endpoint (eks-dx-pod-identity-webhook)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/mutate` | Kubernetes MutatingAdmissionWebhook handler |
+
+Receives `AdmissionReview` (Kubernetes API), returns JSON patch.
+
+---
+
+## CLI Interface (eks-dx)
+
+```
+eks-dx configure [--endpoint URL] [--region REGION]
+
+eks-dx cluster create --name NAME [--issuer URL] [--jwks JSON]
+eks-dx cluster describe NAME
+eks-dx cluster list
+eks-dx cluster update NAME [--refresh-jwks]
+eks-dx cluster delete NAME
+
+eks-dx association create --cluster NAME --namespace NS --service-account SA --role-arn ARN
+eks-dx association describe --cluster NAME --id ID
+eks-dx association list --cluster NAME [--namespace NS] [--service-account SA]
+eks-dx association delete --cluster NAME --id ID
+```
+
+`create cluster` auto-discovers issuer and JWKS from the kube-apiserver OIDC endpoints if not provided explicitly.
+
+---
 
 ## Configuration Interfaces
 
-### CLI Configuration
-```yaml
-# ~/.eks-dx/config
-endpoint: https://api.eks-dx.codriverlabs.ai
-region: us-east-1
-```
+### eks-dx-lambda (application.properties / env vars)
 
-### Environment Variables Interface
-| Variable | Component | Purpose |
-|----------|-----------|---------|
-| `EKS_DX_ENDPOINT` | eks-dx-auth-proxy, webhook | Lambda API Gateway URL |
-| `EKS_CLUSTER_NAME` | webhook | Cluster name for association lookups |
-| `AWS_REGION` | All components | AWS region for API calls |
-| `eks-dx.clusters-table` | eks-dx-lambda | DynamoDB clusters table name |
-| `eks-dx.associations-table` | eks-dx-lambda | DynamoDB associations table name |
+| Property | Env Var | Default |
+|----------|---------|---------|
+| `eks-dx.clusters-table` | `EKS_DX_CLUSTERS_TABLE` | `eks-dx-clusters` |
+| `eks-dx.associations-table` | `EKS_DX_ASSOCIATIONS_TABLE` | `eks-dx-associations` |
+| `aws.sts.session-duration` | — | `PT1H` |
 
-### Quarkus Configuration Interface
-```properties
-# application.properties
-eks-dx.clusters-table=eks-dx-clusters
-eks-dx.associations-table=eks-dx-associations
-aws.sts.session-duration=PT1H
-quarkus.http.port=8080
-```
+### eks-dx-auth-proxy (application.properties / env vars)
 
-## Security Interfaces
+| Property | Env Var | Default |
+|----------|---------|---------|
+| `eks-dx.endpoint` | `EKS_DX_ENDPOINT` | `https://eks-dx.codriverlabs.ai` |
 
-### Authentication Methods
-- **Service Account Tokens**: Kubernetes-issued JWT tokens
-- **AWS SigV4**: CLI authentication to management API
-- **IAM Roles**: AWS credential exchange mechanism
+### eks-dx-pod-identity-webhook (application.properties)
 
-### Authorization Patterns
-- **Token Audience Validation**: Strict audience checking
-- **Association-Based Access**: Role mapping through associations
-- **Session Tagging**: Kubernetes metadata in AWS sessions
+| Property | Description |
+|----------|-------------|
+| `eks-dx.endpoint` | Lambda API Gateway URL |
+| `eks.cluster-name` | Name of the cluster this webhook serves |
 
-### Network Security
-- **HTTPS Only**: All external communications encrypted
-- **Internal Cluster**: Proxy and webhook communicate within cluster
-- **API Gateway**: Managed TLS termination for Lambda API
+### CLI (~/.eks-dx/config)
+
+| Key | Env Var | Default |
+|-----|---------|---------|
+| `endpoint` | `EKS_DX_ENDPOINT` | `https://eks-dx.codriverlabs.ai` |
+| `region` | `AWS_REGION` | `us-east-1` |

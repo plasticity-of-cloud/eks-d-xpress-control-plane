@@ -1,183 +1,98 @@
-# System Architecture
+# Architecture
 
-## Overview
-EKS-DX Control Plane implements a distributed authentication system that replicates AWS EKS Pod Identity for non-EKS Kubernetes environments. The architecture follows a microservices pattern with serverless backend components.
+## System Overview
+
+EKS-DX extends EKS Pod Identity to non-EKS Kubernetes clusters. It replicates the `AssumeRoleForPodIdentity` API contract so that the standard EKS Pod Identity Agent can work against k3s, microk8s, and EKS-D clusters without modification.
 
 ## High-Level Architecture
 
 ```mermaid
 graph TB
-    subgraph "Kubernetes Cluster"
-        Pod[Application Pod]
-        Webhook[Pod Identity Webhook]
-        Proxy[EKS Auth Proxy]
-        SA[Service Account Token]
+    subgraph "Kubernetes Cluster (k3s / microk8s / EKS-D)"
+        Pod["Pod\n(AWS SDK)"]
+        Agent["EKS Pod Identity Agent\n(DaemonSet)"]
+        Proxy["eks-dx-auth-proxy\n(Deployment)"]
+        Webhook["eks-dx-pod-identity-webhook\n(Admission Webhook)"]
     end
-    
-    subgraph "AWS Cloud"
-        APIGW[API Gateway]
-        Lambda[EKS-DX Lambda]
-        DDB[(DynamoDB)]
-        STS[AWS STS]
+
+    subgraph "AWS"
+        APIGW["API Gateway\n(REST v1)"]
+        Lambda["eks-dx-lambda\n(Java 21, SnapStart)"]
+        DDB_C["DynamoDB\neks-dx-clusters"]
+        DDB_A["DynamoDB\neks-dx-associations"]
+        STS["AWS STS"]
+        IAM["AWS IAM"]
     end
-    
-    subgraph "Management"
-        CLI[EKS-DX CLI]
-        CDK[CDK Infrastructure]
+
+    subgraph "Operator"
+        CLI["eks-dx CLI\n(native binary)"]
     end
-    
-    Pod -->|Projected Token| SA
-    Webhook -->|Mutate Pod| Pod
-    Pod -->|HTTP Request| Proxy
-    Proxy -->|TokenReview| K8sAPI[Kubernetes API]
-    Proxy -->|Forward Token| APIGW
+
+    Pod -->|"AWS_CONTAINER_CREDENTIALS_FULL_URI\n(injected by webhook)"| Agent
+    Agent -->|"POST /clusters/{name}/assets"| Proxy
+    Proxy -->|"1. TokenReview (fast-fail)"| K8sAPI["K8s API Server"]
+    Proxy -->|"2. Forward POST /clusters/{name}/assets"| APIGW
     APIGW --> Lambda
-    Lambda -->|Query| DDB
-    Lambda -->|AssumeRole| STS
-    CLI -->|Manage| APIGW
-    CDK -->|Deploy| AWS[AWS Resources]
+    Lambda -->|"JWKS lookup + cache"| DDB_C
+    Lambda -->|"Association lookup"| DDB_A
+    Lambda -->|"AssumeRole + TagSession"| STS
+    Lambda -->|"GetRole (trust policy validation)"| IAM
+    CLI -->|"SigV4 signed"| APIGW
+    Webhook -->|"GET /clusters/{name}/pod-identity-associations"| APIGW
 ```
 
-## Component Architecture
+## Authentication Flow (Credential Exchange)
 
-### Authentication Flow Components
-
-```mermaid
-graph LR
-    subgraph "Request Path"
-        A[Pod Request] --> B[EKS Auth Proxy]
-        B --> C[TokenReview Validation]
-        B --> D[Lambda Forwarding]
-        D --> E[JWKS Validation]
-        E --> F[Association Lookup]
-        F --> G[STS AssumeRole]
-        G --> H[AWS Credentials]
-    end
-```
-
-### Data Flow Architecture
-
-```mermaid
-graph TD
-    subgraph "Control Plane"
-        CLI[CLI Commands] --> API[Management API]
-        API --> Clusters[(Clusters Table)]
-        API --> Associations[(Associations Table)]
-    end
-    
-    subgraph "Data Plane"
-        Token[Service Account Token] --> Validation[Token Validation]
-        Validation --> Lookup[Association Lookup]
-        Lookup --> Associations
-        Lookup --> Role[IAM Role ARN]
-        Role --> STS[STS AssumeRole]
-    end
-```
-
-## Design Patterns
-
-### Microservices Pattern
-- **Service Separation**: Each component has a single responsibility
-- **Independent Deployment**: Components can be deployed separately
-- **Technology Diversity**: Different components use optimal technologies
-
-### Event-Driven Architecture
-- **Stateless Components**: No local state, all data in DynamoDB
-- **Async Processing**: Non-blocking HTTP clients
-- **Reactive Patterns**: Quarkus reactive extensions
-
-### Security-First Design
-- **Defense in Depth**: Multiple validation layers
-- **Principle of Least Privilege**: Minimal IAM permissions
-- **Token Validation**: Multi-stage JWT verification
-
-## Infrastructure Patterns
-
-### Serverless-First
-```mermaid
-graph TB
-    subgraph "Serverless Components"
-        Lambda[AWS Lambda]
-        APIGW[API Gateway]
-        DDB[(DynamoDB)]
-    end
-    
-    subgraph "Container Components"
-        Proxy[EKS Auth Proxy]
-        Webhook[Pod Identity Webhook]
-    end
-    
-    subgraph "Native Components"
-        CLI[Native CLI Binary]
-    end
-```
-
-### Infrastructure as Code
-- **CDK Primary**: Complete infrastructure definition
-- **SAM Alternative**: Simplified serverless deployment
-- **Immutable Infrastructure**: No manual AWS console changes
-
-## Scalability Architecture
-
-### Horizontal Scaling
-- **Lambda Auto-scaling**: Automatic concurrency management
-- **DynamoDB On-Demand**: Pay-per-request scaling
-- **Stateless Design**: Easy horizontal scaling
-
-### Performance Optimization
-- **JWKS Caching**: Reduced external API calls
-- **Connection Pooling**: Efficient HTTP client usage
-- **Native Compilation**: Fast startup times (CLI)
-
-## Security Architecture
-
-### Authentication Layers
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant Proxy
-    participant Lambda
-    participant K8s as Kubernetes API
+    participant Pod
+    participant Agent as Pod Identity Agent
+    participant Proxy as eks-dx-auth-proxy
+    participant K8s as K8s API Server
+    participant GW as API Gateway
+    participant Lambda as eks-dx-lambda
     participant DDB as DynamoDB
-    participant STS as AWS STS
-    
-    Client->>Proxy: Service Account Token
-    Proxy->>K8s: TokenReview Request
-    K8s-->>Proxy: Token Valid/Invalid
-    Proxy->>Lambda: Forward Valid Token
-    Lambda->>Lambda: JWKS Signature Validation
-    Lambda->>DDB: Association Lookup
-    Lambda->>STS: AssumeRole with Session Tags
-    STS-->>Lambda: Temporary Credentials
-    Lambda-->>Client: AWS Credentials
+    participant STS
+
+    Pod->>Agent: GET /v1/credentials (AWS SDK)
+    Agent->>Proxy: POST /clusters/{name}/assets {token}
+    Proxy->>K8s: TokenReview (audience: pods.eks.amazonaws.com)
+    K8s-->>Proxy: authenticated=true, namespace/sa/pod info
+    Proxy->>GW: POST /clusters/{name}/assets {token}
+    GW->>Lambda: invoke
+    Lambda->>DDB: getJwks(clusterName)
+    Lambda->>Lambda: SmallRye JWT validate (JWKS, issuer, audience)
+    Lambda->>DDB: getRoleArn(cluster, namespace, sa)
+    Lambda->>STS: AssumeRole(roleArn, sessionTags)
+    STS-->>Lambda: credentials
+    Lambda-->>GW: {credentials, subject, association}
+    GW-->>Proxy: 200 credentials
+    Proxy-->>Agent: 200 credentials
+    Agent-->>Pod: credentials
 ```
 
-### Security Controls
-- **JWT Signature Verification**: JWKS-based validation
-- **Audience Validation**: Strict audience checking
-- **Session Tagging**: Kubernetes metadata in AWS sessions
-- **IAM Role Validation**: Trust policy verification
+## Webhook Mutation Flow
 
-## Deployment Architecture
+```mermaid
+sequenceDiagram
+    participant K8s as K8s API Server
+    participant Webhook as eks-dx-pod-identity-webhook
+    participant GW as API Gateway
 
-### Multi-Environment Support
-- **Development**: Local DynamoDB, mock services
-- **Staging**: Shared AWS resources, isolated data
-- **Production**: Dedicated AWS account, monitoring
+    K8s->>Webhook: AdmissionReview (Pod CREATE/UPDATE)
+    Webhook->>GW: GET /clusters/{name}/pod-identity-associations?namespace=X&sa=Y\n(Bearer SA token, audience: eks-dx.codriverlabs.ai)
+    GW-->>Webhook: [{associationId, roleArn, ...}] or []
+    alt association exists
+        Webhook-->>K8s: JSONPatch: inject env vars + projected token volume
+    else no association
+        Webhook-->>K8s: no mutation
+    end
+```
 
-### Container Strategy
-- **Quarkus Native**: Fast startup, low memory
-- **Multi-stage Builds**: Optimized container images
-- **Distroless Base**: Minimal attack surface
+## Design Principles
 
-## Monitoring and Observability
-
-### CloudWatch Integration
-- **Lambda Metrics**: Duration, errors, throttles
-- **DynamoDB Metrics**: Read/write capacity, throttles
-- **Custom Metrics**: Authentication success/failure rates
-
-### Logging Strategy
-- **Structured Logging**: JSON format for parsing
-- **Correlation IDs**: Request tracing across components
-- **Security Events**: Authentication attempts and failures
+- **Wire compatibility**: The proxy and Lambda expose the same `/clusters/{name}/assets` endpoint as the real EKS Pod Identity Agent API, so the standard agent DaemonSet works unmodified.
+- **Defense in depth**: Two-stage token validation — Kubernetes TokenReview (fast-fail in-cluster) + independent JWKS validation in Lambda.
+- **Stateless Lambda**: All state in DynamoDB; Lambda is stateless and benefits from SnapStart for cold-start reduction.
+- **Least privilege**: STS `AssumeRole` is scoped to `arn:aws:iam::*:role/eks-dx-pod-*`; management endpoints require IAM SigV4.
+- **JWKS caching**: 5-minute in-memory TTL per cluster per audience to avoid DynamoDB reads on every token validation.

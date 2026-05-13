@@ -1,147 +1,68 @@
 # AGENTS.md
 
-## Directory Overview and Component Map
+## Directory Overview
 
-This is a **multi-module Quarkus + CDK project** providing EKS Pod Identity authentication for k3s, microk8s, and EKS-D clusters via a serverless Lambda backend.
+Multi-module Quarkus + CDK project. Brings EKS Pod Identity (`AssumeRoleForPodIdentity`) to non-EKS Kubernetes clusters via a serverless Lambda backend.
 
 ```
-├── eks-dx-lambda/           # 🔑 Core credential exchange service
-│   └── src/main/java/ai/codriverlabs/eksdx/lambda/
-│       ├── auth/            # WebhookAuthFilter (SA token audience check)
-│       ├── model/           # TokenClaims record
-│       ├── resource/        # REST endpoints (EksAuthResource, ClusterResource, AssociationResource)
-│       └── service/         # DynamoDbClusterService, DynamoDbAssociationService,
-│                            # JwksTokenValidationService, AwsCredentialService
-├── eks-dx-cli/              # 🛠️ Native CLI for cluster + association management
-│   └── src/main/java/ai/codriverlabs/eksdx/cli/
-│       ├── cluster/         # CreateCluster, Describe, List, Update, Delete commands
-│       ├── association/     # CreateAssociation, Describe, List, Delete commands
-│       ├── config/          # ConfigureCommand, EksDxConfig (~/.eks-dx/config)
-│       └── util/            # EksDxApiClient (JDK HttpClient), AwsSigV4Signer
-├── eks-dx-auth-proxy/          # 🔄 In-cluster proxy (TokenReview + Lambda forwarding)
-│   └── src/main/java/ai/codriverlabs/eksauth/
-│       ├── resource/        # EksAuthAgentResource (POST /clusters/{name}/assets)
-│       └── service/         # TokenValidationService (K8s TokenReview),
-│                            # LambdaForwardingService (JDK HttpClient → Lambda)
-├── eks-dx-pod-identity-webhook/ # ⚡ Kubernetes admission webhook
-│   └── src/main/java/ai/codriverlabs/webhook/
-│       ├── WebhookEndpoint.java        # POST /mutate
-│       ├── PodIdentityMutator.java     # Injects env vars + projected token volume
-│       └── LambdaAssociationLookup.java # Queries Lambda API for associations
-├── infra/                   # 🏗️ CDK infrastructure (alternative to SAM)
-│   └── src/main/java/ai/codriverlabs/eksdx/infra/
-│       ├── InfraApp.java    # CDK app entry point
-│       └── EksDxStack.java  # Lambda, DynamoDB, API Gateway, CloudWatch alarms
-├── sam.yaml                 # 📋 SAM template (Lambda + DynamoDB + API Gateway)
-└── docs/                    # 📚 User guides and setup scripts
+eks-dx-lambda/           # Lambda: credential exchange + cluster/association management API
+eks-dx-auth-proxy/       # In-cluster proxy: Kubernetes TokenReview fast-fail + Lambda forwarding
+eks-dx-pod-identity-webhook/  # Admission webhook: injects env vars + projected token volume into pods
+eks-dx-cli/              # Native CLI (GraalVM): cluster + association management
+infra/                   # CDK infrastructure (Java, alternative to sam.yaml)
+sam.yaml                 # SAM template (Lambda + DynamoDB + API Gateway)
+docs/user_guides/        # Setup/teardown shell scripts for k3s on EC2
+.agents/summary/         # Generated documentation (index.md is the knowledge base entry point)
 ```
 
 ## Key Entry Points
 
-### Authentication Flow Entry Points
-| Component | File | Purpose |
-|-----------|------|---------|
-| **Credential Exchange** | `eks-dx-lambda/.../EksAuthResource.java` | Main API endpoint for pod authentication |
-| **Token Validation** | `eks-dx-lambda/.../JwksTokenValidationService.java` | JWT signature verification |
-| **In-Cluster Proxy** | `eks-dx-auth-proxy/.../EksAuthAgentResource.java` | Fast-fail token validation + forwarding |
-| **Webhook Controller** | `eks-dx-pod-identity-webhook/.../WebhookEndpoint.java` | Pod mutation for identity injection |
+| What | File |
+|------|------|
+| Credential exchange endpoint | `eks-dx-lambda/.../resource/EksAuthResource.java` |
+| JWT/JWKS validation (5-min cache) | `eks-dx-lambda/.../service/JwksTokenValidationService.java` |
+| DynamoDB cluster CRUD | `eks-dx-lambda/.../service/DynamoDbClusterService.java` |
+| DynamoDB association CRUD + IAM role validation | `eks-dx-lambda/.../service/DynamoDbAssociationService.java` |
+| STS AssumeRole with session tags | `eks-dx-lambda/.../service/AwsCredentialService.java` |
+| Webhook auth filter (Bearer token on GET associations) | `eks-dx-lambda/.../auth/WebhookAuthFilter.java` |
+| In-cluster proxy resource | `eks-dx-auth-proxy/.../resource/EksAuthAgentResource.java` |
+| Kubernetes TokenReview | `eks-dx-auth-proxy/.../service/TokenValidationService.java` |
+| Pod mutation logic | `eks-dx-pod-identity-webhook/.../PodIdentityMutator.java` |
+| Association lookup (webhook → Lambda) | `eks-dx-pod-identity-webhook/.../LambdaAssociationLookup.java` |
+| CLI entry point | `eks-dx-cli/.../EksDxCommand.java` |
+| CLI HTTP client + SigV4 signing | `eks-dx-cli/.../util/EksDxApiClient.java`, `AwsSigV4Signer.java` |
+| CLI config (~/.eks-dx/config) | `eks-dx-cli/.../config/EksDxConfig.java` |
+| CDK stack | `infra/.../EksDxStack.java` |
 
-### Management API Entry Points
-| Component | File | Purpose |
-|-----------|------|---------|
-| **Cluster Management** | `eks-dx-lambda/.../ClusterResource.java` | CRUD operations for cluster registration |
-| **Association Management** | `eks-dx-lambda/.../AssociationResource.java` | Pod identity association management |
-| **CLI Commands** | `eks-dx-cli/.../EksDxCommand.java` | Command-line interface entry point |
+## Authentication Model
 
-### Infrastructure Entry Points
-| Component | File | Purpose |
-|-----------|------|---------|
-| **CDK Stack** | `infra/.../EksDxStack.java` | Complete AWS infrastructure definition |
-| **SAM Template** | `sam.yaml` | Alternative serverless deployment |
+- `POST /clusters/{name}/assets` — **no API Gateway auth**; token is in the request body, validated by Lambda via JWKS
+- Management endpoints (`/clusters`, JWKS PUT, association POST/DELETE) — **IAM SigV4**
+- Association GET endpoints — open at API Gateway; `WebhookAuthFilter` optionally validates a Bearer SA token when present
+- Webhook → Lambda — Bearer SA token with audience `eks-dx.codriverlabs.ai`
+- Pod SA tokens — audience `pods.eks.amazonaws.com`
 
-## Authentication Flow
+## Repo-Specific Patterns
 
-```
-Pod → EKS Pod Identity Agent → eks-dx-auth-proxy (in-cluster)
-  │
-  ├─ 1. TokenReview (fast-fail — K8s API validates JWT signature)
-  │
-  └─ 2. Forward to eks-dx-lambda (Lambda via API Gateway)
-       │
-       ├─ 3. JWKS validation (jose4j, DynamoDB-cached JWKS)
-       ├─ 4. Association lookup (DynamoDB: CLUSTER#name / namespace#sa)
-       ├─ 5. STS AssumeRole (with session tags from token claims)
-       └─ 6. Return temporary AWS credentials
-```
+**JWKS caching**: `JwksTokenValidationService` caches `JWTAuthContextInfo` per `clusterName|audience` in a `ConcurrentHashMap` with a 5-minute TTL. Cache is per Lambda instance.
 
-## Repository-Specific Patterns
+**DynamoDB key design**: Associations use composite key `PK=CLUSTER#<name>` / `SK=<namespace>#<serviceAccount>`. Role ARN lookup is O(1) `GetItem`. `describeAssociation` by ID requires a `Scan` with filter (no GSI on `associationId`).
 
-### Build System
-- **Multi-module Maven**: Each component builds independently
-- **Native Compilation**: CLI uses GraalVM for native binaries (`-Pnative`)
-- **Container Images**: Quarkus container-image extension
-- **Integration Tests**: DynamoDB Local on port 18000
+**Role naming constraint**: STS `AssumeRole` is scoped to `arn:aws:iam::*:role/eks-dx-pod-*`. Pod identity IAM roles must match this prefix.
 
-### Configuration Management
-- **CLI Config**: `~/.eks-dx/config` (endpoint, region)
-- **Environment Variables**: Component-specific env var patterns
-- **Property Files**: Quarkus application.properties per module
+**Dual `TokenClaims`**: `eks-dx-lambda` uses a Java `record`; `eks-dx-auth-proxy` has its own class. They are not shared — modules are independently deployable.
 
-### Testing Strategy
-- **Unit Tests**: 192 total across all modules
-- **Integration Tests**: 16 tests with DynamoDB Local
-- **Mock Servers**: WireMock for external API testing
-- **Test Coverage**: Focused on service layer and API contracts
+**CLI config resolution order**: CLI flag → `EKS_DX_ENDPOINT` / `AWS_REGION` env vars → `~/.eks-dx/config` → defaults (`https://eks-dx.codriverlabs.ai`, `us-east-1`).
 
-### Security Patterns
-- **JWT Validation**: jose4j library with JWKS caching
-- **AWS SigV4**: Custom implementation for CLI authentication
-- **Token Audience**: Strict audience validation (`pods.eks.amazonaws.com`)
-- **Session Tags**: Kubernetes metadata propagated to AWS
+**`create cluster` auto-discovery**: `CreateClusterCommand` fetches issuer from `/.well-known/openid-configuration` and JWKS from `/openid/v1/jwks` on the kube-apiserver if not provided explicitly.
 
-## Development Workflow
+**Webhook idempotency**: `PodIdentityMutator` checks for existing env vars and volumes before injecting to avoid duplicates on re-admission.
 
-### Local Development
-```bash
-# Lambda development
-mvn -pl eks-dx-lambda compile quarkus:dev
+**CDK vs SAM**: CDK (`EksDxStack`) adds PITR and `RemovalPolicy.RETAIN` on DynamoDB tables; SAM does not. SAM explicitly grants `iam:GetRole`; CDK does not — CDK deployments will fail at association creation without it.
 
-# CLI development  
-mvn -pl eks-dx-cli package -Pnative
+## Integration Tests
 
-# Integration testing
-docker run -d -p 18000:8000 public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
-mvn test -Dintegration.dynamodb=true
-```
-
-### Deployment Options
-- **SAM**: `sam deploy --guided` (recommended for AWS)
-- **CDK**: `cd infra && cdk deploy` (infrastructure as code)
-- **Container**: Docker images for proxy and webhook components
-
-## Domain and Naming Convention
-
-| Context | Convention | Example |
-|---------|-----------|---------|
-| Java packages | `ai.codriverlabs.*` | `ai.codriverlabs.eksdx.lambda.service` |
-| Maven groupId | `ai.codriverlabs` | `<groupId>ai.codriverlabs</groupId>` |
-| CLI config | `~/.eks-dx/config` | endpoint, region |
-| Container images | `codriverlabs.ai/` prefix or ECR | `codriverlabs.ai/eks-dx-auth-proxy` |
-| API Gateway | `eks-dx.codriverlabs.ai` | Custom domain (optional) |
-
-## Infrastructure
-
-### SAM (`sam.yaml`)
-- Lambda (Java 21, SnapStart, 512MB)
-- DynamoDB tables (PAY_PER_REQUEST)
-- API Gateway (IAM auth on management endpoints, open on /assets)
-- CloudWatch alarms (Lambda errors, throttles, p99 duration, DynamoDB throttles)
-- Optional custom domain
-
-### CDK (`infra/`)
-- Same resources as SAM, plus PITR on DynamoDB
-- REST API v1 with IAM auth
-- `cdk deploy` from `infra/` directory
+`DynamoDbIntegrationTest` requires DynamoDB Local on port 18000. Run with `-Dintegration.dynamodb=true`. The test creates tables if they don't exist.
 
 ## Custom Instructions
 <!-- This section is for human and agent-maintained operational knowledge.
