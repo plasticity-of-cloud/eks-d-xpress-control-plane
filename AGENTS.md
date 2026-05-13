@@ -58,7 +58,7 @@ docs/user_guides/        # Setup/teardown shell scripts for k3s on EC2
 
 **Webhook idempotency**: `PodIdentityMutator` checks for existing env vars and volumes before injecting to avoid duplicates on re-admission.
 
-**CDK vs SAM**: CDK (`EksDxStack`) adds PITR and `RemovalPolicy.RETAIN` on DynamoDB tables; SAM does not. SAM explicitly grants `iam:GetRole`; CDK does not — CDK deployments will fail at association creation without it.
+**CDK vs SAM**: SAM (`sam.yaml`) is the supported deployment path. CDK (`EksDxStack`) exists as an alternative but is not maintained at parity — it is missing `iam:GetRole` and does not match SAM's policy set.
 
 ## Integration Tests
 

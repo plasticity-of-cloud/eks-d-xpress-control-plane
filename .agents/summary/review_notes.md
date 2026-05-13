@@ -8,7 +8,7 @@ No significant inconsistencies found. The following minor points are noted:
 
 2. **Association GET auth discrepancy**: `sam.yaml` marks `AssociationsGet` and `AssociationGet` as `Authorizer: NONE`, while `AssociationsPost` and `AssociationDelete` use the default IAM auth. The `WebhookAuthFilter` adds an optional Bearer token check on top of the open GET endpoints. This is correct but non-obvious.
 
-3. **CDK vs SAM divergence**: `sam.yaml` explicitly grants `iam:GetRole` on `arn:aws:iam::*:role/*`. `EksDxStack.java` only adds `sts:AssumeRole` and `sts:TagSession` — `iam:GetRole` is absent from the CDK stack. Deployments via CDK will fail at association creation unless the Lambda execution role has `iam:GetRole` from another source.
+3. ~~CDK vs SAM divergence~~ — CDK is not a supported deployment path; SAM is the canonical deployment. No gap.
 
 ## Completeness Gaps
 
@@ -26,5 +26,5 @@ No significant inconsistencies found. The following minor points are noted:
 
 - Add a `docs/deployment/` section covering Helm chart values for auth-proxy and webhook.
 - Document the TLS setup for the admission webhook.
-- Add `iam:GetRole` to `EksDxStack.java` to match the SAM template (currently missing from CDK).
+- Document TLS/certificate setup for the admission webhook (see gap #5 below).
 - Consider extracting `TokenClaims` into a shared module to eliminate duplication.
