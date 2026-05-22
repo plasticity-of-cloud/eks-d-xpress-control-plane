@@ -1,127 +1,75 @@
 # EKS-DX Deployment Guide
 
-Two deployment paths:
+## Architecture overview
 
-1. **[GitHub Release artifacts](#github-release-artifacts)** — pre-built binaries, images, and Helm charts from a tagged release
-2. **[Local build](#local-build)** — build everything from source
-
----
-
-## GitHub Release Artifacts
-
-Each `v*` tag publishes to:
-- **GHCR** (`ghcr.io/codriverlabs/`) — Docker images and Helm charts (OCI), **free for public repos, no auth required to pull**
-- **GitHub Releases** — CLI binaries, Lambda zip, SAM template, Helm chart tarballs
-
-| Artifact | Location |
-|----------|----------|
-| Docker images | `ghcr.io/codriverlabs/eks-dx-auth-proxy:<version>` |
-| | `ghcr.io/codriverlabs/eks-dx-pod-identity-webhook:<version>` |
-| Helm charts (OCI) | `oci://ghcr.io/codriverlabs/helm/eks-dx-auth-proxy` |
-| | `oci://ghcr.io/codriverlabs/helm/eks-dx-pod-identity-webhook` |
-| Helm charts (tarball) | GitHub Releases `eks-dx-auth-proxy-<version>.tar.gz` |
-| Lambda zip | GitHub Releases `eks-dx-lambda-<version>.zip` |
-| SAM template | GitHub Releases `eks-dx-sam-<version>.tar.gz` |
-| CLI binary | GitHub Releases `eks-dx-cli-<version>-linux-{amd64,arm64}` |
-
-### 1. Download release assets
-
-```bash
-VERSION=1.0.0
-ARCH=arm64   # or amd64
-BASE=https://github.com/codriverlabs/eks-dx-control-plane/releases/download/v${VERSION}
-
-# CLI
-curl -Lo eks-dx ${BASE}/eks-dx-cli-${VERSION}-linux-${ARCH}
-chmod +x eks-dx && sudo mv eks-dx /usr/local/bin/
-
-# Lambda + SAM
-curl -LO ${BASE}/eks-dx-lambda-${VERSION}.zip
-curl -LO ${BASE}/eks-dx-sam-${VERSION}.tar.gz && tar xzf eks-dx-sam-${VERSION}.tar.gz
 ```
-
-### 2. Deploy the Lambda backend
-
-```bash
-sam deploy -t sam.yaml --stack-name eks-dx --region us-east-1 \
-  --capabilities CAPABILITY_IAM --resolve-s3 --no-confirm-changeset \
-  --parameter-overrides LambdaZip=eks-dx-lambda-${VERSION}.zip
-```
-
-Save the API Gateway endpoint from the stack outputs:
-```bash
-ENDPOINT=$(aws cloudformation describe-stacks --stack-name eks-dx \
-  --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text)
-```
-
-### 3. Register the cluster
-
-```bash
-eks-dx configure --endpoint $ENDPOINT --region us-east-1
-eks-dx create cluster --name my-k3s --region us-east-1
-```
-
-### 4. Install Helm charts from GHCR
-
-No registry login required for public images.
-
-```bash
-helm install eks-dx-auth-proxy oci://ghcr.io/codriverlabs/helm/eks-dx-auth-proxy \
-  --version ${VERSION} \
-  --namespace kube-system \
-  --set app.imageConfig.registry=ghcr.io \
-  --set app.imageConfig.repository=codriverlabs/eks-dx-auth-proxy \
-  --set app.imageConfig.tag=${VERSION} \
-  --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT}
-
-helm install eks-dx-pod-identity-webhook oci://ghcr.io/codriverlabs/helm/eks-dx-pod-identity-webhook \
-  --version ${VERSION} \
-  --namespace kube-system \
-  --set app.imageConfig.registry=ghcr.io \
-  --set app.imageConfig.repository=codriverlabs/eks-dx-pod-identity-webhook \
-  --set app.imageConfig.tag=${VERSION} \
-  --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT} \
-  --set app.envs.EKS_CLUSTER_NAME=my-k3s
-```
-
-Or from the release tarball:
-
-```bash
-curl -LO ${BASE}/eks-dx-auth-proxy-${VERSION}.tar.gz
-helm install eks-dx-auth-proxy eks-dx-auth-proxy-${VERSION}.tar.gz \
-  --namespace kube-system \
-  --set app.imageConfig.registry=ghcr.io \
-  --set app.imageConfig.tag=${VERSION} \
-  --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT}
+┌─────────────────────────────────────────────────────────┐
+│  AWS (Lambda + API Gateway + DynamoDB)                  │
+│                                                         │
+│  eks-dx-credential-service  ← POST /clusters/*/assets  │
+│  eks-dx-mgmt-service        ← /clusters, /associations  │
+│  eks-dx-tenant-service      ← /tenants (+ SSE stream)  │
+│                                                         │
+│  eks-dx-clusters   (DynamoDB)                           │
+│  eks-dx-associations (DynamoDB)                         │
+│  eks-dx-tenants    (DynamoDB)                           │
+└─────────────────────────────────────────────────────────┘
+         ▲ HTTPS (API Gateway)
+         │
+┌────────┴──────────────────────────────────────────────┐
+│  Kubernetes cluster (k3s / microk8s / EKS-D-Xpress)   │
+│                                                        │
+│  eks-dx-auth-proxy      (kube-system)                  │
+│    - Kubernetes TokenReview fast-fail                  │
+│    - Forwards to credential-service with proxy token   │
+│                                                        │
+│  eks-dx-pod-identity-webhook  (kube-system)            │
+│    - Injects AWS_CONTAINER_CREDENTIALS_FULL_URI        │
+│    - Injects projected SA token volume into pods       │
+└────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Local Build
+## Artifacts
+
+| Artifact | Built from | Deployed as |
+|---|---|---|
+| `eks-dx-credential-service/target/function.zip` | Maven | Lambda (SnapStart) |
+| `eks-dx-mgmt-service/target/function.zip` | Maven | Lambda |
+| `eks-dx-tenant-service/target/function.zip` | Maven | Lambda + Function URL |
+| `eks-dx-auth-proxy` image | Maven + Jib | Kubernetes Deployment |
+| `eks-dx-pod-identity-webhook` image | Maven + Jib | Kubernetes Deployment |
+| `eks-dx-cli` native binary | GraalVM | Local / CI/CD |
+
+---
+
+## 1. Build
 
 ### Prerequisites
-
 - Java 21+, Maven 3.8+
 - Docker (for container images)
-- GraalVM 21 (for native CLI only)
+- GraalVM 21 (native CLI only)
 - AWS CLI v2, SAM CLI
 
-### 1. Build everything
+### Lambda functions (all three)
 
 ```bash
-# Tests + all modules
-mvn verify
+mvn -pl eks-dx-model,eks-dx-credential-service package -DskipTests
+mvn -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
+mvn -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
 
-# Lambda zip
-mvn -pl eks-dx-lambda package -DskipTests
+# Or all at once:
+mvn package -DskipTests
+```
 
-# CLI native binary
-mvn -pl eks-dx-cli package -Pnative -DskipTests
-# Binary: eks-dx-cli/target/eks-dx-cli-*-runner
+Output: `eks-dx-{credential,mgmt,tenant}-service/target/function.zip`
 
-# Container images + Helm charts
-REGISTRY=864899852480.dkr.ecr.us-east-1.amazonaws.com
-VERSION=1.0.0-SNAPSHOT
+### Container images
+
+```bash
+REGISTRY=ghcr.io/codriverlabs   # or your ECR registry
+VERSION=1.0.0
 
 mvn -pl eks-dx-auth-proxy package -DskipTests \
   -Dquarkus.container-image.build=true \
@@ -134,79 +82,167 @@ mvn -pl eks-dx-pod-identity-webhook package -DskipTests \
   -Dquarkus.container-image.push=true \
   -Dquarkus.container-image.registry=${REGISTRY} \
   -Dquarkus.container-image.tag=${VERSION}
-
-# Helm chart tarballs are at:
-#   eks-dx-auth-proxy/target/helm/kubernetes/eks-dx-auth-proxy-*.tar.gz
-#   eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-dx-pod-identity-webhook-*.tar.gz
 ```
 
-### 2. Deploy Lambda backend
+### CLI native binary
 
 ```bash
-mvn -pl eks-dx-lambda package -DskipTests
-sam deploy -t sam.yaml --stack-name eks-dx --region us-east-1 \
-  --capabilities CAPABILITY_IAM --resolve-s3 --no-confirm-changeset
+mvn -pl eks-dx-cli package -Pnative -DskipTests
+# Binary: eks-dx-cli/target/eks-dx-cli-*-runner
+sudo cp eks-dx-cli/target/eks-dx-cli-*-runner /usr/local/bin/eks-dx
+```
 
+---
+
+## 2. Deploy the Lambda backend (SAM)
+
+```bash
+mvn package -DskipTests   # builds all three function.zips
+
+sam deploy -t sam.yaml \
+  --stack-name eks-dx \
+  --region us-east-1 \
+  --capabilities CAPABILITY_IAM \
+  --resolve-s3 \
+  --no-confirm-changeset
+```
+
+After deploy, capture the outputs:
+
+```bash
 ENDPOINT=$(aws cloudformation describe-stacks --stack-name eks-dx \
-  --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text)
+  --query 'Stacks[0].Outputs[?OutputKey==`Endpoint`].OutputValue' \
+  --output text)
+
+STREAM_URL=$(aws cloudformation describe-stacks --stack-name eks-dx \
+  --query 'Stacks[0].Outputs[?OutputKey==`TenantStreamFunctionUrl`].OutputValue' \
+  --output text)
 ```
 
-### 3. Register the cluster
+---
+
+## 3. Register the cluster
+
+The cluster's OIDC issuer and JWKS must be registered once. The CLI auto-discovers them from the kube-apiserver.
 
 ```bash
-CLI="java -jar eks-dx-cli/target/eks-dx-cli-*-runner.jar"
-$CLI configure --endpoint $ENDPOINT --region us-east-1
-$CLI create cluster --name my-k3s --region us-east-1
+eks-dx configure --endpoint $ENDPOINT --region us-east-1
+
+# Auto-discovers issuer + JWKS from /.well-known/openid-configuration
+eks-dx create cluster --name my-cluster
 ```
 
-### 4. Install Helm charts
+Or explicitly:
 
 ```bash
+eks-dx create cluster --name my-cluster \
+  --issuer https://<public-ip-or-domain> \
+  --jwks-file /tmp/jwks.json
+```
+
+---
+
+## 4. Install in-cluster components
+
+### Helm (recommended)
+
+```bash
+VERSION=1.0.0
+REGISTRY=ghcr.io/codriverlabs
+
 helm install eks-dx-auth-proxy \
-  eks-dx-auth-proxy/target/helm/kubernetes/eks-dx-auth-proxy-*.tar.gz \
+  oci://${REGISTRY}/helm/eks-dx-auth-proxy \
+  --version ${VERSION} \
   --namespace kube-system \
   --set app.imageConfig.registry=${REGISTRY} \
   --set app.imageConfig.tag=${VERSION} \
   --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT}
 
 helm install eks-dx-pod-identity-webhook \
-  eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-dx-pod-identity-webhook-*.tar.gz \
+  oci://${REGISTRY}/helm/eks-dx-pod-identity-webhook \
+  --version ${VERSION} \
   --namespace kube-system \
   --set app.imageConfig.registry=${REGISTRY} \
   --set app.imageConfig.tag=${VERSION} \
   --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT} \
-  --set app.envs.EKS_CLUSTER_NAME=my-k3s
+  --set app.envs.EKS_CLUSTER_NAME=my-cluster
 ```
 
-### 5. Integration tests
+### kubectl (raw manifests)
 
 ```bash
-# Start DynamoDB Local
-docker run -d -p 18000:8000 public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
-
-mvn verify -Dintegration.dynamodb=true
+kubectl apply -f deploy/eks-dx-auth-proxy.yaml
+kubectl apply -f eks-dx-pod-identity-webhook/k8s/
 ```
 
 ---
 
-## Helm Image Values Reference
+## 5. Create a pod identity association
 
-Both charts expose the following values for image configuration:
-
-```yaml
-app:
-  imageConfig:
-    registry: 864899852480.dkr.ecr.us-east-1.amazonaws.com  # override per environment
-    repository: codriverlabs/eks-dx-auth-proxy                    # or eks-dx-pod-identity-webhook
-    tag: 1.0.0
-```
-
-Override at install time:
 ```bash
-helm upgrade eks-dx-auth-proxy <chart> \
-  --set app.imageConfig.registry=<registry> \
-  --set app.imageConfig.tag=<new-version>
+eks-dx create association \
+  --cluster my-cluster \
+  --namespace my-app \
+  --service-account my-sa \
+  --role-arn arn:aws:iam::123456789012:role/eks-dx-pod-my-role
 ```
+
+The IAM role must trust `sts:AssumeRole` and its name must match `eks-dx-pod-*`.
+
+---
+
+## Platform-specific notes
+
+### k3s on EC2
+
+k3s exposes the OIDC discovery endpoint on the kube-apiserver. The issuer is typically `https://<node-public-ip>` (set via `--kube-apiserver-arg=service-account-issuer=https://<ip>`).
+
+```bash
+# On the k3s node — extract JWKS
+kubectl get --raw /openid/v1/jwks > /tmp/jwks.json
+
+eks-dx create cluster --name my-k3s \
+  --issuer https://<node-public-ip> \
+  --jwks-file /tmp/jwks.json
+```
+
+The auth-proxy needs to reach the kube-apiserver for TokenReview. In k3s this works out of the box since the proxy runs in-cluster.
+
+### EKS-D-Xpress
+
+EKS-D-Xpress clusters are provisioned via `eks-dx create tenant`, which:
+1. Launches an EC2 instance with kubeadm
+2. Pre-registers the SA signing key in Secrets Manager
+3. Runs `kubeadm init` with `--service-account-issuer https://<public-ip>`
+4. Auto-registers the cluster with eks-dx-lambda on first boot
+
+No manual `eks-dx create cluster` step is needed — the EC2 instance self-registers. After the tenant reaches `state: ready`:
+
+```bash
+# Watch provisioning progress
+eks-dx create tenant acme-staging --wait
+
+# Install in-cluster components on the new cluster
+KUBECONFIG=/path/to/acme-staging.kubeconfig \
+helm install eks-dx-auth-proxy oci://${REGISTRY}/helm/eks-dx-auth-proxy \
+  --namespace kube-system \
+  --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT} \
+  --set app.envs.EKS_CLUSTER_NAME=acme-staging
+```
+
+---
+
+## Proxy token security model
+
+The auth-proxy holds a projected SA token with audience `eks-dx.codriverlabs.ai` (mounted at `/var/run/secrets/eks-dx/token`, rotated every hour by Kubernetes). This token is attached as `Authorization: Bearer` on every forwarded request.
+
+The credential-service Lambda validates this token against the cluster's JWKS in DynamoDB **before** processing the pod's credential request. This means:
+
+- Requests from outside the cluster are rejected (no valid proxy token)
+- Cross-cluster calls are rejected (cluster-1's proxy token fails against cluster-2's JWKS)
+- The Kubernetes TokenReview fast-fail in the proxy cannot be bypassed
+
+---
 
 ## Cleanup
 
@@ -214,4 +250,9 @@ helm upgrade eks-dx-auth-proxy <chart> \
 helm uninstall eks-dx-auth-proxy -n kube-system
 helm uninstall eks-dx-pod-identity-webhook -n kube-system
 sam delete --stack-name eks-dx
+```
+
+For tenant clusters:
+```bash
+eks-dx delete tenant acme-staging   # terminates EC2, removes secrets, deregisters cluster
 ```

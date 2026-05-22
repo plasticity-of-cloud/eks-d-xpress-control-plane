@@ -21,14 +21,17 @@ jobs:
       - name: Build and test (all modules)
         run: mvn -B verify -DskipITs
 
-      - name: Build Lambda function.zip
-        run: mvn -B -pl eks-dx-lambda package -DskipTests
+      - name: Build Lambda function.zips
+        run: |
+          mvn -B -pl eks-dx-model,eks-dx-credential-service package -DskipTests
+          mvn -B -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
+          mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
 
       - name: Validate SAM template
         uses: aws-actions/setup-sam@v2
       - run: sam validate -t sam.yaml --lint
 
-      - name: Build container images (JVM)
+      - name: Build container images (JVM, no push)
         run: |
           mvn -B -pl eks-dx-auth-proxy package -DskipTests \
             -Dquarkus.container-image.build=true \
@@ -60,7 +63,7 @@ jobs:
 
       - name: Run DynamoDB integration tests
         run: |
-          mvn -B -pl eks-dx-lambda test \
+          mvn -B -pl eks-dx-model,eks-dx-mgmt-service test \
             -Dtest=DynamoDbIntegrationTest \
             -Dintegration.dynamodb=true \
             -Ddynamodb.endpoint=http://localhost:18000

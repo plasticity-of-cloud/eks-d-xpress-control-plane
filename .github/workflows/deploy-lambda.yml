@@ -1,12 +1,12 @@
-name: Deploy Lambda (test)
+name: Deploy Lambda functions
 
 on:
   workflow_dispatch:
     inputs:
-      function-name:
-        description: Lambda function name
+      function:
+        description: 'Which function to deploy (credential | mgmt | tenant | all)'
         required: true
-        default: eks-dx-service
+        default: all
       region:
         description: AWS region
         required: true
@@ -29,8 +29,11 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build Lambda function.zip
-        run: mvn -B -pl eks-dx-lambda package -DskipTests
+      - name: Build Lambda function.zips
+        run: |
+          mvn -B -pl eks-dx-model,eks-dx-credential-service package -DskipTests
+          mvn -B -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
+          mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -38,14 +41,26 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ inputs.region }}
 
-      - name: Deploy Lambda function
-        uses: aws-actions/aws-lambda-deploy@v1.1.0
-        with:
-          function-name: ${{ inputs.function-name }}
-          code-artifacts-dir: eks-dx-lambda/target/function.zip
-          handler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
-          runtime: java21
-          memory-size: 512
-          timeout: 30
-          snap-start: '{"ApplyOn":"PublishedVersions"}'
-          publish: true
+      - name: Deploy credential service
+        if: inputs.function == 'credential' || inputs.function == 'all'
+        run: |
+          aws lambda update-function-code \
+            --function-name eks-dx-credential-service \
+            --zip-file fileb://eks-dx-credential-service/target/function.zip \
+            --region ${{ inputs.region }}
+
+      - name: Deploy mgmt service
+        if: inputs.function == 'mgmt' || inputs.function == 'all'
+        run: |
+          aws lambda update-function-code \
+            --function-name eks-dx-mgmt-service \
+            --zip-file fileb://eks-dx-mgmt-service/target/function.zip \
+            --region ${{ inputs.region }}
+
+      - name: Deploy tenant service
+        if: inputs.function == 'tenant' || inputs.function == 'all'
+        run: |
+          aws lambda update-function-code \
+            --function-name eks-dx-tenant-service \
+            --zip-file fileb://eks-dx-tenant-service/target/function.zip \
+            --region ${{ inputs.region }}
