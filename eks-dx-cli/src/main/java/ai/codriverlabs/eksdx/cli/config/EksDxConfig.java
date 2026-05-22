@@ -14,6 +14,10 @@ public class EksDxConfig {
     private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".eks-dx");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config");
 
+    /** ~/.eks-dx/tenants/{region}/{tenantId}.pem */
+    public Path tenantSshKeyPath(String region, String tenantId) {
+        return CONFIG_DIR.resolve("tenants").resolve(region).resolve(tenantId + ".pem");
+    }
     private final Properties props = new Properties();
 
     public EksDxConfig() {
@@ -30,6 +34,12 @@ public class EksDxConfig {
         String env = System.getenv("AWS_REGION");
         if (env != null && !env.isBlank()) return env;
         return props.getProperty("region", "us-east-1");
+    }
+
+    public String getStreamUrl() {
+        String env = System.getenv("EKS_DX_STREAM_URL");
+        if (env != null && !env.isBlank()) return env;
+        return props.getProperty("stream-url", "");
     }
 
     public void save(String endpoint, String region) throws IOException {
