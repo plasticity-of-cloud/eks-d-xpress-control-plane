@@ -183,6 +183,8 @@ Resources:
     Properties:
       Handler: io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest
       CodeUri: eks-dx-tenant-service/target/function.zip
+      Runtime: provided.al2023   # GraalVM native image
+      Architectures: [arm64]     # graviton2 — cheaper + faster cold start for native
       MemorySize: 128
       Timeout: 900   # 15 min — covers SSE stream worst-case provisioning time
       FunctionUrlConfig:

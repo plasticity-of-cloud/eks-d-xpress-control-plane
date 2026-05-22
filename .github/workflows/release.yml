@@ -39,7 +39,7 @@ jobs:
         run: |
           mvn -B -pl eks-dx-model,eks-dx-credential-service package -DskipTests
           mvn -B -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
-          mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
+          mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests -Pnative
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -102,7 +102,7 @@ jobs:
         run: |
           mvn -B -pl eks-dx-model,eks-dx-credential-service package -DskipTests
           mvn -B -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
-          mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
+          mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests -Pnative
           VERSION=${GITHUB_REF_NAME#v}
           cp eks-dx-credential-service/target/function.zip eks-dx-credential-service-${VERSION}.zip
           cp eks-dx-mgmt-service/target/function.zip eks-dx-mgmt-service-${VERSION}.zip

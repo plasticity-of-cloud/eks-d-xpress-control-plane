@@ -57,10 +57,11 @@
 ```bash
 mvn -pl eks-dx-model,eks-dx-credential-service package -DskipTests
 mvn -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
-mvn -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
+# tenant service: GraalVM native image (provided.al2023, arm64)
+mvn -pl eks-dx-model,eks-dx-tenant-service package -DskipTests -Pnative
 
-# Or all at once:
-mvn package -DskipTests
+# Or all at once (tenant native build takes ~5 min via container):
+mvn package -DskipTests -Pnative
 ```
 
 Output: `eks-dx-{credential,mgmt,tenant}-service/target/function.zip`
