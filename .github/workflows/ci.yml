@@ -65,5 +65,6 @@ jobs:
         run: |
           mvn -B -pl eks-dx-model,eks-dx-mgmt-service test \
             -Dtest=DynamoDbIntegrationTest \
+            -Dsurefire.failIfNoSpecifiedTests=false \
             -Dintegration.dynamodb=true \
             -Ddynamodb.endpoint=http://localhost:18000
