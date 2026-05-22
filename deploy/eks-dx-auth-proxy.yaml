@@ -77,6 +77,9 @@ spec:
         - name: tls-certs
           mountPath: /tls
           readOnly: true
+        - name: proxy-token
+          mountPath: /var/run/secrets/eks-dx
+          readOnly: true
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -104,6 +107,13 @@ spec:
       - name: tls-certs
         secret:
           secretName: eks-dx-auth-proxy-tls
+      - name: proxy-token
+        projected:
+          sources:
+          - serviceAccountToken:
+              audience: eks-dx.codriverlabs.ai
+              expirationSeconds: 3600
+              path: token
 ---
 apiVersion: v1
 kind: Service

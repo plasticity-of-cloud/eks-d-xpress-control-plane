@@ -28,6 +28,7 @@ public class JwksTokenValidationService {
 
     private static final Logger LOG = Logger.getLogger(JwksTokenValidationService.class);
     private static final String AUDIENCE = "pods.eks.amazonaws.com";
+    private static final String PROXY_AUDIENCE = "eks-dx.codriverlabs.ai";
     private static final long CACHE_TTL_SECONDS = 300;
 
     @Inject DynamoDbClient dynamoDb;
@@ -40,7 +41,7 @@ public class JwksTokenValidationService {
 
     public TokenClaims validateToken(String token, String clusterName) {
         if (token.startsWith("Bearer ")) token = token.substring(7);
-        JWTAuthContextInfo ctx = getContextInfo(clusterName);
+        JWTAuthContextInfo ctx = getContextInfo(clusterName, AUDIENCE);
         try {
             JsonWebToken jwt = jwtParser.parse(token, ctx);
             return extractClaims(jwt);
@@ -50,8 +51,20 @@ public class JwksTokenValidationService {
         }
     }
 
-    private JWTAuthContextInfo getContextInfo(String clusterName) {
-        CachedContext cached = cache.get(clusterName);
+    /** Validates the proxy's own SA token (audience: eks-dx.codriverlabs.ai). */
+    public void validateProxyToken(String token, String clusterName) {
+        JWTAuthContextInfo ctx = getContextInfo(clusterName, PROXY_AUDIENCE);
+        try {
+            jwtParser.parse(token, ctx);
+        } catch (ParseException e) {
+            LOG.warnf("Proxy token validation failed for cluster %s: %s", clusterName, e.getMessage());
+            throw new SecurityException("Invalid proxy token: " + e.getMessage());
+        }
+    }
+
+    private JWTAuthContextInfo getContextInfo(String clusterName, String audience) {
+        String cacheKey = clusterName + "|" + audience;
+        CachedContext cached = cache.get(cacheKey);
         if (cached != null && !cached.isExpired()) return cached.contextInfo;
 
         GetItemResponse resp = dynamoDb.getItem(GetItemRequest.builder()
@@ -64,11 +77,11 @@ public class JwksTokenValidationService {
         JWTAuthContextInfo info = new JWTAuthContextInfo();
         info.setPublicKeyContent(resp.item().get("jwks").s());
         info.setIssuedBy(resp.item().get("issuer").s());
-        info.setExpectedAudience(Set.of(AUDIENCE));
+        info.setExpectedAudience(Set.of(audience));
         info.setRequireNamedPrincipal(true);
 
-        cache.put(clusterName, new CachedContext(info, Instant.now()));
-        LOG.infof("JWKS context loaded for cluster %s", clusterName);
+        cache.put(cacheKey, new CachedContext(info, Instant.now()));
+        LOG.infof("JWKS context loaded for cluster %s (audience: %s)", clusterName, audience);
         return info;
     }
 

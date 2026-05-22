@@ -75,10 +75,17 @@ public class EksAuthResource {
     @Path("/{clusterName}/assets")
     public Response assumeRoleForPodIdentity(
             @PathParam("clusterName") String clusterName,
+            @HeaderParam("Authorization") String proxyAuthorization,
             AgentRequest request) {
         try {
             if (request == null || request.token == null || request.token.isEmpty())
                 return error(400, "InvalidParameterException", "token is required");
+
+            // 1. Validate proxy identity — proves request came from a legitimate proxy
+            //    inside cluster X, signed by that cluster's SA key (JWKS in DynamoDB).
+            if (proxyAuthorization == null || !proxyAuthorization.startsWith("Bearer "))
+                return error(403, "AccessDeniedException", "Proxy authorization header required");
+            tokenValidationService.validateProxyToken(proxyAuthorization.substring(7), clusterName);
 
             TokenClaims claims = tokenValidationService.validateToken(request.token, clusterName);
 

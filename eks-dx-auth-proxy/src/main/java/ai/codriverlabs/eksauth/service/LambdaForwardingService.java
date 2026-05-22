@@ -8,30 +8,26 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Forwards credential exchange requests to the EKS-DX Lambda service.
- * The proxy validates the token locally via TokenReview (fast-fail),
- * then delegates the full flow (JWKS validation, association lookup,
- * STS AssumeRole) to the Lambda.
+ * Attaches the proxy's own SA token (audience: eks-dx.codriverlabs.ai) as
+ * Authorization header so the Lambda can verify the request originated from
+ * a legitimate proxy inside the registered cluster.
  */
 @ApplicationScoped
 public class LambdaForwardingService {
 
     private static final Logger LOG = Logger.getLogger(LambdaForwardingService.class);
+    private static final String PROXY_TOKEN_PATH = "/var/run/secrets/eks-dx/token";
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
     @ConfigProperty(name = "eks-dx.endpoint")
     String endpoint;
 
-    /**
-     * Forward the credential exchange request to the Lambda service.
-     *
-     * @param clusterName the cluster name from the path
-     * @param requestBody the raw JSON body (contains the token)
-     * @return the Lambda response body (credentials JSON)
-     */
     public ForwardResult forward(String clusterName, String requestBody) {
         String url = endpoint + "/clusters/" + clusterName + "/assets";
         LOG.debugf("Forwarding to %s", url);
@@ -40,6 +36,7 @@ public class LambdaForwardingService {
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + readProxyToken())
                 .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                 .build();
 
@@ -53,6 +50,10 @@ public class LambdaForwardingService {
             LOG.errorf("Failed to forward to Lambda: %s", e.getMessage());
             throw new RuntimeException("Failed to reach EKS-DX service: " + e.getMessage(), e);
         }
+    }
+
+    private String readProxyToken() throws Exception {
+        return Files.readString(Path.of(PROXY_TOKEN_PATH)).strip();
     }
 
     public record ForwardResult(int statusCode, String body) {}
