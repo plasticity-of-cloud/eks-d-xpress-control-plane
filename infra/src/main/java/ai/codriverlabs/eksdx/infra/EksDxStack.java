@@ -194,10 +194,18 @@ public class EksDxStack extends Stack {
         // -----------------------------------------------------------------------
         // Lambda: tenant service  (GraalVM native, arm64, SSE via Function URL)
         // -----------------------------------------------------------------------
+        // Context flags:
+        //   -c nativeArch=x86   → GraalVM native on x86_64 (build without -Pnative on arm64)
+        //   -c jvmTenant=true   → JVM mode on x86_64 (skip native build entirely)
+        //   (default)           → GraalVM native on arm64 (prod)
+        boolean jvmMode = "true".equals(this.getNode().tryGetContext("jvmTenant"));
+        boolean x86Native = "x86".equals(this.getNode().tryGetContext("nativeArch"));
+        Runtime tenantRuntime = jvmMode ? Runtime.JAVA_21 : Runtime.PROVIDED_AL2023;
+        Architecture tenantArch = (jvmMode || x86Native) ? Architecture.X86_64 : Architecture.ARM_64;
         Function tenantFn = Function.Builder.create(this, "EksDxTenantFunction")
             .functionName("eks-dx-tenant-service")
-            .runtime(Runtime.PROVIDED_AL2023)
-            .architecture(Architecture.ARM_64)
+            .runtime(tenantRuntime)
+            .architecture(tenantArch)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
             .code(Code.fromAsset("eks-dx-tenant-service/target/function.zip"))
             .memorySize(128)
