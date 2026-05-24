@@ -1,5 +1,5 @@
 {
-  "app": "mvn -pl infra -q compile exec:java -Dexec.mainClass=cloud.plasticity.eksdx.infra.InfraApp",
+  "app": "mvn -pl infra -q compile exec:java -Dexec.mainClass=ai.codriverlabs.eksdx.infra.InfraApp",
   "context": {
     "domainName": "",
     "certificateArn": ""

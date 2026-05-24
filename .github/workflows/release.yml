@@ -132,10 +132,11 @@ jobs:
           cp eks-dx-auth-proxy/target/helm/kubernetes/eks-dx-auth-proxy-${VERSION}.tar.gz .
           cp eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-dx-pod-identity-webhook-${VERSION}.tar.gz .
 
-      - name: Package SAM template
+      - name: Synth and package CDK template
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          tar czf eks-dx-sam-${VERSION}.tar.gz sam.yaml
+          mvn -B -pl infra compile exec:java
+          tar czf eks-dx-cdk-${VERSION}.tar.gz -C infra cdk.out
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7
@@ -147,7 +148,7 @@ jobs:
             eks-dx-mgmt-service-*.zip
             eks-dx-auth-proxy-*.tar.gz
             eks-dx-pod-identity-webhook-*.tar.gz
-            eks-dx-sam-*.tar.gz
+            eks-dx-cdk-*.tar.gz
 
   # Tenant service: GraalVM native image must be built on arm64 runner
   package-tenant-native:

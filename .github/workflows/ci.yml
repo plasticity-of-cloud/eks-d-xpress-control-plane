@@ -27,9 +27,8 @@ jobs:
           mvn -B -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
           mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
 
-      - name: Validate SAM template
-        uses: aws-actions/setup-sam@v2
-      - run: sam validate -t sam.yaml --lint
+      - name: Synth CDK stack
+        run: mvn -B -pl infra compile exec:java
 
       - name: Build container images (JVM, no push)
         run: |
