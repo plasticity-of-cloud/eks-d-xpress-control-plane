@@ -31,16 +31,63 @@ User (kubectl)                          Tenant Instance
 └─────────────────────────────────┘
 ```
 
-## What Gets Proxied
+## Ingress Options
 
-| Traffic | Via Lambda? | Reason |
-|---------|-------------|--------|
-| `kubectl` (human, external) | ✅ Yes | Stable endpoint, wake-on-request, auth |
-| kubelet → apiserver (in-cluster) | ❌ No | Local loopback, no proxy needed |
-| controllers → apiserver (in-cluster) | ❌ No | Local, high-frequency |
-| Pod Identity credential exchange | ❌ No | Already handled by eks-dx-lambda |
+Two paths to reach the tenant kube-apiserver, depending on where the client is:
 
-**Only external human `kubectl` traffic goes through the proxy.** In-cluster components talk directly to `localhost:6443`.
+### External Access (CI/CD, remote developers)
+
+```
+GitHub Actions / remote laptop
+    │
+    └─► CloudFront (WebSocket + HTTPS, VPC Origin)
+         └─► Tenant instance :6443 (private subnet)
+```
+
+- **Requires**: CloudFront Business plan ($200/mo) for VPC Origins, or pay-as-you-go with VPC Origin feature
+- **Supports**: full kubectl including watches, exec, logs -f (WebSocket)
+- **Wake-on-request**: via Origin Failover → Lambda resumes instance → CloudFront retries
+- **Auth**: `eks-dx token` exec plugin in kubeconfig (validated at edge via Lambda@Edge or origin)
+
+### Internal Access (developers on DCV workstations in private VPC)
+
+```
+DCV workstation (private VPC)
+    │
+    └─► Tenant instance :6443 (same VPC / peered, direct)
+```
+
+- **Cost**: $0 (direct VPC connectivity)
+- **Supports**: full kubectl, no limitations
+- **No wake-on-request**: instance must be running (developer calls `eks-dx resume` first)
+- **Kubeconfig server URL**: private IP or Route 53 private hosted zone record
+
+### Kubeconfig Generation
+
+Provisioning output includes both endpoints when applicable:
+
+```yaml
+# External (via CloudFront)
+clusters:
+- cluster:
+    server: https://eks-dx.codriverlabs.ai/tenants/my-tenant/kube
+  name: eks-dx-my-tenant-external
+
+# Internal (direct, private VPC)
+clusters:
+- cluster:
+    server: https://my-tenant.eks-dx.internal:6443
+  name: eks-dx-my-tenant-internal
+```
+
+### Cost Comparison
+
+| Path | Fixed Cost | Per-Request | Best For |
+|------|-----------|-------------|----------|
+| CloudFront Business (VPC Origin) | $200/mo (shared across all tenants) | included | CI/CD, remote teams |
+| CloudFront PAYG (VPC Origin) | $0 | ~$0.02/mo at 15K req | low-traffic external |
+| Direct private IP | $0 | $0 | internal developers |
+
 
 ## Wake-on-Request Flow
 
