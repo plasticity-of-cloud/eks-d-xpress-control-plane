@@ -148,4 +148,5 @@ EventBridge rule → every 15 min → check CloudWatch metric (API calls = 0 for
     → invoke tenant Lambda → hibernate
 ```
 
-Resume on first API call via eks-dx-auth-proxy (detects 503 → triggers resume → retries).
+Resume is always explicit: `eks-dx resume my-tenant` (CLI or API).
+The auth-proxy runs inside the tenant cluster, so it cannot trigger resume when the instance is stopped.
