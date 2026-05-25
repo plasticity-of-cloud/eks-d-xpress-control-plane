@@ -146,9 +146,9 @@ public class EksDxStack extends Stack {
         // -----------------------------------------------------------------------
         Function credentialFn = Function.Builder.create(this, "EksDxCredentialFunction")
             .functionName("eks-dx-credential-service")
-            .runtime(Runtime.JAVA_21)
+            .runtime(Runtime.JAVA_25)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
-            .code(Code.fromAsset("eks-dx-credential-service/target/function.zip"))
+            .code(Code.fromAsset("../eks-dx-credential-service/target/function.zip"))
             .memorySize(512)
             .timeout(Duration.seconds(30))
             .environment(Map.of(
@@ -175,9 +175,9 @@ public class EksDxStack extends Stack {
         // -----------------------------------------------------------------------
         Function mgmtFn = Function.Builder.create(this, "EksDxMgmtFunction")
             .functionName("eks-dx-mgmt-service")
-            .runtime(Runtime.JAVA_21)
+            .runtime(Runtime.JAVA_25)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
-            .code(Code.fromAsset("eks-dx-mgmt-service/target/function.zip"))
+            .code(Code.fromAsset("../eks-dx-mgmt-service/target/function.zip"))
             .memorySize(256)
             .timeout(Duration.seconds(30))
             .environment(Map.of(
@@ -201,14 +201,14 @@ public class EksDxStack extends Stack {
         //   (default)           → GraalVM native on arm64 (prod)
         boolean jvmMode = "true".equals(this.getNode().tryGetContext("jvmTenant"));
         boolean x86Native = "x86".equals(this.getNode().tryGetContext("nativeArch"));
-        Runtime tenantRuntime = jvmMode ? Runtime.JAVA_21 : Runtime.PROVIDED_AL2023;
+        Runtime tenantRuntime = jvmMode ? Runtime.JAVA_25 : Runtime.PROVIDED_AL2023;
         Architecture tenantArch = (jvmMode || x86Native) ? Architecture.X86_64 : Architecture.ARM_64;
         Function tenantFn = Function.Builder.create(this, "EksDxTenantFunction")
             .functionName("eks-dx-tenant-service")
             .runtime(tenantRuntime)
             .architecture(tenantArch)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
-            .code(Code.fromAsset("eks-dx-tenant-service/target/function.zip"))
+            .code(Code.fromAsset("../eks-dx-tenant-service/target/function.zip"))
             .memorySize(128)
             .timeout(Duration.seconds(900))
             .environment(Map.of(
