@@ -115,14 +115,14 @@ public class EksDxStack extends Stack {
         // SSM Parameter lookups (written by Terraform in eks-dx-infra)
         // -----------------------------------------------------------------------
         String ltArm64Ondemand = StringParameter.valueForStringParameter(
-            this, "/eks-dx/tenant/lt-arm64-ondemand");
+            this, "/eks-dx/launch-template/arm64/ondemand");
         String ltArm64Spot = StringParameter.valueForStringParameter(
-            this, "/eks-dx/tenant/lt-arm64-spot");
+            this, "/eks-dx/launch-template/arm64/spot");
         String ltX86Ondemand = StringParameter.valueForStringParameter(
-            this, "/eks-dx/tenant/lt-x86-ondemand");
+            this, "/eks-dx/launch-template/x86_64/ondemand");
         String ltX86Spot = StringParameter.valueForStringParameter(
-            this, "/eks-dx/tenant/lt-x86-spot");
-        String subnetId = StringParameter.valueForStringParameter(
+            this, "/eks-dx/launch-template/x86_64/spot");
+        String subnetIds = StringParameter.valueForStringParameter(
             this, "/eks-dx/network/private-subnet-ids");
 
         // -----------------------------------------------------------------------
@@ -227,7 +227,7 @@ public class EksDxStack extends Stack {
                 "EKS_DX_LT_ARM64_SPOT", ltArm64Spot,
                 "EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand,
                 "EKS_DX_LT_X86_SPOT", ltX86Spot,
-                "EKS_DX_SUBNET_IDS", subnetId))
+                "EKS_DX_SUBNET_IDS", subnetIds))
             .build();
 
         // Function URL for SSE /stream endpoint (not via API Gateway)

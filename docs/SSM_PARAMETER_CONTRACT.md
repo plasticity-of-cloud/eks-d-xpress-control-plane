@@ -5,42 +5,126 @@ CDK (in `eks-dx-control-plane`) reads them at deploy time via `StringParameter.v
 
 **Deploy order**: Terraform first → CDK second.
 
-## Design Principle
+## Design Principles
 
-All parameters are **region-scoped by nature** — SSM Parameter Store is a regional service.
-The same Terraform module deploys to each region, producing identical parameter paths with region-specific values.
+1. **Region-scoped** — SSM Parameter Store is regional. Same paths, different values per region.
+2. **Hierarchical paths** — supports `get-parameters-by-path` for discovery and listing.
+3. **Consistent structure** — `/{project}/{resource-type}/{arch}/{variant}`
+
+## Parameter Hierarchy
 
 ```
-us-east-1:  /eks-dx/network/vpc-id → vpc-0aaa111
-eu-west-1:  /eks-dx/network/vpc-id → vpc-0bbb222
+/eks-dx/
+├── ami/
+│   ├── arm64/
+│   │   └── 1.35              → ami-0aaa111
+│   └── x86_64/
+│       └── 1.35              → ami-0bbb222
+├── launch-template/
+│   ├── arm64/
+│   │   ├── ondemand          → lt-0aaa111
+│   │   └── spot              → lt-0bbb222
+│   └── x86_64/
+│       ├── ondemand          → lt-0ccc333
+│       └── spot              → lt-0ddd444
+└── network/
+    ├── vpc-id                → vpc-0abc123
+    ├── public-subnet-ids     → subnet-aaa,subnet-bbb
+    ├── private-subnet-ids    → subnet-ccc,subnet-ddd
+    └── security-group-id     → sg-0abc123
 ```
 
-## Required Parameters
+## Discovery via get-parameters-by-path
 
-### Network (Terraform module: network)
+```bash
+# All AMIs for arm64 (all k8s versions)
+aws ssm get-parameters-by-path --path /eks-dx/ami/arm64
 
-| SSM Path | Type | Description | Example |
-|----------|------|-------------|---------|
-| `/eks-dx/network/vpc-id` | `String` | VPC for eks-dx workloads | `vpc-0abc123` |
-| `/eks-dx/network/public-subnet-ids` | `StringList` | Public subnets (NAT/ALB) | `subnet-aaa,subnet-bbb` |
-| `/eks-dx/network/private-subnet-ids` | `StringList` | Private subnets (tenant nodes) | `subnet-ccc,subnet-ddd` |
-| `/eks-dx/network/security-group-id` | `String` | SG for tenant k3s nodes | `sg-0abc123` |
+# All launch templates for arm64 (spot + ondemand)
+aws ssm get-parameters-by-path --path /eks-dx/launch-template/arm64
 
-### Tenant Compute (Terraform module: tenant-compute)
+# All launch templates (all arches, all types)
+aws ssm get-parameters-by-path --path /eks-dx/launch-template --recursive
 
-| SSM Path | Type | Description | Example |
-|----------|------|-------------|---------|
-| `/eks-dx/tenant/lt-arm64-ondemand` | `String` | LT: arm64 on-demand instances | `lt-0aaa111` |
-| `/eks-dx/tenant/lt-arm64-spot` | `String` | LT: arm64 spot instances | `lt-0bbb222` |
-| `/eks-dx/tenant/lt-x86-ondemand` | `String` | LT: x86_64 on-demand instances | `lt-0ccc333` |
-| `/eks-dx/tenant/lt-x86-spot` | `String` | LT: x86_64 spot instances | `lt-0ddd444` |
-| `/eks-dx/tenant/ami-arm64` | `String` | Region-specific AMI for arm64 k3s nodes | `ami-0aaa111` |
-| `/eks-dx/tenant/ami-x86` | `String` | Region-specific AMI for x86_64 k3s nodes | `ami-0bbb222` |
+# All network params
+aws ssm get-parameters-by-path --path /eks-dx/network
+```
+
+## Full Parameter List
+
+### AMIs (per arch, per k8s version)
+
+| SSM Path | Type | Description |
+|----------|------|-------------|
+| `/eks-dx/ami/arm64/{k8s-version}` | `String` | Region-specific AMI for arm64 k3s nodes |
+| `/eks-dx/ami/x86_64/{k8s-version}` | `String` | Region-specific AMI for x86_64 k3s nodes |
+
+### Launch Templates (per arch, per pricing model)
+
+| SSM Path | Type | Description |
+|----------|------|-------------|
+| `/eks-dx/launch-template/arm64/ondemand` | `String` | LT: arm64 on-demand instances |
+| `/eks-dx/launch-template/arm64/spot` | `String` | LT: arm64 spot instances |
+| `/eks-dx/launch-template/x86_64/ondemand` | `String` | LT: x86_64 on-demand instances |
+| `/eks-dx/launch-template/x86_64/spot` | `String` | LT: x86_64 spot instances |
+
+### Network
+
+| SSM Path | Type | Description |
+|----------|------|-------------|
+| `/eks-dx/network/vpc-id` | `String` | VPC for eks-dx workloads |
+| `/eks-dx/network/public-subnet-ids` | `StringList` | Public subnets (NAT/ALB) |
+| `/eks-dx/network/private-subnet-ids` | `StringList` | Private subnets (tenant nodes) |
+| `/eks-dx/network/security-group-id` | `String` | SG for tenant k3s nodes |
 
 ## Terraform Implementation
 
 ```hcl
-# --- network module ---
+variable "k8s_version" {
+  default = "1.35"
+}
+
+# --- AMIs (per arch, per k8s version) ---
+
+resource "aws_ssm_parameter" "ami_arm64" {
+  name  = "/eks-dx/ami/arm64/${var.k8s_version}"
+  type  = "String"
+  value = aws_ami_copy.k3s_arm64.id
+}
+
+resource "aws_ssm_parameter" "ami_x86" {
+  name  = "/eks-dx/ami/x86_64/${var.k8s_version}"
+  type  = "String"
+  value = aws_ami_copy.k3s_x86.id
+}
+
+# --- Launch Templates (per arch, per pricing) ---
+
+resource "aws_ssm_parameter" "lt_arm64_ondemand" {
+  name  = "/eks-dx/launch-template/arm64/ondemand"
+  type  = "String"
+  value = aws_launch_template.arm64_ondemand.id
+}
+
+resource "aws_ssm_parameter" "lt_arm64_spot" {
+  name  = "/eks-dx/launch-template/arm64/spot"
+  type  = "String"
+  value = aws_launch_template.arm64_spot.id
+}
+
+resource "aws_ssm_parameter" "lt_x86_ondemand" {
+  name  = "/eks-dx/launch-template/x86_64/ondemand"
+  type  = "String"
+  value = aws_launch_template.x86_ondemand.id
+}
+
+resource "aws_ssm_parameter" "lt_x86_spot" {
+  name  = "/eks-dx/launch-template/x86_64/spot"
+  type  = "String"
+  value = aws_launch_template.x86_spot.id
+}
+
+# --- Network ---
 
 resource "aws_ssm_parameter" "vpc_id" {
   name  = "/eks-dx/network/vpc-id"
@@ -65,103 +149,40 @@ resource "aws_ssm_parameter" "security_group_id" {
   type  = "String"
   value = aws_security_group.tenant_nodes.id
 }
-
-# --- tenant-compute module ---
-
-resource "aws_ssm_parameter" "lt_arm64_ondemand" {
-  name  = "/eks-dx/tenant/lt-arm64-ondemand"
-  type  = "String"
-  value = aws_launch_template.arm64_ondemand.id
-}
-
-resource "aws_ssm_parameter" "lt_arm64_spot" {
-  name  = "/eks-dx/tenant/lt-arm64-spot"
-  type  = "String"
-  value = aws_launch_template.arm64_spot.id
-}
-
-resource "aws_ssm_parameter" "lt_x86_ondemand" {
-  name  = "/eks-dx/tenant/lt-x86-ondemand"
-  type  = "String"
-  value = aws_launch_template.x86_ondemand.id
-}
-
-resource "aws_ssm_parameter" "lt_x86_spot" {
-  name  = "/eks-dx/tenant/lt-x86-spot"
-  type  = "String"
-  value = aws_launch_template.x86_spot.id
-}
-
-resource "aws_ssm_parameter" "ami_arm64" {
-  name  = "/eks-dx/tenant/ami-arm64"
-  type  = "String"
-  value = aws_ami_copy.eks_dx_k3s_arm64.id
-}
-
-resource "aws_ssm_parameter" "ami_x86" {
-  name  = "/eks-dx/tenant/ami-x86"
-  type  = "String"
-  value = aws_ami_copy.eks_dx_k3s_x86.id
-}
 ```
 
 ## CDK Consumer
 
 ```java
-// Network
-String vpcId = StringParameter.valueForStringParameter(this, "/eks-dx/network/vpc-id");
-String publicSubnets = StringParameter.valueForStringParameter(this, "/eks-dx/network/public-subnet-ids");
-String privateSubnets = StringParameter.valueForStringParameter(this, "/eks-dx/network/private-subnet-ids");
-String securityGroupId = StringParameter.valueForStringParameter(this, "/eks-dx/network/security-group-id");
+// Launch templates — tenant service selects at runtime based on request
+String ltArm64Ondemand = StringParameter.valueForStringParameter(this, "/eks-dx/launch-template/arm64/ondemand");
+String ltArm64Spot = StringParameter.valueForStringParameter(this, "/eks-dx/launch-template/arm64/spot");
+String ltX86Ondemand = StringParameter.valueForStringParameter(this, "/eks-dx/launch-template/x86_64/ondemand");
+String ltX86Spot = StringParameter.valueForStringParameter(this, "/eks-dx/launch-template/x86_64/spot");
 
-// Tenant compute (4 launch templates: arch × pricing)
-String ltArm64Ondemand = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-arm64-ondemand");
-String ltArm64Spot = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-arm64-spot");
-String ltX86Ondemand = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-x86-ondemand");
-String ltX86Spot = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-x86-spot");
-String amiArm64 = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/ami-arm64");
-String amiX86 = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/ami-x86");
+// Network
+String subnetIds = StringParameter.valueForStringParameter(this, "/eks-dx/network/private-subnet-ids");
 ```
+
+Note: AMIs are not consumed by CDK directly — the launch templates already reference them.
+The tenant-service Lambda can also read AMI params at runtime via SDK if it needs version selection.
 
 ## Multi-Region Deployment
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Source Region (us-east-1)                              │
-│                                                         │
-│  Packer → builds AMI (ami-src-111)                     │
-│  Terraform → creates VPC, subnets, SG, LT              │
-│           → copies AMI to target regions                │
-│           → writes SSM params                           │
-└─────────────────────────────────────────────────────────┘
-         │ aws_ami_copy
-         ▼
-┌─────────────────────────────────────────────────────────┐
-│  Target Region (eu-west-1)                              │
-│                                                         │
-│  AMI: ami-tgt-222 (new ID, same content)               │
-│  Terraform → creates VPC, subnets, SG, LT              │
-│           → writes SSM params (with local IDs)          │
-│                                                         │
-│  CDK deploy → reads /eks-dx/* from local SSM            │
-│            → configures Lambda env vars                  │
-└─────────────────────────────────────────────────────────┘
+Source Region (us-east-1)              Target Region (eu-west-1)
+─────────────────────────              ─────────────────────────
+Packer → AMI (ami-src-111)    ──copy──► AMI (ami-tgt-222)
+Terraform:                             Terraform:
+  /eks-dx/ami/arm64/1.35 = ami-src       /eks-dx/ami/arm64/1.35 = ami-tgt
+  /eks-dx/launch-template/...            /eks-dx/launch-template/...
+  /eks-dx/network/...                    /eks-dx/network/...
 ```
-
-## Naming Convention
-
-```
-/eks-dx/{component}/{resource-type}
-```
-
-- `component`: logical grouping (`network`, `tenant`, `monitoring`, etc.)
-- `resource-type`: what the value represents (`vpc-id`, `subnet-ids`, `ami-id`)
-- Use `-ids` (plural) for `StringList` types
 
 ## Notes
 
-- All parameters use `String` or `StringList` type — not `SecureString` (these are infrastructure references, not secrets).
-- AMI IDs are region-specific — copying an AMI to another region produces a new ID.
+- All parameters use `String` or `StringList` — not `SecureString`.
+- AMI IDs are region-specific — copying produces a new ID.
 - Launch templates reference AMIs, so they are also region-specific.
-- If a parameter doesn't exist at `cdk deploy` time, deployment fails with a clear error.
-- Terraform should use `lifecycle { create_before_destroy = true }` on SSM params to avoid downtime during updates.
+- The k8s version in AMI paths enables multiple versions to coexist (rolling upgrades).
+- `get-parameters-by-path` with `--recursive` traverses the full subtree.
