@@ -78,7 +78,7 @@ echo "      eks-dx-credential-service/target/function.zip"
 echo "      eks-dx-mgmt-service/target/function.zip"
 echo "      eks-dx-tenant-service/target/function.zip"
 if $NATIVE; then
-  echo "    CLI binary: eks-dx-cli/target/*-runner"
+  echo "    CLI binary: eks-dx-cli/target/eks-dx-*-runner"
 else
   echo "    CLI jar:    eks-dx-cli/target/eks-dx-cli-*-runner.jar"
 fi
