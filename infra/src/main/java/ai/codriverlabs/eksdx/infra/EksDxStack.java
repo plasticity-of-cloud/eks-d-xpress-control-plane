@@ -26,6 +26,7 @@ import software.amazon.awscdk.services.cloudwatch.TreatMissingData;
 import software.amazon.awscdk.services.dynamodb.Attribute;
 import software.amazon.awscdk.services.dynamodb.AttributeType;
 import software.amazon.awscdk.services.dynamodb.BillingMode;
+import software.amazon.awscdk.services.dynamodb.PointInTimeRecoverySpecification;
 import software.amazon.awscdk.services.dynamodb.Table;
 import software.amazon.awscdk.services.iam.PolicyStatement;
 import software.amazon.awscdk.services.lambda.Architecture;
@@ -84,7 +85,7 @@ public class EksDxStack extends Stack {
             .partitionKey(Attribute.builder().name("clusterName").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
             .removalPolicy(RemovalPolicy.RETAIN)
-            .pointInTimeRecovery(true)
+            .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder().pointInTimeRecoveryEnabled(true).build())
             .build();
 
         Table associationsTable = Table.Builder.create(this, "AssociationsTable")
@@ -93,7 +94,7 @@ public class EksDxStack extends Stack {
             .sortKey(Attribute.builder().name("SK").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
             .removalPolicy(RemovalPolicy.RETAIN)
-            .pointInTimeRecovery(true)
+            .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder().pointInTimeRecoveryEnabled(true).build())
             .build();
 
         Table tenantsTable = Table.Builder.create(this, "TenantsTable")
@@ -101,7 +102,7 @@ public class EksDxStack extends Stack {
             .partitionKey(Attribute.builder().name("tenantId").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
             .removalPolicy(RemovalPolicy.RETAIN)
-            .pointInTimeRecovery(true)
+            .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder().pointInTimeRecoveryEnabled(true).build())
             .build();
 
         // -----------------------------------------------------------------------

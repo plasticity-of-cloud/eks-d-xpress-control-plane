@@ -23,9 +23,13 @@ $SKIP_TESTS && SKIP_FLAG="-DskipTests"
 
 echo "==> Building eks-dx-control-plane (native=${NATIVE}, skipTests=${SKIP_TESTS})"
 
-# 1. Model (shared, always JVM)
+# 0. Parent POM (so child modules can resolve their parent)
+echo "--- [0] parent pom"
+mvn -B -N install $SKIP_FLAG
+
+# 1. Model (shared, always JVM — install so downstream modules resolve it)
 echo "--- [1/7] model"
-mvn -B -pl eks-dx-model package $SKIP_FLAG
+mvn -B -pl eks-dx-model install $SKIP_FLAG
 
 # 2. Credential service (JVM, SnapStart)
 echo "--- [2/7] credential-service"

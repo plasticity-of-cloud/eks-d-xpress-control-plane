@@ -123,7 +123,6 @@
       <properties>
         <quarkus.native.enabled>true</quarkus.native.enabled>
         <quarkus.native.container-build>true</quarkus.native.container-build>
-        <quarkus.native.builder-image>quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-21</quarkus.native.builder-image>
       </properties>
     </profile>
   </profiles>
