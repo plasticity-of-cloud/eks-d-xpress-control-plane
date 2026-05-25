@@ -113,7 +113,7 @@ public class TenantProvisioningService {
     // Provision
     // -------------------------------------------------------------------------
 
-    public String provision(String tenantId, String arch, String ec2PricingModel, String k8sVersion) {
+    public String provision(String tenantId, String arch, String ec2PricingModel, String k8sVersion, boolean assignElasticIp) {
         LOG.infof("Provisioning tenant: %s (arch=%s, pricing=%s, k8s=%s)", tenantId, arch, ec2PricingModel, k8sVersion);
 
         String launchTemplateId = resolveLaunchTemplate(arch, ec2PricingModel);
@@ -240,6 +240,25 @@ public class TenantProvisioningService {
             .build());
         String instanceId = runResp.instances().getFirst().instanceId();
         LOG.infof("Launched EC2 instance %s for tenant %s", instanceId, tenantId);
+
+        // 8. Elastic IP (on-demand instances only)
+        String elasticIp = null;
+        if (assignElasticIp) {
+            var allocResp = ec2.allocateAddress(software.amazon.awssdk.services.ec2.model.AllocateAddressRequest.builder()
+                .domain("vpc")
+                .tagSpecifications(TagSpecification.builder()
+                    .resourceType(ResourceType.ELASTIC_IP)
+                    .tags(Tag.builder().key("Name").value(clusterName).build(),
+                          Tag.builder().key("eks-dx-tenant").value(tenantId).build())
+                    .build())
+                .build());
+            ec2.associateAddress(software.amazon.awssdk.services.ec2.model.AssociateAddressRequest.builder()
+                .instanceId(instanceId)
+                .allocationId(allocResp.allocationId())
+                .build());
+            elasticIp = allocResp.publicIp();
+            LOG.infof("Assigned Elastic IP %s to tenant %s", elasticIp, tenantId);
+        }
 
         // 5. Write initial DynamoDB state
         String now = Instant.now().toString();
