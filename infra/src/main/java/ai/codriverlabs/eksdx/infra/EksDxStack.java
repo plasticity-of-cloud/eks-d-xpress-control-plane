@@ -44,6 +44,7 @@ import software.amazon.awscdk.services.ssm.StringParameter;
 import software.amazon.awscdk.CfnParameter;
 import software.constructs.Construct;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -59,6 +60,11 @@ public class EksDxStack extends Stack {
 
     public EksDxStack(Construct scope, String id, StackProps props) {
         super(scope, id, props);
+
+        // Resolve asset paths: works whether invoked from project root (mvn -pl infra)
+        // or from infra/ directory (cdk synth)
+        String root = Path.of("eks-dx-credential-service").toFile().isDirectory()
+            ? "" : "../";
 
         // -----------------------------------------------------------------------
         // Parameters
@@ -148,7 +154,7 @@ public class EksDxStack extends Stack {
             .functionName("eks-dx-credential-service")
             .runtime(Runtime.JAVA_25)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
-            .code(Code.fromAsset("../eks-dx-credential-service/target/function.zip"))
+            .code(Code.fromAsset(root + "eks-dx-credential-service/target/function.zip"))
             .memorySize(512)
             .timeout(Duration.seconds(30))
             .environment(Map.of(
@@ -177,7 +183,7 @@ public class EksDxStack extends Stack {
             .functionName("eks-dx-mgmt-service")
             .runtime(Runtime.JAVA_25)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
-            .code(Code.fromAsset("../eks-dx-mgmt-service/target/function.zip"))
+            .code(Code.fromAsset(root + "eks-dx-mgmt-service/target/function.zip"))
             .memorySize(256)
             .timeout(Duration.seconds(30))
             .environment(Map.of(
@@ -208,7 +214,7 @@ public class EksDxStack extends Stack {
             .runtime(tenantRuntime)
             .architecture(tenantArch)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
-            .code(Code.fromAsset("../eks-dx-tenant-service/target/function.zip"))
+            .code(Code.fromAsset(root + "eks-dx-tenant-service/target/function.zip"))
             .memorySize(128)
             .timeout(Duration.seconds(900))
             .environment(Map.of(
