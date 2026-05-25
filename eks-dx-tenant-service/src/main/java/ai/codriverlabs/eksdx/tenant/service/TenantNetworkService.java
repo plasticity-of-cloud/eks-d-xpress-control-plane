@@ -3,10 +3,12 @@ package ai.codriverlabs.eksdx.tenant.service;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.ec2.Ec2Client;
+import software.amazon.awssdk.services.ec2.model.AssociateRouteTableRequest;
 import software.amazon.awssdk.services.ec2.model.AuthorizeSecurityGroupIngressRequest;
 import software.amazon.awssdk.services.ec2.model.CreateSecurityGroupRequest;
 import software.amazon.awssdk.services.ec2.model.CreateSubnetRequest;
 import software.amazon.awssdk.services.ec2.model.CreateTagsRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeRouteTablesRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeSubnetsRequest;
 import software.amazon.awssdk.services.ec2.model.DescribeVpcsRequest;
 import software.amazon.awssdk.services.ec2.model.Filter;
@@ -84,6 +86,15 @@ public class TenantNetworkService {
             .build()).subnet().subnetId();
         LOG.infof("Created private subnet %s (%s) for tenant %s", privateSubnetId, privateCidr, tenantId);
 
+        // Route table associations
+        String publicRtId = findRouteTable(vpcId, "eks-dx-public-rt");
+        String privateRtId = findRouteTable(vpcId, "eks-dx-private-rt");
+        ec2.associateRouteTable(AssociateRouteTableRequest.builder()
+            .subnetId(publicSubnetId).routeTableId(publicRtId).build());
+        ec2.associateRouteTable(AssociateRouteTableRequest.builder()
+            .subnetId(privateSubnetId).routeTableId(privateRtId).build());
+        LOG.infof("Associated route tables for tenant %s", tenantId);
+
         // Security group
         String sgId = createTenantSecurityGroup(tenantId, clusterName, vpcId, vpcCidr);
 
@@ -128,6 +139,14 @@ public class TenantNetworkService {
 
         LOG.infof("Created security group %s (%s) for tenant %s", sgId, sgName, tenantId);
         return sgId;
+    }
+
+    private String findRouteTable(String vpcId, String nameTag) {
+        return ec2.describeRouteTables(DescribeRouteTablesRequest.builder()
+            .filters(
+                Filter.builder().name("vpc-id").values(vpcId).build(),
+                Filter.builder().name("tag:Name").values(nameTag).build())
+            .build()).routeTables().getFirst().routeTableId();
     }
 
     /**
