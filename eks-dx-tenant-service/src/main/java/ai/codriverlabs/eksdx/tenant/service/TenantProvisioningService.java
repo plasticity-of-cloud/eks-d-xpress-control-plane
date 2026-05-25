@@ -74,6 +74,7 @@ public class TenantProvisioningService {
     @Inject IamClient iam;
     @Inject StsClient sts;
     @Inject TenantNetworkService networkService;
+    @Inject TenantDlmService dlmService;
 
     // EC2, SecretsManager, SQS — create via default credential chain
     private final Ec2Client ec2 = Ec2Client.create();
@@ -199,7 +200,10 @@ public class TenantProvisioningService {
             queueArn);
         LOG.infof("Created EventBridge rules for tenant %s", tenantId);
 
-        // 6. Launch EC2 instance
+        // 6. DLM policy for daily etcd volume snapshots
+        dlmService.createEtcdBackupPolicy(tenantId, clusterName);
+
+        // 7. Launch EC2 instance
         String eksDxEndpoint = System.getenv().getOrDefault("EKS_DX_ENDPOINT", "https://eks-dx.codriverlabs.ai");
         String userData = Base64.getEncoder().encodeToString(("""
             #!/bin/bash
