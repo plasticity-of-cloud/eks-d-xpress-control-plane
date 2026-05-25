@@ -71,12 +71,13 @@ public class TenantProvisioningService {
     private static final Logger LOG = Logger.getLogger(TenantProvisioningService.class);
 
     @Inject DynamoDbClient dynamoDb;
-    @Inject IamClient iam;
     @Inject StsClient sts;
+    @Inject IamClient iam;
     @Inject TenantNetworkService networkService;
+    @Inject TenantIamService iamService;
+    @Inject TenantEc2Service ec2Service;
     @Inject TenantDlmService dlmService;
 
-    // EC2, SecretsManager, SQS — create via default credential chain
     private final Ec2Client ec2 = Ec2Client.create();
     private final SecretsManagerClient secretsManager = SecretsManagerClient.create();
     private final SqsClient sqs = SqsClient.create();
@@ -100,9 +101,6 @@ public class TenantProvisioningService {
     @ConfigProperty(name = "eks-dx.tenant.lt-x86-spot")
     String ltX86Spot;
 
-    @ConfigProperty(name = "eks-dx.tenant.subnet-ids")
-    String subnetIds;
-
     @ConfigProperty(name = "eks-dx.tenant.vpc-id")
     String vpcId;
 
@@ -120,151 +118,47 @@ public class TenantProvisioningService {
         String region = System.getenv().getOrDefault("AWS_REGION", "us-east-1");
         String accountId = sts.getCallerIdentity(GetCallerIdentityRequest.builder().build()).account();
         String clusterName = "eks-dx-" + tenantId;
+        String eksDxEndpoint = System.getenv().getOrDefault("EKS_DX_ENDPOINT", "https://eks-dx.codriverlabs.ai");
 
-        // Create per-tenant network isolation (subnets + security group)
+        // 1. Network isolation (per-tenant subnets + security group)
         String az = availabilityZone.isEmpty() ? region + "a" : availabilityZone;
         TenantNetworkService.NetworkResult network = networkService.createTenantNetwork(
             tenantId, clusterName, vpcId, az);
-        String subnetId = network.publicSubnetId();
 
-        // 1. Generate RSA-2048 SA signing key
+        // 2. Secrets (SA signing key + SSH key pair)
         String signingKeyPem = generateRsaPrivateKeyPem();
-        String signingKeyArn = secretsManager.createSecret(CreateSecretRequest.builder()
+        secretsManager.createSecret(CreateSecretRequest.builder()
             .name("eks-dx/tenant/" + tenantId + "/signing-key")
-            .secretString(signingKeyPem)
-            .build()).arn();
-        LOG.infof("Stored signing key for tenant %s: %s", tenantId, signingKeyArn);
-
-        // 2. EC2 key pair for SSH
+            .secretString(signingKeyPem).build());
         CreateKeyPairResponse keyPairResp = ec2.createKeyPair(CreateKeyPairRequest.builder()
-            .keyName("eks-dx-tenant-" + tenantId)
-            .build());
+            .keyName("eks-dx-tenant-" + tenantId).build());
         String sshKeyArn = secretsManager.createSecret(CreateSecretRequest.builder()
             .name("eks-dx/tenant/" + tenantId + "/ssh-key")
-            .secretString(keyPairResp.keyMaterial())
-            .build()).arn();
-        LOG.infof("Stored SSH key for tenant %s: %s", tenantId, sshKeyArn);
+            .secretString(keyPairResp.keyMaterial()).build()).arn();
 
-        // 3. IAM role with managed policies + inline policies (parity with Terraform)
-        String roleName = "eks-dx-tenant-" + tenantId + "-instance-role";
-        iam.createRole(CreateRoleRequest.builder()
-            .roleName(roleName)
-            .assumeRolePolicyDocument(ec2TrustPolicy())
-            .tags(software.amazon.awssdk.services.iam.model.Tag.builder()
-                .key("eks-cluster-name").value(clusterName).build())
-            .build());
+        // 3. IAM role + instance profile
+        TenantIamService.IamResult iamResult = iamService.createTenantRole(
+            tenantId, clusterName, region, accountId);
 
-        // Managed policies
-        for (String policyArn : List.of(
-                "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-                "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly",
-                "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
-                "arn:aws:iam::aws:policy/AmazonEBSCSIDriverEKSClusterScopedPolicy",
-                "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy")) {
-            iam.attachRolePolicy(AttachRolePolicyRequest.builder()
-                .roleName(roleName).policyArn(policyArn).build());
-        }
+        // 4. SQS + EventBridge (Karpenter interruption handling)
+        String queueArn = createInterruptionQueue(clusterName, region, accountId);
+        createEventBridgeRules(clusterName, queueArn);
 
-        // Inline policy (Karpenter + cloud-provider + secrets + API)
-        iam.putRolePolicy(PutRolePolicyRequest.builder()
-            .roleName(roleName)
-            .policyName("eks-dx-tenant-policy")
-            .policyDocument(tenantInstancePolicy(tenantId, region, accountId))
-            .build());
-
-        // Instance profile
-        iam.createInstanceProfile(CreateInstanceProfileRequest.builder()
-            .instanceProfileName(roleName).build());
-        iam.addRoleToInstanceProfile(AddRoleToInstanceProfileRequest.builder()
-            .instanceProfileName(roleName).roleName(roleName).build());
-        LOG.infof("Created IAM role + instance profile %s for tenant %s", roleName, tenantId);
-
-        // 4. SQS queue for Karpenter interruption handling
-        String queueUrl = sqs.createQueue(software.amazon.awssdk.services.sqs.model.CreateQueueRequest.builder()
-            .queueName(clusterName)
-            .attributes(Map.of(
-                software.amazon.awssdk.services.sqs.model.QueueAttributeName.MESSAGE_RETENTION_PERIOD, "300"))
-            .build()).queueUrl();
-        LOG.infof("Created SQS queue %s for tenant %s", clusterName, tenantId);
-
-        // 5. EventBridge rules → SQS (Karpenter spot interruption handling)
-        String queueArn = "arn:aws:sqs:" + region + ":" + accountId + ":" + clusterName;
-        createEventBridgeRule(clusterName + "-spot-interruption",
-            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Spot Instance Interruption Warning\"]}",
-            queueArn);
-        createEventBridgeRule(clusterName + "-instance-state-change",
-            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Instance State-change Notification\"]}",
-            queueArn);
-        createEventBridgeRule(clusterName + "-instance-rebalance",
-            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Instance Rebalance Recommendation\"]}",
-            queueArn);
-        LOG.infof("Created EventBridge rules for tenant %s", tenantId);
-
-        // 6. DLM policy for daily etcd volume snapshots
+        // 5. DLM (daily etcd backup)
         dlmService.createEtcdBackupPolicy(tenantId, clusterName);
 
-        // 7. Launch EC2 instance
-        String eksDxEndpoint = System.getenv().getOrDefault("EKS_DX_ENDPOINT", "https://eks-dx.codriverlabs.ai");
-        String userData = Base64.getEncoder().encodeToString(("""
-            #!/bin/bash
-            mkdir -p /opt/eks-d
-            cat > /opt/eks-d/cluster.env <<CONF
-            TENANT_ID="%s"
-            CLUSTER_NAME="%s"
-            EKS_DX_ENDPOINT="%s"
-            EKS_DX_API_URL="%s/clusters/%s/assets"
-            REGION="%s"
-            K8S_VERSION="%s"
-            CONF
-            """.formatted(tenantId, clusterName, eksDxEndpoint, eksDxEndpoint, clusterName, region, k8sVersion)).getBytes());
+        // 6. EC2 instance launch
+        TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
+            tenantId, clusterName, launchTemplateId,
+            network.publicSubnetId(), network.securityGroupId(),
+            iamResult.instanceProfileName(), "eks-dx-tenant-" + tenantId,
+            region, k8sVersion, eksDxEndpoint, assignElasticIp);
 
-        RunInstancesResponse runResp = ec2.runInstances(RunInstancesRequest.builder()
-            .launchTemplate(LaunchTemplateSpecification.builder()
-                .launchTemplateId(launchTemplateId).build())
-            .subnetId(subnetId)
-            .securityGroupIds(network.securityGroupId())
-            .keyName("eks-dx-tenant-" + tenantId)
-            .iamInstanceProfile(IamInstanceProfileSpecification.builder()
-                .name(roleName).build())
-            .userData(userData)
-            .minCount(1).maxCount(1)
-            .tagSpecifications(TagSpecification.builder()
-                .resourceType(ResourceType.INSTANCE)
-                .tags(
-                    Tag.builder().key("Name").value(clusterName).build(),
-                    Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
-                    Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
-                    Tag.builder().key("ebs.csi.aws.com/cluster-name").value(clusterName).build(),
-                    Tag.builder().key("Platform").value("eks-d-xpress").build())
-                .build())
-            .build());
-        String instanceId = runResp.instances().getFirst().instanceId();
-        LOG.infof("Launched EC2 instance %s for tenant %s", instanceId, tenantId);
-
-        // 8. Elastic IP (on-demand instances only)
-        String elasticIp = null;
-        if (assignElasticIp) {
-            var allocResp = ec2.allocateAddress(software.amazon.awssdk.services.ec2.model.AllocateAddressRequest.builder()
-                .domain("vpc")
-                .tagSpecifications(TagSpecification.builder()
-                    .resourceType(ResourceType.ELASTIC_IP)
-                    .tags(Tag.builder().key("Name").value(clusterName).build(),
-                          Tag.builder().key("eks-dx-tenant").value(tenantId).build())
-                    .build())
-                .build());
-            ec2.associateAddress(software.amazon.awssdk.services.ec2.model.AssociateAddressRequest.builder()
-                .instanceId(instanceId)
-                .allocationId(allocResp.allocationId())
-                .build());
-            elasticIp = allocResp.publicIp();
-            LOG.infof("Assigned Elastic IP %s to tenant %s", elasticIp, tenantId);
-        }
-
-        // 5. Write initial DynamoDB state
+        // 7. Write initial DynamoDB state
         String now = Instant.now().toString();
         Map<String, AttributeValue> item = new HashMap<>();
         item.put("tenantId", AttributeValue.fromS(tenantId));
-        item.put("instanceId", AttributeValue.fromS(instanceId));
+        item.put("instanceId", AttributeValue.fromS(ec2Result.instanceId()));
         item.put("state", AttributeValue.fromS("provisioning"));
         item.put("phase", AttributeValue.fromS("EC2 instance launched"));
         item.put("progress", AttributeValue.fromN("0"));
@@ -371,6 +265,27 @@ public class TenantProvisioningService {
         }
     }
 
+    private String createInterruptionQueue(String clusterName, String region, String accountId) {
+        sqs.createQueue(software.amazon.awssdk.services.sqs.model.CreateQueueRequest.builder()
+            .queueName(clusterName)
+            .attributes(Map.of(
+                software.amazon.awssdk.services.sqs.model.QueueAttributeName.MESSAGE_RETENTION_PERIOD, "300"))
+            .build());
+        String queueArn = "arn:aws:sqs:" + region + ":" + accountId + ":" + clusterName;
+        LOG.infof("Created SQS queue %s", clusterName);
+        return queueArn;
+    }
+
+    private void createEventBridgeRules(String clusterName, String queueArn) {
+        createEventBridgeRule(clusterName + "-spot-interruption",
+            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Spot Instance Interruption Warning\"]}", queueArn);
+        createEventBridgeRule(clusterName + "-instance-state-change",
+            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Instance State-change Notification\"]}", queueArn);
+        createEventBridgeRule(clusterName + "-instance-rebalance",
+            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Instance Rebalance Recommendation\"]}", queueArn);
+        LOG.infof("Created EventBridge rules for %s", clusterName);
+    }
+
     private void createEventBridgeRule(String ruleName, String eventPattern, String targetArn) {
         events.putRule(PutRuleRequest.builder()
             .name(ruleName)
@@ -405,214 +320,6 @@ public class TenantProvisioningService {
         } catch (Exception e) {
             throw new RuntimeException("Failed to generate RSA key pair", e);
         }
-    }
-
-    private String ec2TrustPolicy() {
-        return """
-            {
-              "Version": "2012-10-17",
-              "Statement": [{
-                "Effect": "Allow",
-                "Principal": { "Service": "ec2.amazonaws.com" },
-                "Action": "sts:AssumeRole"
-              }]
-            }
-            """;
-    }
-
-    private String tenantInstancePolicy(String tenantId, String region, String accountId) {
-        String clusterName = "eks-dx-" + tenantId;
-        return """
-            {
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Sid": "SecretsAccess",
-                  "Effect": "Allow",
-                  "Action": "secretsmanager:GetSecretValue",
-                  "Resource": "arn:aws:secretsmanager:%s:%s:secret:eks-dx/tenant/%s/*"
-                },
-                {
-                  "Sid": "EksDxApiInvoke",
-                  "Effect": "Allow",
-                  "Action": "execute-api:Invoke",
-                  "Resource": "arn:aws:execute-api:%s:%s:*/*/POST/clusters/%s"
-                },
-                {
-                  "Sid": "TenantStateUpdate",
-                  "Effect": "Allow",
-                  "Action": "dynamodb:UpdateItem",
-                  "Resource": "arn:aws:dynamodb:%s:%s:table/eks-dx-tenants",
-                  "Condition": {
-                    "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["%s"] }
-                  }
-                },
-                {
-                  "Sid": "SSMCore",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ssm:DescribeAssociation", "ssm:GetDeployablePatchSnapshotForInstance",
-                    "ssm:GetDocument", "ssm:DescribeDocument", "ssm:GetManifest",
-                    "ssm:GetParameter", "ssm:GetParameters", "ssm:ListAssociations",
-                    "ssm:ListInstanceAssociations", "ssm:PutInventory", "ssm:PutComplianceItems",
-                    "ssm:PutConfigurePackageResult", "ssm:UpdateAssociationStatus",
-                    "ssm:UpdateInstanceAssociationStatus", "ssm:UpdateInstanceInformation",
-                    "ssmmessages:*", "ec2messages:*"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Sid": "ECRPull",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability",
-                    "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Sid": "CloudWatch",
-                  "Effect": "Allow",
-                  "Action": [
-                    "cloudwatch:PutMetricData", "logs:CreateLogGroup", "logs:CreateLogStream",
-                    "logs:PutLogEvents", "logs:DescribeLogStreams"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Sid": "EKSCNI",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ec2:AssignPrivateIpAddresses", "ec2:AttachNetworkInterface",
-                    "ec2:CreateNetworkInterface", "ec2:DeleteNetworkInterface",
-                    "ec2:DescribeNetworkInterfaces", "ec2:DetachNetworkInterface",
-                    "ec2:ModifyNetworkInterfaceAttribute", "ec2:UnassignPrivateIpAddresses"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Sid": "EBSCSI",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ec2:CreateVolume", "ec2:DeleteVolume", "ec2:AttachVolume",
-                    "ec2:DetachVolume", "ec2:ModifyVolume", "ec2:DescribeVolumes",
-                    "ec2:DescribeVolumeStatus", "ec2:CreateSnapshot", "ec2:DeleteSnapshot",
-                    "ec2:DescribeSnapshots", "ec2:CreateTags"
-                  ],
-                  "Resource": "*",
-                  "Condition": {
-                    "StringEquals": {
-                      "aws:RequestTag/ebs.csi.aws.com/cluster-name": "%s"
-                    }
-                  }
-                },
-                {
-                  "Sid": "KarpenterRead",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ec2:DescribeAvailabilityZones", "ec2:DescribeImages",
-                    "ec2:DescribeInstances", "ec2:DescribeInstanceTypes",
-                    "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeLaunchTemplates",
-                    "ec2:DescribeSecurityGroups", "ec2:DescribeSpotPriceHistory",
-                    "ec2:DescribeSubnets", "ec2:DescribeVolumes", "ec2:DescribeVpcs",
-                    "pricing:GetProducts", "ssm:GetParameter",
-                    "iam:ListInstanceProfiles", "iam:GetInstanceProfile",
-                    "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
-                    "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
-                    "iam:TagInstanceProfile"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Sid": "KarpenterWrite",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ec2:RunInstances", "ec2:CreateFleet", "ec2:CreateLaunchTemplate",
-                    "ec2:DeleteLaunchTemplate", "ec2:TerminateInstances", "ec2:CreateTags"
-                  ],
-                  "Resource": "*",
-                  "Condition": {
-                    "StringEquals": {
-                      "aws:RequestTag/kubernetes.io/cluster/%s": "owned"
-                    }
-                  }
-                },
-                {
-                  "Sid": "KarpenterDelete",
-                  "Effect": "Allow",
-                  "Action": ["ec2:TerminateInstances", "ec2:DeleteLaunchTemplate"],
-                  "Resource": "*",
-                  "Condition": {
-                    "StringEquals": {
-                      "ec2:ResourceTag/kubernetes.io/cluster/%s": "owned"
-                    }
-                  }
-                },
-                {
-                  "Sid": "KarpenterPassRole",
-                  "Effect": "Allow",
-                  "Action": "iam:PassRole",
-                  "Resource": "arn:aws:iam::%s:role/eks-dx-tenant-%s-instance-role"
-                },
-                {
-                  "Sid": "KarpenterSQS",
-                  "Effect": "Allow",
-                  "Action": ["sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:ReceiveMessage"],
-                  "Resource": "arn:aws:sqs:%s:%s:%s"
-                },
-                {
-                  "Sid": "CloudProviderRead",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ec2:DescribeInstances", "ec2:DescribeRegions", "ec2:DescribeRouteTables",
-                    "ec2:DescribeSecurityGroups", "ec2:DescribeSubnets", "ec2:DescribeVolumes",
-                    "ec2:DescribeVpcs", "ec2:DescribeAvailabilityZones",
-                    "elasticloadbalancing:DescribeLoadBalancers",
-                    "elasticloadbalancing:DescribeLoadBalancerAttributes",
-                    "elasticloadbalancing:DescribeListeners",
-                    "elasticloadbalancing:DescribeTargetGroups",
-                    "elasticloadbalancing:DescribeTargetHealth",
-                    "iam:CreateServiceLinkedRole", "kms:DescribeKey"
-                  ],
-                  "Resource": "*"
-                },
-                {
-                  "Sid": "CloudProviderWriteTagged",
-                  "Effect": "Allow",
-                  "Action": [
-                    "ec2:CreateSecurityGroup", "ec2:CreateRoute", "ec2:CreateTags",
-                    "ec2:ModifyInstanceAttribute", "ec2:AttachVolume", "ec2:DetachVolume",
-                    "ec2:DeleteVolume", "ec2:AuthorizeSecurityGroupIngress",
-                    "ec2:RevokeSecurityGroupIngress", "ec2:DeleteSecurityGroup", "ec2:DeleteRoute",
-                    "elasticloadbalancing:AddTags", "elasticloadbalancing:CreateLoadBalancer",
-                    "elasticloadbalancing:CreateListener", "elasticloadbalancing:CreateTargetGroup",
-                    "elasticloadbalancing:DeleteLoadBalancer", "elasticloadbalancing:DeleteListener",
-                    "elasticloadbalancing:DeleteTargetGroup", "elasticloadbalancing:ModifyListener",
-                    "elasticloadbalancing:ModifyTargetGroup", "elasticloadbalancing:RegisterTargets",
-                    "elasticloadbalancing:ConfigureHealthCheck",
-                    "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
-                    "elasticloadbalancing:DeregisterInstancesFromLoadBalancer"
-                  ],
-                  "Resource": "*",
-                  "Condition": {
-                    "StringEquals": {
-                      "aws:ResourceTag/kubernetes.io/cluster/%s": "owned"
-                    }
-                  }
-                }
-              ]
-            }
-            """.formatted(
-                region, accountId, tenantId,       // SecretsAccess
-                region, accountId, tenantId,       // EksDxApiInvoke
-                region, accountId, tenantId,       // TenantStateUpdate
-                clusterName,                       // EBSCSI
-                clusterName,                       // KarpenterWrite
-                clusterName,                       // KarpenterDelete
-                accountId, tenantId,               // KarpenterPassRole
-                region, accountId, clusterName,    // KarpenterSQS
-                clusterName                        // CloudProviderWriteTagged
-            );
     }
 
     private TenantItem itemToTenant(Map<String, AttributeValue> item) {
