@@ -39,6 +39,10 @@ import software.amazon.awssdk.services.secretsmanager.model.GetSecretValueReques
 import software.amazon.awssdk.services.sts.StsClient;
 import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.cloudwatchevents.CloudWatchEventsClient;
+import software.amazon.awssdk.services.cloudwatchevents.model.PutRuleRequest;
+import software.amazon.awssdk.services.cloudwatchevents.model.PutTargetsRequest;
+import software.amazon.awssdk.services.cloudwatchevents.model.Target;
 
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -74,6 +78,7 @@ public class TenantProvisioningService {
     private final Ec2Client ec2 = Ec2Client.create();
     private final SecretsManagerClient secretsManager = SecretsManagerClient.create();
     private final SqsClient sqs = SqsClient.create();
+    private final CloudWatchEventsClient events = CloudWatchEventsClient.create();
 
     @ConfigProperty(name = "eks-dx.tenants-table")
     String tenantsTable;
@@ -170,7 +175,20 @@ public class TenantProvisioningService {
             .build()).queueUrl();
         LOG.infof("Created SQS queue %s for tenant %s", clusterName, tenantId);
 
-        // 5. Launch EC2 instance
+        // 5. EventBridge rules → SQS (Karpenter spot interruption handling)
+        String queueArn = "arn:aws:sqs:" + region + ":" + accountId + ":" + clusterName;
+        createEventBridgeRule(clusterName + "-spot-interruption",
+            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Spot Instance Interruption Warning\"]}",
+            queueArn);
+        createEventBridgeRule(clusterName + "-instance-state-change",
+            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Instance State-change Notification\"]}",
+            queueArn);
+        createEventBridgeRule(clusterName + "-instance-rebalance",
+            "{\"source\":[\"aws.ec2\"],\"detail-type\":[\"EC2 Instance Rebalance Recommendation\"]}",
+            queueArn);
+        LOG.infof("Created EventBridge rules for tenant %s", tenantId);
+
+        // 6. Launch EC2 instance
         String eksDxEndpoint = System.getenv().getOrDefault("EKS_DX_ENDPOINT", "https://eks-dx.codriverlabs.ai");
         String userData = Base64.getEncoder().encodeToString(("""
             #!/bin/bash
@@ -316,6 +334,18 @@ public class TenantProvisioningService {
         } catch (Exception e) {
             LOG.warnf("Could not delete secret %s: %s", secretId, e.getMessage());
         }
+    }
+
+    private void createEventBridgeRule(String ruleName, String eventPattern, String targetArn) {
+        events.putRule(PutRuleRequest.builder()
+            .name(ruleName)
+            .eventPattern(eventPattern)
+            .state("ENABLED")
+            .build());
+        events.putTargets(PutTargetsRequest.builder()
+            .rule(ruleName)
+            .targets(Target.builder().id("sqs").arn(targetArn).build())
+            .build());
     }
 
     private String resolveLaunchTemplate(String arch, String pricingModel) {
