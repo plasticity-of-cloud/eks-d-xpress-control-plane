@@ -30,8 +30,12 @@ eu-west-1:  /eks-dx/network/vpc-id → vpc-0bbb222
 
 | SSM Path | Type | Description | Example |
 |----------|------|-------------|---------|
-| `/eks-dx/tenant/launch-template-id` | `String` | EC2 launch template (references region-local AMI, user-data, instance profile) | `lt-0abc123` |
-| `/eks-dx/tenant/ami-id` | `String` | Region-specific AMI for k3s nodes (copied per region) | `ami-0abc123` |
+| `/eks-dx/tenant/lt-arm64-ondemand` | `String` | LT: arm64 on-demand instances | `lt-0aaa111` |
+| `/eks-dx/tenant/lt-arm64-spot` | `String` | LT: arm64 spot instances | `lt-0bbb222` |
+| `/eks-dx/tenant/lt-x86-ondemand` | `String` | LT: x86_64 on-demand instances | `lt-0ccc333` |
+| `/eks-dx/tenant/lt-x86-spot` | `String` | LT: x86_64 spot instances | `lt-0ddd444` |
+| `/eks-dx/tenant/ami-arm64` | `String` | Region-specific AMI for arm64 k3s nodes | `ami-0aaa111` |
+| `/eks-dx/tenant/ami-x86` | `String` | Region-specific AMI for x86_64 k3s nodes | `ami-0bbb222` |
 
 ## Terraform Implementation
 
@@ -64,16 +68,40 @@ resource "aws_ssm_parameter" "security_group_id" {
 
 # --- tenant-compute module ---
 
-resource "aws_ssm_parameter" "launch_template_id" {
-  name  = "/eks-dx/tenant/launch-template-id"
+resource "aws_ssm_parameter" "lt_arm64_ondemand" {
+  name  = "/eks-dx/tenant/lt-arm64-ondemand"
   type  = "String"
-  value = aws_launch_template.eks_dx_tenant.id
+  value = aws_launch_template.arm64_ondemand.id
 }
 
-resource "aws_ssm_parameter" "ami_id" {
-  name  = "/eks-dx/tenant/ami-id"
+resource "aws_ssm_parameter" "lt_arm64_spot" {
+  name  = "/eks-dx/tenant/lt-arm64-spot"
   type  = "String"
-  value = aws_ami_copy.eks_dx_k3s.id  # region-specific copy
+  value = aws_launch_template.arm64_spot.id
+}
+
+resource "aws_ssm_parameter" "lt_x86_ondemand" {
+  name  = "/eks-dx/tenant/lt-x86-ondemand"
+  type  = "String"
+  value = aws_launch_template.x86_ondemand.id
+}
+
+resource "aws_ssm_parameter" "lt_x86_spot" {
+  name  = "/eks-dx/tenant/lt-x86-spot"
+  type  = "String"
+  value = aws_launch_template.x86_spot.id
+}
+
+resource "aws_ssm_parameter" "ami_arm64" {
+  name  = "/eks-dx/tenant/ami-arm64"
+  type  = "String"
+  value = aws_ami_copy.eks_dx_k3s_arm64.id
+}
+
+resource "aws_ssm_parameter" "ami_x86" {
+  name  = "/eks-dx/tenant/ami-x86"
+  type  = "String"
+  value = aws_ami_copy.eks_dx_k3s_x86.id
 }
 ```
 
@@ -86,9 +114,13 @@ String publicSubnets = StringParameter.valueForStringParameter(this, "/eks-dx/ne
 String privateSubnets = StringParameter.valueForStringParameter(this, "/eks-dx/network/private-subnet-ids");
 String securityGroupId = StringParameter.valueForStringParameter(this, "/eks-dx/network/security-group-id");
 
-// Tenant compute
-String launchTemplateId = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/launch-template-id");
-String amiId = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/ami-id");
+// Tenant compute (4 launch templates: arch × pricing)
+String ltArm64Ondemand = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-arm64-ondemand");
+String ltArm64Spot = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-arm64-spot");
+String ltX86Ondemand = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-x86-ondemand");
+String ltX86Spot = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/lt-x86-spot");
+String amiArm64 = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/ami-arm64");
+String amiX86 = StringParameter.valueForStringParameter(this, "/eks-dx/tenant/ami-x86");
 ```
 
 ## Multi-Region Deployment

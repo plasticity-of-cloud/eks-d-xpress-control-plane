@@ -114,10 +114,16 @@ public class EksDxStack extends Stack {
         // -----------------------------------------------------------------------
         // SSM Parameter lookups (written by Terraform in eks-dx-infra)
         // -----------------------------------------------------------------------
-        String launchTemplateId = StringParameter.valueForStringParameter(
-            this, "/eks-dx/tenant/launch-template-id");
+        String ltArm64Ondemand = StringParameter.valueForStringParameter(
+            this, "/eks-dx/tenant/lt-arm64-ondemand");
+        String ltArm64Spot = StringParameter.valueForStringParameter(
+            this, "/eks-dx/tenant/lt-arm64-spot");
+        String ltX86Ondemand = StringParameter.valueForStringParameter(
+            this, "/eks-dx/tenant/lt-x86-ondemand");
+        String ltX86Spot = StringParameter.valueForStringParameter(
+            this, "/eks-dx/tenant/lt-x86-spot");
         String subnetId = StringParameter.valueForStringParameter(
-            this, "/eks-dx/tenant/subnet-id");
+            this, "/eks-dx/network/private-subnet-ids");
 
         // -----------------------------------------------------------------------
         // CloudWatch Log Group for API Gateway access logs
@@ -217,8 +223,11 @@ public class EksDxStack extends Stack {
             .environment(Map.of(
                 "EKS_DX_TENANTS_TABLE", tenantsTable.getTableName(),
                 "EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName(),
-                "EKS_DX_LAUNCH_TEMPLATE_ID", launchTemplateId,
-                "EKS_DX_SUBNET_ID", subnetId))
+                "EKS_DX_LT_ARM64_ONDEMAND", ltArm64Ondemand,
+                "EKS_DX_LT_ARM64_SPOT", ltArm64Spot,
+                "EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand,
+                "EKS_DX_LT_X86_SPOT", ltX86Spot,
+                "EKS_DX_SUBNET_IDS", subnetId))
             .build();
 
         // Function URL for SSE /stream endpoint (not via API Gateway)
