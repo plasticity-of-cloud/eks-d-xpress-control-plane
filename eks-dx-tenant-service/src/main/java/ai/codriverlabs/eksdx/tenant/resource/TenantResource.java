@@ -5,8 +5,10 @@ import ai.codriverlabs.eksdx.tenant.service.TenantProvisioningService;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import jakarta.ws.rs.container.ContainerRequestContext;
 import org.jboss.logging.Logger;
 
 import java.util.Map;
@@ -35,10 +37,12 @@ public class TenantResource {
         @JsonProperty("ec2PricingModel") public String ec2PricingModel;
         @JsonProperty("k8sVersion") public String k8sVersion;
         @JsonProperty("assignElasticIp") public Boolean assignElasticIp;
+        @JsonProperty("diskSizeGb") public Integer diskSizeGb;
+        @JsonProperty("sshCidr") public String sshCidr;
     }
 
     @POST
-    public Response createTenant(CreateTenantRequest request) {
+    public Response createTenant(CreateTenantRequest request, @Context ContainerRequestContext ctx) {
         try {
             if (request == null || request.tenantId == null || request.tenantId.isBlank())
                 return error(400, "InvalidParameterException", "tenantId is required");
@@ -49,8 +53,20 @@ public class TenantResource {
                 return error(400, "InvalidParameterException", "arch must be arm64 or x86_64");
             if (!pricingModel.equals("spot") && !pricingModel.equals("ondemand"))
                 return error(400, "InvalidParameterException", "ec2PricingModel must be spot or ondemand");
+            // Resolve SSH CIDR: explicit > API Gateway caller IP > reject
+            String sshCidr = request.sshCidr;
+            if (sshCidr == null || sshCidr.isBlank()) {
+                String sourceIp = (String) ctx.getProperty("sourceIp");
+                if (sourceIp == null || sourceIp.isBlank())
+                    return error(400, "InvalidParameterException", "Cannot determine caller IP; provide sshCidr explicitly");
+                sshCidr = sourceIp + "/32";
+            }
+            if (sshCidr.equals("0.0.0.0/0") || sshCidr.equals("::/0"))
+                return error(400, "InvalidParameterException", "sshCidr must not be open to the world");
             String id = provisioningService.provision(request.tenantId, arch, pricingModel, k8sVersion,
-                Boolean.TRUE.equals(request.assignElasticIp));
+                Boolean.TRUE.equals(request.assignElasticIp),
+                request.diskSizeGb != null ? request.diskSizeGb : 20,
+                sshCidr);
             return Response.accepted(Map.of("tenantId", id)).build();
         } catch (IllegalArgumentException e) {
             return error(400, "InvalidParameterException", e.getMessage());

@@ -36,7 +36,7 @@ public class TenantIamService {
     public record IamResult(String roleName, String instanceProfileName) {}
 
     public IamResult createTenantRole(String tenantId, String clusterName, String region, String accountId) {
-        String roleName = "eks-dx-tenant-" + tenantId + "-instance-role";
+        String roleName = "eks-d-xpress-tenant-" + tenantId + "-instance-role";
 
         iam.createRole(CreateRoleRequest.builder()
             .roleName(roleName)
@@ -52,7 +52,7 @@ public class TenantIamService {
 
         iam.putRolePolicy(PutRolePolicyRequest.builder()
             .roleName(roleName)
-            .policyName("eks-dx-tenant-policy")
+            .policyName("eks-d-xpress-tenant-policy")
             .policyDocument(tenantInlinePolicy(tenantId, clusterName, region, accountId))
             .build());
 
@@ -85,7 +85,7 @@ public class TenantIamService {
                   "Sid": "SecretsAccess",
                   "Effect": "Allow",
                   "Action": "secretsmanager:GetSecretValue",
-                  "Resource": "arn:aws:secretsmanager:%s:%s:secret:eks-dx/tenant/%s/*"
+                  "Resource": "arn:aws:secretsmanager:%s:%s:secret:eks-d-xpress/tenant/%s/*"
                 },
                 {
                   "Sid": "EksDxApiInvoke",
@@ -97,7 +97,7 @@ public class TenantIamService {
                   "Sid": "TenantStateUpdate",
                   "Effect": "Allow",
                   "Action": "dynamodb:UpdateItem",
-                  "Resource": "arn:aws:dynamodb:%s:%s:table/eks-dx-tenants",
+                  "Resource": "arn:aws:dynamodb:%s:%s:table/eks-d-xpress-tenants",
                   "Condition": {
                     "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["%s"] }
                   }
@@ -165,7 +165,7 @@ public class TenantIamService {
                   "Sid": "KarpenterPassRole",
                   "Effect": "Allow",
                   "Action": "iam:PassRole",
-                  "Resource": "arn:aws:iam::%s:role/eks-dx-tenant-%s-instance-role"
+                  "Resource": "arn:aws:iam::%s:role/eks-d-xpress-tenant-%s-instance-role"
                 },
                 {
                   "Sid": "KarpenterSQS",
@@ -190,7 +190,7 @@ public class TenantIamService {
                   "Effect": "Allow",
                   "Action": [
                     "ec2:CreateSecurityGroup", "ec2:CreateRoute", "ec2:CreateTags", "ec2:CreateVolume",
-                    "ec2:ModifyInstanceAttribute", "ec2:AttachVolume", "ec2:DetachVolume",
+                    "ec2:ModifyInstanceAttribute", "ec2:ModifyVolume", "ec2:AttachVolume", "ec2:DetachVolume",
                     "ec2:DeleteVolume", "ec2:AuthorizeSecurityGroupIngress",
                     "ec2:RevokeSecurityGroupIngress", "ec2:DeleteSecurityGroup", "ec2:DeleteRoute",
                     "elasticloadbalancing:*"

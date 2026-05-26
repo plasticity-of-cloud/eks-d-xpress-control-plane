@@ -83,57 +83,57 @@ public class TenantProvisioningService {
     private final SqsClient sqs = SqsClient.create();
     private final CloudWatchEventsClient events = CloudWatchEventsClient.create();
 
-    @ConfigProperty(name = "eks-dx.tenants-table")
+    @ConfigProperty(name = "eks-d-xpress.tenants-table")
     String tenantsTable;
 
-    @ConfigProperty(name = "eks-dx.clusters-table")
+    @ConfigProperty(name = "eks-d-xpress.clusters-table")
     String clustersTable;
 
-    @ConfigProperty(name = "eks-dx.tenant.lt-arm64-ondemand")
+    @ConfigProperty(name = "eks-d-xpress.tenant.lt-arm64-ondemand")
     String ltArm64Ondemand;
 
-    @ConfigProperty(name = "eks-dx.tenant.lt-arm64-spot")
+    @ConfigProperty(name = "eks-d-xpress.tenant.lt-arm64-spot")
     String ltArm64Spot;
 
-    @ConfigProperty(name = "eks-dx.tenant.lt-x86-ondemand")
+    @ConfigProperty(name = "eks-d-xpress.tenant.lt-x86-ondemand")
     String ltX86Ondemand;
 
-    @ConfigProperty(name = "eks-dx.tenant.lt-x86-spot")
+    @ConfigProperty(name = "eks-d-xpress.tenant.lt-x86-spot")
     String ltX86Spot;
 
-    @ConfigProperty(name = "eks-dx.tenant.vpc-id")
+    @ConfigProperty(name = "eks-d-xpress.tenant.vpc-id")
     String vpcId;
 
-    @ConfigProperty(name = "eks-dx.tenant.availability-zone", defaultValue = "")
+    @ConfigProperty(name = "eks-d-xpress.tenant.availability-zone", defaultValue = "")
     String availabilityZone;
 
     // -------------------------------------------------------------------------
     // Provision
     // -------------------------------------------------------------------------
 
-    public String provision(String tenantId, String arch, String ec2PricingModel, String k8sVersion, boolean assignElasticIp) {
+    public String provision(String tenantId, String arch, String ec2PricingModel, String k8sVersion, boolean assignElasticIp, int diskSizeGb, String sshCidr) {
         LOG.infof("Provisioning tenant: %s (arch=%s, pricing=%s, k8s=%s)", tenantId, arch, ec2PricingModel, k8sVersion);
 
         String launchTemplateId = resolveLaunchTemplate(arch, ec2PricingModel);
         String region = System.getenv().getOrDefault("AWS_REGION", "us-east-1");
         String accountId = sts.getCallerIdentity(GetCallerIdentityRequest.builder().build()).account();
-        String clusterName = "eks-dx-" + tenantId;
-        String eksDxEndpoint = System.getenv().getOrDefault("EKS_DX_ENDPOINT", "https://eks-dx.codriverlabs.ai");
+        String clusterName = "eks-d-xpress-" + tenantId;
+        String eksDxEndpoint = System.getenv().getOrDefault("EKS_DX_ENDPOINT", "https://eks-d-xpress.codriverlabs.ai");
 
         // 1. Network isolation (per-tenant subnets + security group)
         String az = availabilityZone.isEmpty() ? region + "a" : availabilityZone;
         TenantNetworkService.NetworkResult network = networkService.createTenantNetwork(
-            tenantId, clusterName, vpcId, az);
+            tenantId, clusterName, vpcId, az, sshCidr);
 
         // 2. Secrets (SA signing key + SSH key pair)
         String signingKeyPem = generateRsaPrivateKeyPem();
         secretsManager.createSecret(CreateSecretRequest.builder()
-            .name("eks-dx/tenant/" + tenantId + "/signing-key")
+            .name("eks-d-xpress/tenant/" + tenantId + "/signing-key")
             .secretString(signingKeyPem).build());
         CreateKeyPairResponse keyPairResp = ec2.createKeyPair(CreateKeyPairRequest.builder()
-            .keyName("eks-dx-tenant-" + tenantId).build());
+            .keyName("eks-d-xpress-tenant-" + tenantId).build());
         String sshKeyArn = secretsManager.createSecret(CreateSecretRequest.builder()
-            .name("eks-dx/tenant/" + tenantId + "/ssh-key")
+            .name("eks-d-xpress/tenant/" + tenantId + "/ssh-key")
             .secretString(keyPairResp.keyMaterial()).build()).arn();
 
         // 3. IAM role + instance profile
@@ -151,8 +151,8 @@ public class TenantProvisioningService {
         TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
             tenantId, clusterName, launchTemplateId,
             network.publicSubnetId(), network.securityGroupId(),
-            iamResult.instanceProfileName(), "eks-dx-tenant-" + tenantId,
-            region, k8sVersion, eksDxEndpoint, assignElasticIp);
+            iamResult.instanceProfileName(), "eks-d-xpress-tenant-" + tenantId,
+            region, k8sVersion, eksDxEndpoint, assignElasticIp, diskSizeGb);
 
         // 7. Write initial DynamoDB state
         String now = Instant.now().toString();
@@ -219,19 +219,19 @@ public class TenantProvisioningService {
             .build());
 
         // 3. Delete secrets
-        deleteSecretIfExists("eks-dx/tenant/" + tenantId + "/signing-key");
-        deleteSecretIfExists("eks-dx/tenant/" + tenantId + "/ssh-key");
+        deleteSecretIfExists("eks-d-xpress/tenant/" + tenantId + "/signing-key");
+        deleteSecretIfExists("eks-d-xpress/tenant/" + tenantId + "/ssh-key");
 
         // 4. Delete EC2 key pair
         try {
             ec2.deleteKeyPair(DeleteKeyPairRequest.builder()
-                .keyName("eks-dx-tenant-" + tenantId).build());
+                .keyName("eks-d-xpress-tenant-" + tenantId).build());
         } catch (Exception e) {
             LOG.warnf("Could not delete key pair for tenant %s: %s", tenantId, e.getMessage());
         }
 
         // 5. Delete IAM role
-        String roleName = "eks-dx-tenant-" + tenantId + "-instance-role";
+        String roleName = "eks-d-xpress-tenant-" + tenantId + "-instance-role";
         try {
             iam.deleteRolePolicy(DeleteRolePolicyRequest.builder()
                 .roleName(roleName).policyName("eks-dx-tenant-policy").build());

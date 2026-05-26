@@ -34,7 +34,7 @@ public class EksAuthResource {
     @Inject AwsCredentialService credentialService;
     @Inject DynamoDbClient dynamoDb;
 
-    @ConfigProperty(name = "eks-dx.associations-table")
+    @ConfigProperty(name = "eks-d-xpress.associations-table")
     String associationsTable;
 
     public static class AgentRequest {

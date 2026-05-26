@@ -28,13 +28,13 @@ public class JwksTokenValidationService {
 
     private static final Logger LOG = Logger.getLogger(JwksTokenValidationService.class);
     private static final String AUDIENCE = "pods.eks.amazonaws.com";
-    private static final String PROXY_AUDIENCE = "eks-dx.codriverlabs.ai";
+    private static final String PROXY_AUDIENCE = "eks-d-xpress.codriverlabs.ai";
     private static final long CACHE_TTL_SECONDS = 300;
 
     @Inject DynamoDbClient dynamoDb;
     @Inject JWTParser jwtParser;
 
-    @ConfigProperty(name = "eks-dx.clusters-table")
+    @ConfigProperty(name = "eks-d-xpress.clusters-table")
     String clustersTable;
 
     private final Map<String, CachedContext> cache = new ConcurrentHashMap<>();

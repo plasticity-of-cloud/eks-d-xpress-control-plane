@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class JwksTokenValidationService {
 
     private static final Logger LOG = Logger.getLogger(JwksTokenValidationService.class);
-    private static final String EKS_DX_AUDIENCE = "eks-dx.codriverlabs.ai";
+    private static final String EKS_DX_AUDIENCE = "eks-d-xpress.codriverlabs.ai";
     private static final long CACHE_TTL_SECONDS = 300;
 
     @Inject DynamoDbClusterService clusterService;

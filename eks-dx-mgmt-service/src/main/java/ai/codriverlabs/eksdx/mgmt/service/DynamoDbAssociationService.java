@@ -26,7 +26,7 @@ public class DynamoDbAssociationService {
     @Inject DynamoDbClient dynamoDb;
     @Inject IamClient iamClient;
 
-    @ConfigProperty(name = "eks-dx.associations-table")
+    @ConfigProperty(name = "eks-d-xpress.associations-table")
     String tableName;
 
     public String getRoleArn(String clusterName, String namespace, String serviceAccount) {

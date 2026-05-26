@@ -19,11 +19,11 @@ import java.nio.file.Path;
 public class LambdaAssociationLookup {
 
     private static final Logger LOG = Logger.getLogger(LambdaAssociationLookup.class);
-    private static final String TOKEN_PATH = "/var/run/secrets/eks-dx/token";
+    private static final String TOKEN_PATH = "/var/run/secrets/eks-d-xpress/token";
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
 
-    @ConfigProperty(name = "eks-dx.endpoint")
+    @ConfigProperty(name = "eks-d-xpress.endpoint")
     String endpoint;
 
     @ConfigProperty(name = "eks.cluster-name")

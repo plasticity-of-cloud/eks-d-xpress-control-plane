@@ -40,6 +40,7 @@ import software.amazon.awscdk.services.lambda.InvokeMode;
 import software.amazon.awscdk.services.lambda.Runtime;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.RetentionDays;
+import software.amazon.awscdk.Tags;
 import software.amazon.awscdk.services.ssm.StringParameter;
 import software.amazon.awscdk.CfnParameter;
 import software.constructs.Construct;
@@ -60,6 +61,11 @@ public class EksDxStack extends Stack {
 
     public EksDxStack(Construct scope, String id, StackProps props) {
         super(scope, id, props);
+
+        // -----------------------------------------------------------------------
+        // Stack-level tags
+        // -----------------------------------------------------------------------
+        Tags.of(this).add("Project", "eks-d-xpress-control-plane");
 
         // Resolve asset paths: works whether invoked from project root (mvn -pl infra)
         // or from infra/ directory (cdk synth)
@@ -87,7 +93,7 @@ public class EksDxStack extends Stack {
         // DynamoDB Tables
         // -----------------------------------------------------------------------
         Table clustersTable = Table.Builder.create(this, "ClustersTable")
-            .tableName("eks-dx-clusters")
+            .tableName("eks-d-xpress-clusters")
             .partitionKey(Attribute.builder().name("clusterName").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
             .removalPolicy(RemovalPolicy.RETAIN)
@@ -95,7 +101,7 @@ public class EksDxStack extends Stack {
             .build();
 
         Table associationsTable = Table.Builder.create(this, "AssociationsTable")
-            .tableName("eks-dx-associations")
+            .tableName("eks-d-xpress-associations")
             .partitionKey(Attribute.builder().name("PK").type(AttributeType.STRING).build())
             .sortKey(Attribute.builder().name("SK").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
@@ -104,7 +110,7 @@ public class EksDxStack extends Stack {
             .build();
 
         Table tenantsTable = Table.Builder.create(this, "TenantsTable")
-            .tableName("eks-dx-tenants")
+            .tableName("eks-d-xpress-tenants")
             .partitionKey(Attribute.builder().name("tenantId").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
             .removalPolicy(RemovalPolicy.RETAIN)
@@ -112,24 +118,24 @@ public class EksDxStack extends Stack {
             .build();
 
         // -----------------------------------------------------------------------
-        // SSM Parameter lookups (written by Terraform in eks-dx-infra)
+        // SSM Parameter lookups (written by eks-d-xpress/infra stack)
         // -----------------------------------------------------------------------
         String ltArm64Ondemand = StringParameter.valueForStringParameter(
-            this, "/eks-dx/launch-template/arm64/ondemand");
+            this, "/eks-d-xpress/infra/launch-template/arm64/ondemand");
         String ltArm64Spot = StringParameter.valueForStringParameter(
-            this, "/eks-dx/launch-template/arm64/spot");
+            this, "/eks-d-xpress/infra/launch-template/arm64/spot");
         String ltX86Ondemand = StringParameter.valueForStringParameter(
-            this, "/eks-dx/launch-template/x86_64/ondemand");
+            this, "/eks-d-xpress/infra/launch-template/x86_64/ondemand");
         String ltX86Spot = StringParameter.valueForStringParameter(
-            this, "/eks-dx/launch-template/x86_64/spot");
-        String subnetIds = StringParameter.valueForStringParameter(
-            this, "/eks-dx/network/private-subnet-ids");
+            this, "/eks-d-xpress/infra/launch-template/x86_64/spot");
+        String vpcId = StringParameter.valueForStringParameter(
+            this, "/eks-d-xpress/infra/network/vpc-id");
 
         // -----------------------------------------------------------------------
         // CloudWatch Log Group for API Gateway access logs
         // -----------------------------------------------------------------------
         LogGroup apiAccessLogGroup = LogGroup.Builder.create(this, "ApiAccessLogGroup")
-            .logGroupName("/aws/apigateway/eks-dx")
+            .logGroupName("/aws/apigateway/eks-d-xpress")
             .retention(RetentionDays.ONE_MONTH)
             .removalPolicy(RemovalPolicy.DESTROY)
             .build();
@@ -138,7 +144,7 @@ public class EksDxStack extends Stack {
         // REST API — IAM auth by default, per-route overrides below
         // -----------------------------------------------------------------------
         RestApi api = RestApi.Builder.create(this, "EksDxApi")
-            .restApiName("eks-dx")
+            .restApiName("eks-d-xpress")
             .deployOptions(StageOptions.builder()
                 .stageName("prod")
                 .accessLogDestination(new LogGroupLogDestination(apiAccessLogGroup))
@@ -154,7 +160,7 @@ public class EksDxStack extends Stack {
         // Lambda: credential service  (hot path — SnapStart)
         // -----------------------------------------------------------------------
         Function credentialFn = Function.Builder.create(this, "EksDxCredentialFunction")
-            .functionName("eks-dx-credential-service")
+            .functionName("eks-d-xpress-credential-service")
             .runtime(Runtime.JAVA_25)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
             .code(Code.fromAsset(root + "eks-dx-credential-service/target/function.zip"))
@@ -183,7 +189,7 @@ public class EksDxStack extends Stack {
         // Lambda: mgmt service  (cluster/association CRUD)
         // -----------------------------------------------------------------------
         Function mgmtFn = Function.Builder.create(this, "EksDxMgmtFunction")
-            .functionName("eks-dx-mgmt-service")
+            .functionName("eks-d-xpress-mgmt-service")
             .runtime(Runtime.JAVA_25)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
             .code(Code.fromAsset(root + "eks-dx-mgmt-service/target/function.zip"))
@@ -213,7 +219,7 @@ public class EksDxStack extends Stack {
         Runtime tenantRuntime = jvmMode ? Runtime.JAVA_25 : Runtime.PROVIDED_AL2023;
         Architecture tenantArch = (jvmMode || x86Native) ? Architecture.X86_64 : Architecture.ARM_64;
         Function tenantFn = Function.Builder.create(this, "EksDxTenantFunction")
-            .functionName("eks-dx-tenant-service")
+            .functionName("eks-d-xpress-tenant-service")
             .runtime(tenantRuntime)
             .architecture(tenantArch)
             .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
@@ -227,7 +233,7 @@ public class EksDxStack extends Stack {
                 "EKS_DX_LT_ARM64_SPOT", ltArm64Spot,
                 "EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand,
                 "EKS_DX_LT_X86_SPOT", ltX86Spot,
-                "EKS_DX_SUBNET_IDS", subnetIds))
+                "EKS_DX_VPC_ID", vpcId))
             .build();
 
         // Function URL for SSE /stream endpoint (not via API Gateway)
@@ -334,19 +340,19 @@ public class EksDxStack extends Stack {
         // CloudWatch Alarms — named to match SAM
         // -----------------------------------------------------------------------
         Alarm.Builder.create(this, "CredentialErrorAlarm")
-            .alarmName("eks-dx-credential-errors")
+            .alarmName("eks-d-xpress-credential-errors")
             .metric(credentialFn.metricErrors(MetricOptions.builder().period(Duration.minutes(5)).statistic("Sum").build()))
             .threshold(5).evaluationPeriods(1)
             .treatMissingData(TreatMissingData.NOT_BREACHING).build();
 
         Alarm.Builder.create(this, "CredentialDurationAlarm")
-            .alarmName("eks-dx-credential-p99-duration")
+            .alarmName("eks-d-xpress-credential-p99-duration")
             .metric(credentialFn.metricDuration(MetricOptions.builder().period(Duration.minutes(5)).statistic("p99").build()))
             .threshold(5000).evaluationPeriods(3)
             .treatMissingData(TreatMissingData.NOT_BREACHING).build();
 
         Alarm.Builder.create(this, "MgmtErrorAlarm")
-            .alarmName("eks-dx-mgmt-errors")
+            .alarmName("eks-d-xpress-mgmt-errors")
             .metric(mgmtFn.metricErrors(MetricOptions.builder().period(Duration.minutes(5)).statistic("Sum").build()))
             .threshold(5).evaluationPeriods(1)
             .treatMissingData(TreatMissingData.NOT_BREACHING).build();

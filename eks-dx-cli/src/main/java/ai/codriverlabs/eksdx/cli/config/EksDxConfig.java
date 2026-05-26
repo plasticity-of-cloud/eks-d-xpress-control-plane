@@ -11,7 +11,7 @@ import java.util.Properties;
  */
 public class EksDxConfig {
 
-    private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".eks-dx");
+    private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".eks-d-xpress");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config");
 
     /** ~/.eks-dx/tenants/{region}/{tenantId}.pem */
@@ -27,7 +27,7 @@ public class EksDxConfig {
     public String getEndpoint() {
         String env = System.getenv("EKS_DX_ENDPOINT");
         if (env != null && !env.isBlank()) return env;
-        return props.getProperty("endpoint", "https://eks-dx.codriverlabs.ai");
+        return props.getProperty("endpoint", "https://eks-d-xpress.codriverlabs.ai");
     }
 
     public String getRegion() {

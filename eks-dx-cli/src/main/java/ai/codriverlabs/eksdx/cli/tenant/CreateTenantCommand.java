@@ -27,6 +27,24 @@ public class CreateTenantCommand implements Runnable {
     @Parameters(index = "0", description = "Tenant ID")
     String tenantId;
 
+    @Option(names = "--arch", defaultValue = "arm64", description = "CPU architecture: arm64 or x86_64")
+    String arch;
+
+    @Option(names = "--pricing", defaultValue = "spot", description = "EC2 pricing model: spot or ondemand")
+    String ec2PricingModel;
+
+    @Option(names = "--k8s-version", defaultValue = "1.35", description = "Kubernetes version")
+    String k8sVersion;
+
+    @Option(names = "--disk-size", defaultValue = "20", description = "Root disk size in GB")
+    int diskSizeGb;
+
+    @Option(names = "--eip", description = "Assign Elastic IP")
+    boolean assignElasticIp;
+
+    @Option(names = "--ssh-cidr", description = "CIDR allowed for SSH (default: auto-detect caller IP)")
+    String sshCidr;
+
     @Option(names = "--wait", description = "Stream progress and wait for completion")
     boolean wait;
 
@@ -40,20 +58,32 @@ public class CreateTenantCommand implements Runnable {
 
     @Override
     public void run() {
-        // POST /tenants → 202
-        String resp = apiClient.post("/tenants", "{\"tenantId\":\"" + tenantId + "\"}");
+        try {
+            var body = new java.util.LinkedHashMap<String, Object>();
+            body.put("tenantId", tenantId);
+            body.put("arch", arch);
+            body.put("ec2PricingModel", ec2PricingModel);
+            body.put("k8sVersion", k8sVersion);
+            body.put("diskSizeGb", diskSizeGb);
+            body.put("assignElasticIp", assignElasticIp);
+            if (sshCidr != null) body.put("sshCidr", sshCidr);
+            String resp = apiClient.post("/tenants", MAPPER.writeValueAsString(body));
 
-        if (!wait) {
-            System.out.println(resp);
-            return;
+            if (!wait) {
+                System.out.println(resp);
+                return;
+            }
+
+            EksDxConfig config = new EksDxConfig();
+            String region = config.getRegion();
+            String url = (streamUrl != null ? streamUrl : config.getStreamUrl())
+                + "/tenants/" + tenantId + "/stream";
+
+            streamProgress(url, region);
+        } catch (Exception e) {
+            System.err.println("Error: " + e.getMessage());
+            System.exit(1);
         }
-
-        EksDxConfig config = new EksDxConfig();
-        String region = config.getRegion();
-        String url = (streamUrl != null ? streamUrl : config.getStreamUrl())
-            + "/tenants/" + tenantId + "/stream";
-
-        streamProgress(url, region);
     }
 
     private void streamProgress(String url, String region) {

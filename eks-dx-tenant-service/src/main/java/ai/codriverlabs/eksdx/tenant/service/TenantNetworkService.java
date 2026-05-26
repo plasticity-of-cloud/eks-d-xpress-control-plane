@@ -41,7 +41,7 @@ public class TenantNetworkService {
     /**
      * Creates per-tenant public subnet, private subnet, and security group.
      */
-    public NetworkResult createTenantNetwork(String tenantId, String clusterName, String vpcId, String availabilityZone) {
+    public NetworkResult createTenantNetwork(String tenantId, String clusterName, String vpcId, String availabilityZone, String sshCidr) {
         String vpcCidr = ec2.describeVpcs(DescribeVpcsRequest.builder()
             .vpcIds(vpcId).build()).vpcs().getFirst().cidrBlock();
 
@@ -87,8 +87,8 @@ public class TenantNetworkService {
         LOG.infof("Created private subnet %s (%s) for tenant %s", privateSubnetId, privateCidr, tenantId);
 
         // Route table associations
-        String publicRtId = findRouteTable(vpcId, "eks-dx-public-rt");
-        String privateRtId = findRouteTable(vpcId, "eks-dx-private-rt");
+        String publicRtId = findRouteTable(vpcId, "eks-d-xpress-public-rt");
+        String privateRtId = findRouteTable(vpcId, "eks-d-xpress-private-rt");
         ec2.associateRouteTable(AssociateRouteTableRequest.builder()
             .subnetId(publicSubnetId).routeTableId(publicRtId).build());
         ec2.associateRouteTable(AssociateRouteTableRequest.builder()
@@ -96,13 +96,13 @@ public class TenantNetworkService {
         LOG.infof("Associated route tables for tenant %s", tenantId);
 
         // Security group
-        String sgId = createTenantSecurityGroup(tenantId, clusterName, vpcId, vpcCidr);
+        String sgId = createTenantSecurityGroup(tenantId, clusterName, vpcId, vpcCidr, sshCidr);
 
         return new NetworkResult(publicSubnetId, privateSubnetId, sgId);
     }
 
-    private String createTenantSecurityGroup(String tenantId, String clusterName, String vpcId, String vpcCidr) {
-        String sgName = tenantId + "-eks-dx";
+    private String createTenantSecurityGroup(String tenantId, String clusterName, String vpcId, String vpcCidr, String sshCidr) {
+        String sgName = tenantId + "-eks-d-xpress";
         String sgId = ec2.createSecurityGroup(CreateSecurityGroupRequest.builder()
             .groupName(sgName)
             .description("EKS-D tenant: SSH, Kubernetes API, kubelet, pod networking")
@@ -120,6 +120,11 @@ public class TenantNetworkService {
         ec2.authorizeSecurityGroupIngress(AuthorizeSecurityGroupIngressRequest.builder()
             .groupId(sgId)
             .ipPermissions(
+                // SSH from caller CIDR
+                IpPermission.builder()
+                    .ipProtocol("tcp").fromPort(22).toPort(22)
+                    .ipRanges(IpRange.builder().cidrIp(sshCidr).description("SSH").build())
+                    .build(),
                 // Kubernetes API server (6443) from VPC
                 IpPermission.builder()
                     .ipProtocol("tcp").fromPort(6443).toPort(6443)

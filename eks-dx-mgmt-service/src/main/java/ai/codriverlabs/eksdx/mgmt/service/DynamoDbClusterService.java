@@ -23,7 +23,7 @@ public class DynamoDbClusterService {
 
     @Inject DynamoDbClient dynamoDb;
 
-    @ConfigProperty(name = "eks-dx.clusters-table")
+    @ConfigProperty(name = "eks-d-xpress.clusters-table")
     String tableName;
 
     public String getJwks(String clusterName) {

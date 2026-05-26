@@ -3,6 +3,8 @@ package ai.codriverlabs.eksdx.tenant.service;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.ec2.Ec2Client;
+import software.amazon.awssdk.services.ec2.model.BlockDeviceMapping;
+import software.amazon.awssdk.services.ec2.model.EbsBlockDevice;
 import software.amazon.awssdk.services.ec2.model.AllocateAddressRequest;
 import software.amazon.awssdk.services.ec2.model.AssociateAddressRequest;
 import software.amazon.awssdk.services.ec2.model.IamInstanceProfileSpecification;
@@ -30,7 +32,7 @@ public class TenantEc2Service {
     public Ec2Result launchInstance(String tenantId, String clusterName, String launchTemplateId,
                                    String subnetId, String securityGroupId, String instanceProfileName,
                                    String keyName, String region, String k8sVersion,
-                                   String eksDxEndpoint, boolean assignElasticIp) {
+                                   String eksDxEndpoint, boolean assignElasticIp, int diskSizeGb) {
 
         String userData = Base64.getEncoder().encodeToString(userDataScript(
             tenantId, clusterName, eksDxEndpoint, region, k8sVersion).getBytes());
@@ -44,12 +46,16 @@ public class TenantEc2Service {
             .iamInstanceProfile(IamInstanceProfileSpecification.builder()
                 .name(instanceProfileName).build())
             .userData(userData)
+            .blockDeviceMappings(BlockDeviceMapping.builder()
+                .deviceName("/dev/xvda")
+                .ebs(EbsBlockDevice.builder().volumeSize(diskSizeGb).build())
+                .build())
             .minCount(1).maxCount(1)
             .tagSpecifications(TagSpecification.builder()
                 .resourceType(ResourceType.INSTANCE)
                 .tags(
                     Tag.builder().key("Name").value(clusterName).build(),
-                    Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
+                    Tag.builder().key("eks-d-xpress-tenant").value(tenantId).build(),
                     Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
                     Tag.builder().key("ebs.csi.aws.com/cluster-name").value(clusterName).build(),
                     Tag.builder().key("Platform").value("eks-d-xpress").build())
@@ -66,7 +72,7 @@ public class TenantEc2Service {
                 .tagSpecifications(TagSpecification.builder()
                     .resourceType(ResourceType.ELASTIC_IP)
                     .tags(Tag.builder().key("Name").value(clusterName).build(),
-                          Tag.builder().key("eks-dx-tenant").value(tenantId).build())
+                          Tag.builder().key("eks-d-xpress-tenant").value(tenantId).build())
                     .build())
                 .build());
             ec2.associateAddress(AssociateAddressRequest.builder()
