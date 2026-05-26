@@ -2,67 +2,99 @@
 
 ## Directory Overview
 
-Multi-module Quarkus + CDK project. Brings EKS Pod Identity (`AssumeRoleForPodIdentity`) to non-EKS Kubernetes clusters via a serverless Lambda backend.
+Multi-module Quarkus 3.33.1 LTS + Java 25 project. Brings EKS Pod Identity to non-EKS Kubernetes clusters (EKS-D via kubeadm) through a serverless Lambda backend with composable tenant provisioning.
 
 ```
-eks-dx-lambda/           # Lambda: credential exchange + cluster/association management API
-eks-dx-auth-proxy/       # In-cluster proxy: Kubernetes TokenReview fast-fail + Lambda forwarding
-eks-dx-pod-identity-webhook/  # Admission webhook: injects env vars + projected token volume into pods
-eks-dx-cli/              # Native CLI (GraalVM): cluster + association management
-infra/                   # CDK infrastructure (Java, alternative to sam.yaml)
-sam.yaml                 # SAM template (Lambda + DynamoDB + API Gateway)
-docs/user_guides/        # Setup/teardown shell scripts for k3s on EC2
-.agents/summary/         # Generated documentation (index.md is the knowledge base entry point)
+eks-dx-credential-service/   # Lambda: credential exchange (hot path, SnapStart)
+eks-dx-mgmt-service/         # Lambda: cluster/association CRUD
+eks-dx-tenant-service/       # Lambda: tenant provisioning + lifecycle (GraalVM native arm64)
+eks-dx-auth-proxy/           # In-cluster proxy: TokenReview fast-fail + Lambda forwarding
+eks-dx-pod-identity-webhook/ # Admission webhook: injects env vars + projected token volume
+eks-dx-cli/                  # Native CLI (GraalVM): cluster + association + tenant management
+eks-dx-model/                # Shared library: TokenClaims record
+infra/                       # CDK infrastructure (Java, primary deployment path)
+docs/                        # Architecture docs, SSM contract, migration plans
+.agents/summary/             # Generated documentation (index.md is the knowledge base entry point)
 ```
 
 ## Key Entry Points
 
 | What | File |
 |------|------|
-| Credential exchange endpoint | `eks-dx-lambda/.../resource/EksAuthResource.java` |
-| JWT/JWKS validation (5-min cache) | `eks-dx-lambda/.../service/JwksTokenValidationService.java` |
-| DynamoDB cluster CRUD | `eks-dx-lambda/.../service/DynamoDbClusterService.java` |
-| DynamoDB association CRUD + IAM role validation | `eks-dx-lambda/.../service/DynamoDbAssociationService.java` |
-| STS AssumeRole with session tags | `eks-dx-lambda/.../service/AwsCredentialService.java` |
-| Webhook auth filter (Bearer token on GET associations) | `eks-dx-lambda/.../auth/WebhookAuthFilter.java` |
-| In-cluster proxy resource | `eks-dx-auth-proxy/.../resource/EksAuthAgentResource.java` |
+| Credential exchange endpoint | `eks-dx-credential-service/.../resource/EksAuthResource.java` |
+| JWT/JWKS validation (5-min cache) | `eks-dx-credential-service/.../service/JwksTokenValidationService.java` |
+| Cluster/association CRUD | `eks-dx-mgmt-service/.../resource/ClusterResource.java`, `AssociationResource.java` |
+| DynamoDB cluster service | `eks-dx-mgmt-service/.../service/DynamoDbClusterService.java` |
+| DynamoDB association service | `eks-dx-mgmt-service/.../service/DynamoDbAssociationService.java` |
+| STS AssumeRole | `eks-dx-credential-service/.../service/AwsCredentialService.java` |
+| Webhook auth filter | `eks-dx-mgmt-service/.../auth/WebhookAuthFilter.java` |
+| Tenant provisioning orchestrator | `eks-dx-tenant-service/.../service/TenantProvisioningService.java` |
+| Tenant network (subnets, SG) | `eks-dx-tenant-service/.../service/TenantNetworkService.java` |
+| Tenant IAM (role, policies) | `eks-dx-tenant-service/.../service/TenantIamService.java` |
+| Tenant EC2 (launch, EIP) | `eks-dx-tenant-service/.../service/TenantEc2Service.java` |
+| Tenant DLM (etcd backup) | `eks-dx-tenant-service/.../service/TenantDlmService.java` |
+| In-cluster proxy | `eks-dx-auth-proxy/.../resource/EksAuthAgentResource.java` |
 | Kubernetes TokenReview | `eks-dx-auth-proxy/.../service/TokenValidationService.java` |
 | Pod mutation logic | `eks-dx-pod-identity-webhook/.../PodIdentityMutator.java` |
-| Association lookup (webhook → Lambda) | `eks-dx-pod-identity-webhook/.../LambdaAssociationLookup.java` |
 | CLI entry point | `eks-dx-cli/.../EksDxCommand.java` |
-| CLI HTTP client + SigV4 signing | `eks-dx-cli/.../util/EksDxApiClient.java`, `AwsSigV4Signer.java` |
-| CLI config (~/.eks-dx/config) | `eks-dx-cli/.../config/EksDxConfig.java` |
+| CLI SigV4 signing | `eks-dx-cli/.../util/AwsSigV4Signer.java` |
 | CDK stack | `infra/.../EksDxStack.java` |
 
 ## Authentication Model
 
-- `POST /clusters/{name}/assets` — **no API Gateway auth**; token is in the request body, validated by Lambda via JWKS
-- Management endpoints (`/clusters`, JWKS PUT, association POST/DELETE) — **IAM SigV4**
-- Association GET endpoints — open at API Gateway; `WebhookAuthFilter` optionally validates a Bearer SA token when present
+- `POST /clusters/{name}/assets` — no API Gateway auth; token validated by Lambda via JWKS
+- Management endpoints — IAM SigV4
+- Association GET — open; `WebhookAuthFilter` optionally validates Bearer SA token
 - Webhook → Lambda — Bearer SA token with audience `eks-dx.codriverlabs.ai`
 - Pod SA tokens — audience `pods.eks.amazonaws.com`
 
 ## Repo-Specific Patterns
 
-**JWKS caching**: `JwksTokenValidationService` caches `JWTAuthContextInfo` per `clusterName|audience` in a `ConcurrentHashMap` with a 5-minute TTL. Cache is per Lambda instance.
+**Three-Lambda split**: credential-service (SnapStart, 512MB, 30s), mgmt-service (JVM, 256MB, 30s), tenant-service (native arm64, 128MB, 900s). Different scaling profiles.
 
-**DynamoDB key design**: Associations use composite key `PK=CLUSTER#<name>` / `SK=<namespace>#<serviceAccount>`. Role ARN lookup is O(1) `GetItem`. `describeAssociation` by ID requires a `Scan` with filter (no GSI on `associationId`).
+**Composable tenant provisioning**: `TenantProvisioningService` orchestrates `TenantNetworkService`, `TenantIamService`, `TenantEc2Service`, `TenantDlmService`. Each independently testable.
 
-**Role naming constraint**: STS `AssumeRole` is scoped to `arn:aws:iam::*:role/eks-dx-pod-*`. Pod identity IAM roles must match this prefix.
+**SSM as interface**: Infrastructure (Terraform/CDK) writes `/eks-dx/launch-template/{arch}/{pricing}`, `/eks-dx/ami/{arch}/{version}`, `/eks-dx/network/*`. Lambda reads at runtime. Hierarchical paths support `get-parameters-by-path` discovery.
 
-**Dual `TokenClaims`**: `eks-dx-lambda` uses a Java `record`; `eks-dx-auth-proxy` has its own class. They are not shared — modules are independently deployable.
+**Per-tenant isolation**: Each tenant gets dedicated subnets (auto-indexed CIDR), security group, IAM role, SQS queue, EventBridge rules, DLM policy.
 
-**CLI config resolution order**: CLI flag → `EKS_DX_ENDPOINT` / `AWS_REGION` env vars → `~/.eks-dx/config` → defaults (`https://eks-dx.codriverlabs.ai`, `us-east-1`).
+**DynamoDB key design**: Associations use `PK=CLUSTER#<name>` / `SK=<namespace>#<serviceAccount>`. O(1) GetItem for credential exchange.
 
-**`create cluster` auto-discovery**: `CreateClusterCommand` fetches issuer from `/.well-known/openid-configuration` and JWKS from `/openid/v1/jwks` on the kube-apiserver if not provided explicitly.
+**Role naming constraint**: STS AssumeRole scoped to `arn:aws:iam::*:role/eks-dx-pod-*`.
 
-**Webhook idempotency**: `PodIdentityMutator` checks for existing env vars and volumes before injecting to avoid duplicates on re-admission.
+**JWKS caching**: Per `clusterName|audience` in ConcurrentHashMap, 5-minute TTL, per Lambda instance.
 
-**CDK vs SAM**: SAM (`sam.yaml`) is the supported deployment path. CDK (`EksDxStack`) exists as an alternative but is not maintained at parity — it is missing `iam:GetRole` and does not match SAM's policy set.
+**CLI config resolution**: flag → env var → `~/.eks-dx/config` → defaults.
+
+**CDK asset path resolution**: Detects working directory (project root vs `infra/`) to resolve Lambda zip paths correctly for both `mvn exec:java` and `cdk synth`.
+
+**Native binary name**: CLI outputs as `eks-dx` (not `eks-dx-cli`) via `quarkus.native.output-name-prefix`.
+
+## Build
+
+```bash
+./build-local.sh              # JVM mode
+./build-local.sh --native     # GraalVM native (tenant-service + CLI)
+./build-local.sh --skip-tests # Skip unit tests
+```
+
+Requires: Java 25, Maven 3.9+, Docker (for native builds via Mandrel container).
+
+## Deploy
+
+```bash
+cd infra && cdk deploy EksDxStack
+```
+
+Requires: SSM parameters written by infrastructure stack first.
 
 ## Integration Tests
 
-`DynamoDbIntegrationTest` requires DynamoDB Local on port 18000. Run with `-Dintegration.dynamodb=true`. The test creates tables if they don't exist.
+`DynamoDbIntegrationTest` requires DynamoDB Local on port 18000:
+```bash
+docker run -d -p 18000:8000 public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
+mvn test -Dintegration.dynamodb=true
+```
 
 ## Custom Instructions
 <!-- This section is for human and agent-maintained operational knowledge.

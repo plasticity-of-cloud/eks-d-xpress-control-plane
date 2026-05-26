@@ -1,82 +1,101 @@
 # Data Models
 
-## DynamoDB: eks-dx-clusters
+## TokenClaims (eks-dx-model)
 
-**Key schema:** `clusterName` (String, HASH)
+Shared record extracted from validated JWT tokens.
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `clusterName` | S | Cluster identifier (PK) |
-| `issuer` | S | OIDC issuer URL |
-| `jwks` | S | JWKS JSON (public keys for JWT validation) |
-| `createdAt` | S | ISO-8601 timestamp |
-| `updatedAt` | S | ISO-8601 timestamp |
-
----
-
-## DynamoDB: eks-dx-associations
-
-**Key schema:** `PK` (String, HASH) + `SK` (String, RANGE)
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `PK` | S | `CLUSTER#<clusterName>` |
-| `SK` | S | `<namespace>#<serviceAccount>` |
-| `associationId` | S | `assoc-<12-char UUID prefix>` |
-| `clusterName` | S | Cluster name (denormalized) |
-| `namespace` | S | Kubernetes namespace |
-| `serviceAccount` | S | Kubernetes service account name |
-| `roleArn` | S | IAM role ARN to assume |
-| `createdAt` | S | ISO-8601 timestamp |
-
-**Access patterns:**
-- Get role ARN for a pod: `GetItem(PK=CLUSTER#name, SK=ns#sa)` → O(1)
-- List all associations for a cluster: `Query(PK=CLUSTER#name)` → O(n)
-- List by namespace: `Query(PK=CLUSTER#name, SK begins_with ns#)` → O(n)
-- Describe by associationId: `Scan(PK=CLUSTER#name, filter associationId=id)` → O(n) full scan
-
----
-
-## Java Records / Classes
-
-### `TokenClaims` (lambda module — record)
-```
-namespace, serviceAccount, serviceAccountUid, podName, podUid, subject
-sessionTags() → Map<String,String>
+```java
+public record TokenClaims(
+    String subject,           // "system:serviceaccount:namespace:sa-name"
+    String namespace,         // Kubernetes namespace
+    String serviceAccount,    // Service account name
+    String podName,           // Pod name (from claims)
+    String podUid,            // Pod UID
+    String serviceAccountUid, // SA UID
+    Map<String, String> sessionTags  // Passed to STS AssumeRole
+) {}
 ```
 
-### `TokenValidationService.TokenClaims` (auth-proxy module — class)
-Same fields plus `expiration: Instant`. Separate class, not shared across modules.
+## DynamoDB Key Design
 
-### API DTOs (EksAuthResource inner classes)
+### Clusters Table
 ```
-AgentRequest       { token }
-AgentResponse      { credentials, assumedRoleUser, podIdentityAssociation, subject, audience }
-CredentialsDto     { accessKeyId, secretAccessKey, sessionToken, expiration (epoch seconds) }
-AssumedRoleUserDto { arn, assumeRoleId }
-AssociationDto     { associationArn, associationId }
-SubjectDto         { namespace, serviceAccount }
-```
-
-### `JwksTokenValidationService.CachedContext` (private record)
-```
-contextInfo: JWTAuthContextInfo
-loadedAt: Instant
-isExpired() → true if now > loadedAt + 300s
+┌─────────────────────────────────────────────┐
+│ PK: clusterName                             │
+├─────────────────────────────────────────────┤
+│ issuer: "https://oidc.eks-dx.example.com"   │
+│ jwks: "{\"keys\":[...]}"                    │
+│ createdAt: "2026-05-25T..."                 │
+└─────────────────────────────────────────────┘
 ```
 
----
+### Associations Table (Composite Key)
+```
+┌──────────────────────────────────────────────────────────┐
+│ PK: CLUSTER#my-cluster  │  SK: default#my-service-account│
+├──────────────────────────────────────────────────────────┤
+│ roleArn: "arn:aws:iam::123:role/eks-dx-pod-my-role"      │
+│ associationId: "uuid-..."                                │
+│ createdAt: "2026-05-25T..."                              │
+└──────────────────────────────────────────────────────────┘
+```
 
-## Session Tags (STS)
+**Access patterns**:
+- `GetItem(PK, SK)` → O(1) role ARN lookup during credential exchange
+- `Query(PK)` → all associations for a cluster
+- `Scan(filter: associationId=X)` → describe by ID (no GSI)
 
-Tags added to every `AssumeRole` call:
+### Tenants Table
+```
+┌─────────────────────────────────────────────┐
+│ PK: tenantId                                │
+├─────────────────────────────────────────────┤
+│ instanceId: "i-0abc123..."                  │
+│ state: "running|provisioning|stopped"       │
+│ phase: "EC2 instance launched"              │
+│ progress: 0-100                             │
+│ publicIp: "1.2.3.4"                         │
+│ sshKeySecretArn: "arn:aws:secretsmanager:." │
+│ updatedAt: "2026-05-25T..."                 │
+│ error: null | "error message"               │
+└─────────────────────────────────────────────┘
+```
 
-| Tag Key | Source |
-|---------|--------|
-| `eks-cluster-name` | Path parameter `clusterName` |
-| `kubernetes-namespace` | JWT claim / TokenReview |
-| `kubernetes-service-account` | JWT claim / TokenReview |
-| `kubernetes-pod-name` | JWT claim `kubernetes.io/pod/name` (nullable) |
-| `kubernetes-pod-uid` | JWT claim `kubernetes.io/pod/uid` (nullable) |
+## Tenant Instance State Machine
 
-Empty/null tag values are skipped.
+```mermaid
+stateDiagram-v2
+    [*] --> provisioning: POST /tenants
+    provisioning --> running: bootstrap complete
+    provisioning --> failed: error
+    running --> stopped: hibernate
+    stopped --> running: resume
+    running --> terminated: DELETE /tenants
+    stopped --> terminated: DELETE /tenants
+    failed --> terminated: DELETE /tenants
+```
+
+## IAM Role Structure (Per-Tenant)
+
+```
+eks-dx-tenant-{tenantId}-instance-role
+├── Managed Policies:
+│   ├── AmazonSSMManagedInstanceCore
+│   ├── AmazonEC2ContainerRegistryPullOnly
+│   ├── AmazonEKS_CNI_Policy
+│   ├── AmazonEBSCSIDriverEKSClusterScopedPolicy
+│   └── CloudWatchAgentServerPolicy
+└── Inline Policy (eks-dx-tenant-policy):
+    ├── SecretsAccess (tenant-scoped)
+    ├── EksDxApiInvoke (cluster-scoped)
+    ├── TenantStateUpdate (DynamoDB, tenant-scoped)
+    ├── SSMAndECRAndCloudWatch (*)
+    ├── EKSCNI (*)
+    ├── KarpenterRead (*)
+    ├── KarpenterWrite (cluster-tag-scoped)
+    ├── KarpenterDelete (cluster-tag-scoped)
+    ├── KarpenterPassRole (self)
+    ├── KarpenterSQS (queue-scoped)
+    ├── CloudProviderRead (*)
+    └── CloudProviderWriteTagged (cluster-tag-scoped)
+```

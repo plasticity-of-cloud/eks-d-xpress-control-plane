@@ -1,149 +1,106 @@
 # Interfaces
 
-## Lambda API (API Gateway REST v1)
+## REST APIs
 
-Base URL: `https://{api-id}.execute-api.{region}.amazonaws.com/prod` (or custom domain `https://eks-dx.codriverlabs.ai`)
+### Credential Exchange (credential-service)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/clusters/{name}/assets` | None (token in body) | Exchange pod token for AWS credentials |
 
-### Credential Exchange — No Auth (token validated by Lambda)
+### Management (mgmt-service)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/clusters` | IAM SigV4 | Register cluster (name, issuer, jwks) |
+| GET | `/clusters` | IAM SigV4 | List clusters |
+| GET | `/clusters/{name}` | IAM SigV4 | Describe cluster |
+| DELETE | `/clusters/{name}` | IAM SigV4 | Deregister cluster |
+| PUT | `/clusters/{name}/jwks` | IAM SigV4 | Refresh JWKS |
+| POST | `/clusters/{name}/pod-identity-associations` | IAM SigV4 | Create association |
+| GET | `/clusters/{name}/pod-identity-associations` | Bearer (optional) | List associations |
+| GET | `/clusters/{name}/pod-identity-associations/{id}` | Bearer (optional) | Describe association |
+| DELETE | `/clusters/{name}/pod-identity-associations/{id}` | IAM SigV4 | Delete association |
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/clusters/{name}/assets` | Exchange SA token for AWS credentials |
+### Tenant (tenant-service)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/tenants` | IAM SigV4 | Create tenant |
+| GET | `/tenants/{id}` | IAM SigV4 | Get tenant state |
+| DELETE | `/tenants/{id}` | IAM SigV4 | Deprovision tenant |
+| GET | `/tenants/{id}/stream` | IAM (Function URL) | SSE progress stream |
 
-**Request:**
-```json
-{ "token": "eyJ..." }
-```
-
-**Response 200:**
+### Tenant Create Request
 ```json
 {
-  "credentials": {
-    "accessKeyId": "ASIA...",
-    "secretAccessKey": "...",
-    "sessionToken": "...",
-    "expiration": 1234567890
-  },
-  "assumedRoleUser": { "arn": "arn:aws:iam::...", "assumeRoleId": "ns-sa" },
-  "podIdentityAssociation": { "associationArn": "...", "associationId": "assoc-..." },
-  "subject": { "namespace": "default", "serviceAccount": "my-sa" },
-  "audience": "pods.eks.amazonaws.com"
+  "tenantId": "string (required)",
+  "arch": "arm64 | x86_64 (default: arm64)",
+  "ec2PricingModel": "spot | ondemand (default: spot)",
+  "k8sVersion": "string (default: 1.35)",
+  "assignElasticIp": "boolean (default: false)"
 }
 ```
 
-### Cluster Management — IAM Auth (SigV4)
+## SSM Parameter Contract
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/clusters` | Register a cluster |
-| GET | `/clusters` | List all clusters |
-| GET | `/clusters/{name}` | Describe a cluster |
-| DELETE | `/clusters/{name}` | Deregister a cluster |
-| PUT | `/clusters/{name}/jwks` | Refresh JWKS for a cluster |
-
-**Register cluster request:**
-```json
-{ "name": "my-cluster", "issuer": "https://...", "jwks": "{\"keys\":[...]}" }
-```
-
-### Association Management — Mixed Auth
-
-`POST` and `DELETE` require IAM auth. `GET` endpoints accept either IAM or a Bearer SA token (validated by `WebhookAuthFilter` for the webhook SA).
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/clusters/{name}/pod-identity-associations` | Create association |
-| GET | `/clusters/{name}/pod-identity-associations` | List associations (query: `namespace`, `serviceAccount`) |
-| GET | `/clusters/{name}/pod-identity-associations/{id}` | Describe association |
-| DELETE | `/clusters/{name}/pod-identity-associations/{id}` | Delete association |
-
-**Create association request:**
-```json
-{ "namespace": "default", "serviceAccount": "my-sa", "roleArn": "arn:aws:iam::123:role/eks-dx-pod-my-role" }
-```
-
-### Error Response Format
-
-All errors follow:
-```json
-{ "__type": "ErrorCode", "message": "Human-readable message" }
-```
-
-Common codes: `InvalidParameterException` (400), `AccessDeniedException` (403), `NotFoundException` (404), `ConflictException` (409), `InternalServerException` (500).
-
----
-
-## In-Cluster Proxy API (eks-dx-auth-proxy)
-
-Exposes the same credential exchange endpoint as the Lambda, plus a compatibility alias:
-
-| Method | Path | Notes |
-|--------|------|-------|
-| POST | `/clusters/{name}/assets` | Primary endpoint (used by Pod Identity Agent) |
-| POST | `/clusters/{name}/assume-role-for-pod-identity` | Alias |
-| GET | `/health/live` | Liveness probe |
-| GET | `/health/ready` | Readiness probe |
-| GET | `/metrics` | Prometheus metrics (Micrometer) |
-
----
-
-## Webhook Endpoint (eks-dx-pod-identity-webhook)
-
-| Method | Path | Notes |
-|--------|------|-------|
-| POST | `/mutate` | Kubernetes MutatingAdmissionWebhook handler |
-
-Receives `AdmissionReview` (Kubernetes API), returns JSON patch.
-
----
-
-## CLI Interface (eks-dx)
+Interface between infrastructure (Terraform/CDK) and Lambda runtime.
 
 ```
-eks-dx configure [--endpoint URL] [--region REGION]
-
-eks-dx cluster create --name NAME [--issuer URL] [--jwks JSON]
-eks-dx cluster describe NAME
-eks-dx cluster list
-eks-dx cluster update NAME [--refresh-jwks]
-eks-dx cluster delete NAME
-
-eks-dx association create --cluster NAME --namespace NS --service-account SA --role-arn ARN
-eks-dx association describe --cluster NAME --id ID
-eks-dx association list --cluster NAME [--namespace NS] [--service-account SA]
-eks-dx association delete --cluster NAME --id ID
+/eks-dx/
+├── ami/{arch}/{k8s-version}              → AMI ID (region-specific)
+├── launch-template/{arch}/{pricing}      → Launch Template ID
+└── network/
+    ├── vpc-id
+    ├── public-subnet-ids                 → StringList
+    ├── private-subnet-ids                → StringList
+    └── security-group-id
 ```
 
-`create cluster` auto-discovers issuer and JWKS from the kube-apiserver OIDC endpoints if not provided explicitly.
+Discovery: `aws ssm get-parameters-by-path --path /eks-dx/launch-template/arm64`
 
----
+## DynamoDB Tables
 
-## Configuration Interfaces
+### eks-dx-clusters
+| Key | Type | Description |
+|-----|------|-------------|
+| `clusterName` (PK) | String | Cluster identifier |
 
-### eks-dx-lambda (application.properties / env vars)
+Attributes: `issuer`, `jwks`, `createdAt`
 
-| Property | Env Var | Default |
-|----------|---------|---------|
-| `eks-dx.clusters-table` | `EKS_DX_CLUSTERS_TABLE` | `eks-dx-clusters` |
-| `eks-dx.associations-table` | `EKS_DX_ASSOCIATIONS_TABLE` | `eks-dx-associations` |
-| `aws.sts.session-duration` | — | `PT1H` |
+### eks-dx-associations
+| Key | Type | Description |
+|-----|------|-------------|
+| `PK` | String | `CLUSTER#<clusterName>` |
+| `SK` | String | `<namespace>#<serviceAccount>` |
 
-### eks-dx-auth-proxy (application.properties / env vars)
+Attributes: `roleArn`, `associationId`, `createdAt`
 
-| Property | Env Var | Default |
-|----------|---------|---------|
-| `eks-dx.endpoint` | `EKS_DX_ENDPOINT` | `https://eks-dx.codriverlabs.ai` |
+### eks-dx-tenants
+| Key | Type | Description |
+|-----|------|-------------|
+| `tenantId` (PK) | String | Tenant identifier |
 
-### eks-dx-pod-identity-webhook (application.properties)
+Attributes: `instanceId`, `state`, `phase`, `progress`, `publicIp`, `sshKeySecretArn`, `updatedAt`, `error`
 
-| Property | Description |
+## Environment Variables
+
+### credential-service
+| Variable | Description |
 |----------|-------------|
-| `eks-dx.endpoint` | Lambda API Gateway URL |
-| `eks.cluster-name` | Name of the cluster this webhook serves |
+| `EKS_DX_CLUSTERS_TABLE` | DynamoDB clusters table name |
+| `EKS_DX_ASSOCIATIONS_TABLE` | DynamoDB associations table name |
 
-### CLI (~/.eks-dx/config)
+### tenant-service
+| Variable | Description |
+|----------|-------------|
+| `EKS_DX_TENANTS_TABLE` | DynamoDB tenants table name |
+| `EKS_DX_CLUSTERS_TABLE` | DynamoDB clusters table name |
+| `EKS_DX_LT_ARM64_ONDEMAND` | Launch template ID |
+| `EKS_DX_LT_ARM64_SPOT` | Launch template ID |
+| `EKS_DX_LT_X86_ONDEMAND` | Launch template ID |
+| `EKS_DX_LT_X86_SPOT` | Launch template ID |
+| `EKS_DX_VPC_ID` | VPC for tenant resources |
+| `EKS_DX_ENDPOINT` | API Gateway URL |
 
-| Key | Env Var | Default |
-|-----|---------|---------|
-| `endpoint` | `EKS_DX_ENDPOINT` | `https://eks-dx.codriverlabs.ai` |
-| `region` | `AWS_REGION` | `us-east-1` |
+### auth-proxy
+| Variable | Description |
+|----------|-------------|
+| `EKS_DX_ENDPOINT` | Lambda API Gateway URL |
