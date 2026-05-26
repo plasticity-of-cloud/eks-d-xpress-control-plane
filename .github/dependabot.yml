@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      quarkus:
+        patterns: ["io.quarkus*"]
+      aws-sdk:
+        patterns: ["software.amazon.awssdk*"]
+      aws-cdk:
+        patterns: ["software.amazon.awscdk*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
