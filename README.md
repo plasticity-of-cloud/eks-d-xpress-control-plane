@@ -1,6 +1,6 @@
 # EKS-DX Control Plane
 
-A serverless service that brings EKS Pod Identity (`AssumeRoleForPodIdentity`) to k3s, microk8s, and EKS-D clusters via a centralized Lambda backend with DynamoDB storage.
+A serverless service that brings EKS Pod Identity to non-EKS Kubernetes clusters (EKS-D via kubeadm). Three Lambda functions handle credential exchange, cluster management, and tenant provisioning, backed by DynamoDB and deployed via CDK.
 
 ## How It Works
 
@@ -9,7 +9,7 @@ Pod → Pod Identity Agent → eks-dx-auth-proxy (in-cluster)
   │
   ├─ 1. TokenReview (fast-fail — K8s API validates JWT signature + audience)
   │
-  └─ 2. Forward to eks-dx-lambda (via API Gateway)
+  └─ 2. Forward to credential-service Lambda (via API Gateway)
        │
        ├─ 3. JWKS validation (jose4j, DynamoDB-cached JWKS)
        ├─ 4. Association lookup (DynamoDB: CLUSTER#name / namespace#sa → roleArn)
@@ -17,134 +17,146 @@ Pod → Pod Identity Agent → eks-dx-auth-proxy (in-cluster)
        └─ 6. Return temporary AWS credentials
 ```
 
-Clusters and pod identity associations are registered via the `eks-dx` CLI, which stores them in DynamoDB through the Lambda API.
+Clusters and pod identity associations are registered via the `eks-dx` CLI. Tenant infrastructure (EC2 instances running EKS-D) is provisioned on demand.
 
 ## Quick Start
 
 ### Prerequisites
-- Java 21+
-- Maven 3.8+
-- AWS credentials with `sts:AssumeRole` and DynamoDB access
-- Kubernetes cluster accessible via `~/.kube/config`
+- Java 25
+- Maven 3.9+
+- Docker (for native builds)
+- AWS credentials with appropriate permissions
 
-### Build and Run
+### Build
 
 ```bash
-# Lambda (dev mode)
-mvn -pl eks-dx-lambda compile quarkus:dev
+./build-local.sh              # JVM mode (fast)
+./build-local.sh --native     # GraalVM native (tenant-service + CLI)
+```
 
-# Proxy (dev mode)
-mvn -pl eks-dx-auth-proxy compile quarkus:dev
+### Deploy
 
-# CLI (native binary)
-mvn -pl eks-dx-cli package -Pnative
+```bash
+cd infra && cdk deploy EksDxStack
+```
 
-# Integration tests (requires DynamoDB Local on port 18000)
+Requires SSM parameters written by the infrastructure stack first (see `docs/SSM_PARAMETER_CONTRACT.md`).
+
+### Integration Tests
+
+```bash
 docker run -d -p 18000:8000 public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
 mvn test -Dintegration.dynamodb=true
 ```
 
-## API
+## Architecture
 
-### Credential Exchange (called by Pod Identity Agent)
-```bash
-curl -X POST http://localhost:8080/clusters/my-cluster/assets \
-  -H "Content-Type: application/json" \
-  -d '{"token": "eyJ..."}'
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ API Gateway (IAM auth on management, open on credential exchange)│
+├──────────────┬──────────────────┬───────────────────────────────┤
+│ credential-  │ mgmt-service     │ tenant-service                │
+│ service      │ (JVM, 256MB)     │ (native arm64, 128MB, 15min)  │
+│ (SnapStart,  │                  │                               │
+│  512MB)      │ Cluster CRUD     │ Composable provisioning:      │
+│              │ Association CRUD │ • TenantNetworkService         │
+│ Token → STS  │ JWKS management  │ • TenantIamService            │
+│ AssumeRole   │                  │ • TenantEc2Service            │
+│              │                  │ • TenantDlmService            │
+├──────────────┴──────────────────┴───────────────────────────────┤
+│ DynamoDB: eks-dx-clusters | eks-dx-associations | eks-dx-tenants │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Cluster Management (IAM-authenticated)
+## API
+
+### Credential Exchange
 ```bash
-# Register a cluster (CLI does this automatically)
-POST /clusters  {"name", "issuer", "jwks"}
-GET  /clusters
-GET  /clusters/{name}
+POST /clusters/{name}/assets   # Token in body, returns AWS credentials
+```
+
+### Cluster Management (IAM SigV4)
+```bash
+POST   /clusters
+GET    /clusters
+GET    /clusters/{name}
 DELETE /clusters/{name}
 ```
 
-### Association Management (IAM-authenticated)
+### Association Management (IAM SigV4)
 ```bash
 POST   /clusters/{name}/pod-identity-associations
 GET    /clusters/{name}/pod-identity-associations
-GET    /clusters/{name}/pod-identity-associations/{id}
 DELETE /clusters/{name}/pod-identity-associations/{id}
 ```
 
-### Health & Metrics
+### Tenant Provisioning (IAM SigV4)
 ```bash
-curl http://localhost:8080/health/live
-curl http://localhost:8080/health/ready
-curl http://localhost:8080/metrics
-```
-
-## Configuration
-
-### eks-dx-lambda (application.properties)
-
-| Property | Default | Description |
-|----------|---------|-------------|
-| `eks-dx.clusters-table` | `eks-dx-clusters` | DynamoDB table for cluster registrations |
-| `eks-dx.associations-table` | `eks-dx-associations` | DynamoDB table for pod identity associations |
-| `aws.sts.session-duration` | `PT1H` | STS session duration |
-
-### eks-dx-auth-proxy (application.properties)
-
-| Property | Default | Description |
-|----------|---------|-------------|
-| `eks-dx.endpoint` | `https://eks-dx.codriverlabs.ai` | EKS-DX Lambda API Gateway endpoint |
-
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `EKS_DX_ENDPOINT` | Lambda API Gateway URL (for eks-dx-auth-proxy) |
-| `EKS_DX_CLUSTERS_TABLE` | DynamoDB clusters table name override |
-| `EKS_DX_ASSOCIATIONS_TABLE` | DynamoDB associations table name override |
-| `AWS_REGION` | AWS region (default: `us-east-1`) |
-
-## CI/CD Integration
-
-```bash
-export AWS_CONTAINER_CREDENTIALS_FULL_URI=http://eks-dx-auth-proxy:8080/
-export AWS_CONTAINER_AUTHORIZATION_TOKEN="Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
-
-# AWS SDK now uses the proxy automatically
-aws s3 ls
+POST   /tenants                # Create tenant (arch, ec2PricingModel, k8sVersion, assignElasticIp)
+GET    /tenants/{id}           # Get state
+DELETE /tenants/{id}           # Deprovision
+GET    /tenants/{id}/stream    # SSE progress (Function URL)
 ```
 
 ## Module Structure
 
 ```
-├── eks-dx-lambda/           # Credential exchange + cluster/association management (Lambda)
+├── eks-dx-credential-service/   # Lambda: credential exchange (hot path)
+├── eks-dx-mgmt-service/         # Lambda: cluster/association CRUD
+├── eks-dx-tenant-service/       # Lambda: tenant provisioning + lifecycle
 │   └── service/
-│       ├── JwksTokenValidationService  # JWT validation via DynamoDB-cached JWKS
-│       ├── DynamoDbClusterService      # Cluster CRUD (DynamoDB)
-│       ├── DynamoDbAssociationService  # Association CRUD (DynamoDB)
-│       └── AwsCredentialService        # STS AssumeRole
-├── eks-dx-auth-proxy/          # In-cluster proxy (TokenReview + Lambda forwarding)
-│   └── service/
-│       ├── TokenValidationService      # K8s TokenReview (fast-fail)
-│       └── LambdaForwardingService     # Forward to Lambda via API Gateway
-├── eks-dx-cli/              # Native CLI for cluster + association management
-├── eks-dx-pod-identity-webhook/ # K8s admission webhook (injects env vars + token volume)
-├── infra/                   # CDK infrastructure
-└── sam.yaml                 # SAM template (Lambda + DynamoDB + API Gateway)
+│       ├── TenantProvisioningService   # Orchestrator
+│       ├── TenantNetworkService        # Subnets, SG, route tables
+│       ├── TenantIamService            # Role, policies, instance profile
+│       ├── TenantEc2Service            # Instance launch, user data, EIP
+│       └── TenantDlmService            # Etcd backup policy
+├── eks-dx-auth-proxy/           # In-cluster proxy (TokenReview + forwarding)
+├── eks-dx-pod-identity-webhook/ # Admission webhook (env + volume injection)
+├── eks-dx-cli/                  # Native CLI (output: eks-dx binary)
+├── eks-dx-model/                # Shared TokenClaims record
+└── infra/                       # CDK stack (Java, primary deployment path)
 ```
 
-## Deployment
+## Configuration
 
-- **SAM**: `sam deploy --guided`
-- **CDK**: `cd infra && cdk deploy`
+### SSM Parameter Contract
 
-Both deploy: Lambda (Java 21, SnapStart), two DynamoDB tables (PAY_PER_REQUEST), API Gateway (IAM auth on management endpoints), and CloudWatch alarms.
+Infrastructure writes, Lambda reads at runtime:
 
-## Security Notes
+```
+/eks-dx/launch-template/{arch}/{spot|ondemand}   # Launch template IDs
+/eks-dx/ami/{arch}/{k8s-version}                 # AMI IDs (region-specific)
+/eks-dx/network/vpc-id                           # VPC
+/eks-dx/network/private-subnet-ids               # Subnets
+/eks-dx/network/security-group-id                # Security group
+```
 
-- In-cluster proxy validates tokens via Kubernetes TokenReview (fast-fail)
-- Lambda validates JWT signatures independently using DynamoDB-cached JWKS
-- Management endpoints require IAM (SigV4) authentication
-- Requires `sts:AssumeRole` and DynamoDB table access
-- Deploy the proxy in trusted networks only
+See `docs/SSM_PARAMETER_CONTRACT.md` for full details.
+
+### Environment Variables
+
+| Variable | Service | Description |
+|----------|---------|-------------|
+| `EKS_DX_CLUSTERS_TABLE` | credential, mgmt | DynamoDB clusters table |
+| `EKS_DX_ASSOCIATIONS_TABLE` | credential, mgmt | DynamoDB associations table |
+| `EKS_DX_TENANTS_TABLE` | tenant | DynamoDB tenants table |
+| `EKS_DX_LT_ARM64_ONDEMAND` | tenant | Launch template ID |
+| `EKS_DX_LT_ARM64_SPOT` | tenant | Launch template ID |
+| `EKS_DX_LT_X86_ONDEMAND` | tenant | Launch template ID |
+| `EKS_DX_LT_X86_SPOT` | tenant | Launch template ID |
+| `EKS_DX_VPC_ID` | tenant | VPC for tenant resources |
+| `EKS_DX_ENDPOINT` | auth-proxy, tenant | API Gateway URL |
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| `docs/SSM_PARAMETER_CONTRACT.md` | Interface between infra and Lambda |
+| `docs/TENANT_PROVISIONING_MIGRATION.md` | Migration from Terraform to Lambda |
+| `docs/TENANT_HIBERNATE_RESUME.md` | Instance lifecycle design |
+| `docs/KUBE_API_PROXY_ARCHITECTURE.md` | Kube-API proxy via Lambda/CloudFront |
+| `docs/UPGRADE_PLAN_Q3.33_JDK25.md` | Quarkus/Java upgrade plan |
+| `.agents/summary/index.md` | AI assistant knowledge base entry point |
 
 ## License
 
