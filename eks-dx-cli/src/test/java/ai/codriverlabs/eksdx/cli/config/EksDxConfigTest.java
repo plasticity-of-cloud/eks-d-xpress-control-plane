@@ -27,7 +27,7 @@ class EksDxConfigTest {
     @Test
     void configFile_returnsPathInHomeDir() {
         Path path = EksDxConfig.configFile();
-        assertTrue(path.toString().contains(".eks-dx"));
+        assertTrue(path.toString().contains(".eks-d-xpress"));
         assertTrue(path.toString().endsWith("config"));
     }
 }
