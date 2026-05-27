@@ -366,9 +366,8 @@ public class EksDxStack extends Stack {
 
         CfnOutput.Builder.create(this, "CustomEndpoint")
             .description("Custom domain endpoint")
-            .value(Fn.conditionIf(hasCustomDomain.getLogicalId(),
-                "https://" + domainNameParam.getValueAsString(),
-                Aws.NO_VALUE).toString())
+            .value("https://" + domainNameParam.getValueAsString())
+            .condition(hasCustomDomain)
             .build();
 
         CfnOutput.Builder.create(this, "TenantStreamFunctionUrl")
