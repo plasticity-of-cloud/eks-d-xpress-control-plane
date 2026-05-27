@@ -233,7 +233,8 @@ public class EksDxStack extends Stack {
                 "EKS_DX_LT_ARM64_SPOT", ltArm64Spot,
                 "EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand,
                 "EKS_DX_LT_X86_SPOT", ltX86Spot,
-                "EKS_DX_VPC_ID", vpcId))
+                "EKS_DX_VPC_ID", vpcId,
+                "EKS_DX_ENDPOINT", api.getUrl()))
             .build();
 
         // Function URL for SSE /stream endpoint (not via API Gateway)

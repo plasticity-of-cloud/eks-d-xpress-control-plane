@@ -51,3 +51,9 @@ cdk deploy EksDxStack \
 
 echo ""
 echo "==> Deploy complete"
+ENDPOINT=$(cd infra && cdk --no-color outputs EksDxStack 2>/dev/null | grep "^EksDxStack.Endpoint" | awk '{print $NF}' || true)
+if [ -n "$ENDPOINT" ]; then
+  echo ""
+  echo "    API endpoint: $ENDPOINT"
+  echo "    Configure CLI: eks-dx configure --endpoint $ENDPOINT"
+fi
