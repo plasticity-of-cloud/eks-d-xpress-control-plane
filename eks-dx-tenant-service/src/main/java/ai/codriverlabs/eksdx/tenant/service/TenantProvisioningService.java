@@ -118,7 +118,6 @@ public class TenantProvisioningService {
         String region = System.getenv().getOrDefault("AWS_REGION", "us-east-1");
         String accountId = sts.getCallerIdentity(GetCallerIdentityRequest.builder().build()).account();
         String clusterName = "eks-d-xpress-" + tenantId;
-        String eksDxEndpoint = System.getenv().getOrDefault("EKS_DX_ENDPOINT", "https://eks-d-xpress.codriverlabs.ai");
 
         // 1. Network isolation (per-tenant subnets + security group)
         String az = availabilityZone.isEmpty() ? region + "a" : availabilityZone;
@@ -152,7 +151,7 @@ public class TenantProvisioningService {
             tenantId, clusterName, launchTemplateId,
             network.publicSubnetId(), network.securityGroupId(),
             iamResult.instanceProfileName(), "eks-d-xpress-tenant-" + tenantId,
-            region, k8sVersion, eksDxEndpoint, assignElasticIp, diskSizeGb);
+            region, k8sVersion, assignElasticIp, diskSizeGb);
 
         // 7. Write initial DynamoDB state
         String now = Instant.now().toString();

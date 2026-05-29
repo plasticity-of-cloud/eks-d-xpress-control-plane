@@ -13,6 +13,22 @@ SKIP_TESTS=false
 
 for arg in "$@"; do
   case $arg in
+    --help)
+      echo "Usage: ./build-local.sh [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --native       Build GraalVM native binaries for tenant-service and CLI"
+      echo "                 (requires GraalVM JDK or Docker for Mandrel container)"
+      echo "  --skip-tests   Skip unit tests during build"
+      echo "  --help         Show this help message"
+      echo ""
+      echo "Examples:"
+      echo "  ./build-local.sh                    # JVM mode (fast)"
+      echo "  ./build-local.sh --native           # GraalVM native"
+      echo "  ./build-local.sh --skip-tests       # skip unit tests"
+      echo "  ./build-local.sh --native --skip-tests"
+      exit 0
+      ;;
     --native)     NATIVE=true ;;
     --skip-tests) SKIP_TESTS=true ;;
   esac

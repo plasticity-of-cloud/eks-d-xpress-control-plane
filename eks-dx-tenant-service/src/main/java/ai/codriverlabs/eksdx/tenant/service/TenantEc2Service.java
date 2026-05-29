@@ -32,10 +32,10 @@ public class TenantEc2Service {
     public Ec2Result launchInstance(String tenantId, String clusterName, String launchTemplateId,
                                    String subnetId, String securityGroupId, String instanceProfileName,
                                    String keyName, String region, String k8sVersion,
-                                   String eksDxEndpoint, boolean assignElasticIp, int diskSizeGb) {
+                                   boolean assignElasticIp, int diskSizeGb) {
 
         String userData = Base64.getEncoder().encodeToString(userDataScript(
-            tenantId, clusterName, eksDxEndpoint, region, k8sVersion).getBytes());
+            tenantId, clusterName, region, k8sVersion).getBytes());
 
         RunInstancesResponse runResp = ec2.runInstances(RunInstancesRequest.builder()
             .launchTemplate(LaunchTemplateSpecification.builder()
@@ -86,19 +86,24 @@ public class TenantEc2Service {
         return new Ec2Result(instanceId, elasticIp);
     }
 
-    private String userDataScript(String tenantId, String clusterName, String eksDxEndpoint,
+    private String userDataScript(String tenantId, String clusterName,
                                   String region, String k8sVersion) {
         return """
             #!/bin/bash
             mkdir -p /opt/eks-d
+            EKS_DX_ENDPOINT=$(aws ssm get-parameter \
+              --name /eks-d-xpress/control-plane/api/endpoint \
+              --region %s \
+              --query Parameter.Value \
+              --output text)
             cat > /opt/eks-d/cluster.env <<CONF
             TENANT_ID="%s"
             CLUSTER_NAME="%s"
-            EKS_DX_ENDPOINT="%s"
-            EKS_DX_API_URL="%s/clusters/%s/assets"
+            EKS_DX_ENDPOINT="${EKS_DX_ENDPOINT}"
+            EKS_DX_API_URL="${EKS_DX_ENDPOINT}/clusters/%s/assets"
             REGION="%s"
             K8S_VERSION="%s"
             CONF
-            """.formatted(tenantId, clusterName, eksDxEndpoint, eksDxEndpoint, clusterName, region, k8sVersion);
+            """.formatted(region, tenantId, clusterName, clusterName, region, k8sVersion);
     }
 }

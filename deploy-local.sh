@@ -17,6 +17,24 @@ CDK_CONTEXT_ARGS=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --help)
+      echo "Usage: ./deploy-local.sh [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --skip-build         Skip Maven build and reuse existing Lambda zips"
+      echo "  --native             Build GraalVM native tenant-service before deploying"
+      echo "  --profile <name>     AWS CLI profile to use for CDK deployment"
+      echo "  --context key=val    Extra CDK context variable (repeatable)"
+      echo "  --help               Show this help message"
+      echo ""
+      echo "Examples:"
+      echo "  ./deploy-local.sh                          # build JVM + deploy"
+      echo "  ./deploy-local.sh --skip-build             # deploy only (reuse existing zips)"
+      echo "  ./deploy-local.sh --native                 # native build + deploy"
+      echo "  ./deploy-local.sh --profile my-profile     # use specific AWS profile"
+      echo "  ./deploy-local.sh --context env=staging -c region=us-west-2"
+      exit 0
+      ;;
     --skip-build) SKIP_BUILD=true ;;
     --native)     NATIVE=true ;;
     --profile)    AWS_PROFILE_ARG="--profile $2"; shift ;;
@@ -51,9 +69,3 @@ cdk deploy EksDxStack \
 
 echo ""
 echo "==> Deploy complete"
-ENDPOINT=$(cd infra && cdk --no-color outputs EksDxStack 2>/dev/null | grep "^EksDxStack.Endpoint" | awk '{print $NF}' || true)
-if [ -n "$ENDPOINT" ]; then
-  echo ""
-  echo "    API endpoint: $ENDPOINT"
-  echo "    Configure CLI: eks-dx configure --endpoint $ENDPOINT"
-fi
