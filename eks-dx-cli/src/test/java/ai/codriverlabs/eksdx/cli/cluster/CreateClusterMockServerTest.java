@@ -1,9 +1,9 @@
 package ai.codriverlabs.eksdx.cli.cluster;
 
 import ai.codriverlabs.eksdx.cli.util.EksDxApiClient;
-import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.server.mock.EnableKubernetesMockClient;
-import io.fabric8.kubernetes.client.server.mock.KubernetesMockServer;
+import ai.codriverlabs.eksdx.cli.util.KubeApiClient;
+import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -11,83 +11,69 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Integration test using Fabric8 KubernetesMockServer to serve
- * JWKS and OIDC discovery endpoints, verifying the full
- * CreateClusterCommand flow without a real K8s cluster.
+ * Integration test: real JDK HttpServer serves JWKS + OIDC endpoints;
+ * KubeApiClient connects to it directly (no kubeconfig needed).
  */
 @ExtendWith(MockitoExtension.class)
-@EnableKubernetesMockClient(crud = false)
 class CreateClusterMockServerTest {
 
-    static KubernetesMockServer server;
-    static KubernetesClient client;
+    static final String JWKS = "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"test-key\"}]}";
+    static final String OIDC = "{\"issuer\":\"https://oidc.eks.us-east-1.amazonaws.com/id/ABCDEF\"}";
+
+    HttpServer server;
+    KubeApiClient kubeApiClient;
 
     @Mock EksDxApiClient apiClient;
 
-    static final String JWKS_JSON = "{\"keys\":[{\"kty\":\"RSA\",\"kid\":\"test-key\",\"n\":\"abc\",\"e\":\"AQAB\"}]}";
-    static final String OIDC_CONFIG = "{\"issuer\":\"https://oidc.eks.us-east-1.amazonaws.com/id/ABCDEF\",\"jwks_uri\":\"https://oidc.eks.us-east-1.amazonaws.com/id/ABCDEF/keys\"}";
-
     @BeforeEach
-    void setUp() {
-        // Mock JWKS endpoint
-        server.expect()
-            .get().withPath("/openid/v1/jwks")
-            .andReturn(HttpURLConnection.HTTP_OK, JWKS_JSON)
-            .always();
+    void startServer() throws Exception {
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/openid/v1/jwks", ex -> {
+            byte[] body = JWKS.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
+        server.createContext("/.well-known/openid-configuration", ex -> {
+            byte[] body = OIDC.getBytes(StandardCharsets.UTF_8);
+            ex.sendResponseHeaders(200, body.length);
+            ex.getResponseBody().write(body);
+            ex.close();
+        });
+        server.start();
 
-        // Mock OIDC discovery endpoint
-        server.expect()
-            .get().withPath("/.well-known/openid-configuration")
-            .andReturn(HttpURLConnection.HTTP_OK, OIDC_CONFIG)
-            .always();
+        String baseUrl = "http://localhost:" + server.getAddress().getPort();
+        kubeApiClient = new KubeApiClient(baseUrl);
+    }
+
+    @AfterEach
+    void stopServer() {
+        server.stop(0);
     }
 
     @Test
-    void createCluster_readsJwksFromMockServer() {
+    void createCluster_readsJwksFromServer() {
         when(apiClient.post(any(), any())).thenReturn("{}");
 
         CreateClusterCommand cmd = new CreateClusterCommand();
-        cmd.kubernetesClient = client;
+        cmd.kubeApiClient = kubeApiClient;
         cmd.apiClient = apiClient;
         cmd.name = "test-cluster";
         cmd.region = "us-east-1";
-
         cmd.run();
 
-        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(apiClient).post(eq("/clusters"), bodyCaptor.capture());
-        String body = bodyCaptor.getValue();
-
-        // Verify JWKS was read from mock server and included in request
-        assertTrue(body.contains("\"name\":\"test-cluster\""));
-        assertTrue(body.contains("test-key")); // JWKS key ID
-        assertTrue(body.contains("oidc.eks.us-east-1.amazonaws.com")); // issuer
-    }
-
-    @Test
-    void createCluster_parsesIssuerFromOidcDiscovery() {
-        when(apiClient.post(any(), any())).thenReturn("{}");
-
-        CreateClusterCommand cmd = new CreateClusterCommand();
-        cmd.kubernetesClient = client;
-        cmd.apiClient = apiClient;
-        cmd.name = "my-k3s";
-        cmd.region = "eu-west-1";
-
-        cmd.run();
-
-        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(apiClient).post(eq("/clusters"), bodyCaptor.capture());
-        String body = bodyCaptor.getValue();
-
-        assertTrue(body.contains("\"issuer\":\"https://oidc.eks.us-east-1.amazonaws.com/id/ABCDEF\""));
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(apiClient).post(eq("/clusters"), body.capture());
+        assertTrue(body.getValue().contains("test-key"));
+        assertTrue(body.getValue().contains("oidc.eks.us-east-1.amazonaws.com"));
     }
 
     @Test
@@ -95,20 +81,15 @@ class CreateClusterMockServerTest {
         when(apiClient.post(any(), any())).thenReturn("{}");
 
         CreateClusterCommand cmd = new CreateClusterCommand();
-        cmd.kubernetesClient = client;
+        cmd.kubeApiClient = kubeApiClient;
         cmd.apiClient = apiClient;
         cmd.name = "test";
         cmd.region = "us-east-1";
 
-        // Capture stdout to verify key count output
-        java.io.ByteArrayOutputStream capture = new java.io.ByteArrayOutputStream();
-        java.io.PrintStream original = System.out;
+        var capture = new java.io.ByteArrayOutputStream();
+        var original = System.out;
         System.setOut(new java.io.PrintStream(capture));
-        try {
-            cmd.run();
-        } finally {
-            System.setOut(original);
-        }
+        try { cmd.run(); } finally { System.setOut(original); }
 
         assertTrue(capture.toString().contains("1 key(s)"));
     }

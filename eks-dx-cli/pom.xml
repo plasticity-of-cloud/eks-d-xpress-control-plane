@@ -49,20 +49,14 @@
       <artifactId>quarkus-picocli</artifactId>
     </dependency>
 
-    <!-- Fabric8 Kubernetes Client (for JWKS + OIDC introspection) -->
-    <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-kubernetes-client</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>io.fabric8</groupId>
-      <artifactId>kubernetes-client</artifactId>
-    </dependency>
-
-    <!-- JSON parsing -->
+    <!-- JSON + YAML parsing (YAML needed for kubeconfig reading) -->
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-jackson</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.dataformat</groupId>
+      <artifactId>jackson-dataformat-yaml</artifactId>
     </dependency>
 
     <!-- AWS SDK: credentials, SigV4 signing, SSM -->
@@ -96,11 +90,6 @@
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-junit-mockito</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>io.fabric8</groupId>
-      <artifactId>kubernetes-server-mock</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

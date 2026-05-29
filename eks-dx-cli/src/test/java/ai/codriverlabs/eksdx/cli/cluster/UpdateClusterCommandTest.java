@@ -1,8 +1,7 @@
 package ai.codriverlabs.eksdx.cli.cluster;
 
 import ai.codriverlabs.eksdx.cli.util.EksDxApiClient;
-import io.fabric8.kubernetes.client.KubernetesClient;
-import org.junit.jupiter.api.BeforeEach;
+import ai.codriverlabs.eksdx.cli.util.KubeApiClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -16,42 +15,27 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class UpdateClusterCommandTest {
 
-    @Mock KubernetesClient kubernetesClient;
+    @Mock KubeApiClient kubeApiClient;
     @Mock EksDxApiClient apiClient;
 
-    UpdateClusterCommand cmd;
-
-    @BeforeEach
-    void setUp() {
-        cmd = new UpdateClusterCommand();
-        cmd.kubernetesClient = kubernetesClient;
+    UpdateClusterCommand cmd() {
+        UpdateClusterCommand cmd = new UpdateClusterCommand();
+        cmd.kubeApiClient = kubeApiClient;
         cmd.apiClient = apiClient;
         cmd.name = "test-cluster";
+        cmd.refreshJwks = true;
+        return cmd;
     }
 
     @Test
     void run_refreshesJwks_whenFlagSet() {
-        cmd.refreshJwks = true;
-        when(kubernetesClient.raw("/openid/v1/jwks"))
-            .thenReturn("{\"keys\":[{\"kty\":\"RSA\"}]}");
+        when(kubeApiClient.get("/openid/v1/jwks")).thenReturn("{\"keys\":[{\"kty\":\"RSA\"}]}");
         when(apiClient.put(any(), any())).thenReturn("{}");
 
-        cmd.run();
+        cmd().run();
 
-        verify(kubernetesClient).raw("/openid/v1/jwks");
-        ArgumentCaptor<String> bodyCaptor = ArgumentCaptor.forClass(String.class);
-        verify(apiClient).put(eq("/clusters/test-cluster/jwks"), bodyCaptor.capture());
-        assertTrue(bodyCaptor.getValue().contains("keys"));
-    }
-
-    @Test
-    void run_callsCorrectEndpoint() {
-        cmd.refreshJwks = true;
-        when(kubernetesClient.raw("/openid/v1/jwks")).thenReturn("{\"keys\":[]}");
-        when(apiClient.put(any(), any())).thenReturn("{}");
-
-        cmd.run();
-
-        verify(apiClient).put(eq("/clusters/test-cluster/jwks"), any());
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(apiClient).put(eq("/clusters/test-cluster/jwks"), body.capture());
+        assertTrue(body.getValue().contains("keys"));
     }
 }

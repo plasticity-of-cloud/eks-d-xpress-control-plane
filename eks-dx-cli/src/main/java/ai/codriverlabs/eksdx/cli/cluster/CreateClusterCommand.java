@@ -1,10 +1,10 @@
 package ai.codriverlabs.eksdx.cli.cluster;
 
 import ai.codriverlabs.eksdx.cli.util.EksDxApiClient;
+import ai.codriverlabs.eksdx.cli.util.KubeApiClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import io.fabric8.kubernetes.client.KubernetesClient;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -12,10 +12,12 @@ import picocli.CommandLine.Option;
 @Command(name = "cluster", description = "Register a cluster with EKS-DX")
 public class CreateClusterCommand implements Runnable {
 
-    @Inject KubernetesClient kubernetesClient;
     @Inject EksDxApiClient apiClient;
 
     private final ObjectMapper mapper = new ObjectMapper();
+
+    // package-private for testing
+    KubeApiClient kubeApiClient;
 
     @Option(names = "--name", required = true, description = "Cluster name")
     String name;
@@ -23,29 +25,28 @@ public class CreateClusterCommand implements Runnable {
     @Option(names = "--region", required = true, description = "AWS region")
     String region;
 
+    @Option(names = "--kubeconfig", description = "Path to kubeconfig (default: ~/.kube/config)")
+    String kubeconfig;
+
     @Override
     public void run() {
         try {
-            // 1. Read JWKS from kube-apiserver
-            String jwks = kubernetesClient.raw("/openid/v1/jwks");
+            KubeApiClient kube = kubeApiClient != null ? kubeApiClient : new KubeApiClient(kubeconfig);
 
-            // 2. Read issuer from OIDC discovery
-            String oidcConfig = kubernetesClient.raw("/.well-known/openid-configuration");
+            String jwks = kube.get("/openid/v1/jwks");
+            String oidcConfig = kube.get("/.well-known/openid-configuration");
             String issuer = parseIssuer(oidcConfig);
 
-            // 3. Register with EKS-DX service
             ObjectNode body = mapper.createObjectNode();
             body.put("name", name);
             body.put("issuer", issuer);
             body.put("jwks", jwks);
 
-            String response = apiClient.post("/clusters", body.toString());
+            apiClient.post("/clusters", body.toString());
 
-            // 4. Print result
-            int keyCount = countKeys(jwks);
             System.out.printf("✓ Cluster \"%s\" registered%n", name);
             System.out.printf("  Issuer: %s%n", issuer);
-            System.out.printf("  JWKS: %d key(s)%n", keyCount);
+            System.out.printf("  JWKS: %d key(s)%n", countKeys(jwks));
         } catch (Exception e) {
             System.err.printf("Failed to register cluster: %s%n", e.getMessage());
             System.exit(1);
