@@ -96,7 +96,7 @@ public class EksDXpressControlPlaneStack extends Stack {
             .tableName("eks-d-xpress-clusters")
             .partitionKey(Attribute.builder().name("clusterName").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
-            .removalPolicy(RemovalPolicy.RETAIN)
+            .removalPolicy(RemovalPolicy.DESTROY)
             .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder().pointInTimeRecoveryEnabled(true).build())
             .build();
 
@@ -105,7 +105,7 @@ public class EksDXpressControlPlaneStack extends Stack {
             .partitionKey(Attribute.builder().name("PK").type(AttributeType.STRING).build())
             .sortKey(Attribute.builder().name("SK").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
-            .removalPolicy(RemovalPolicy.RETAIN)
+            .removalPolicy(RemovalPolicy.DESTROY)
             .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder().pointInTimeRecoveryEnabled(true).build())
             .build();
 
@@ -113,7 +113,7 @@ public class EksDXpressControlPlaneStack extends Stack {
             .tableName("eks-d-xpress-tenants")
             .partitionKey(Attribute.builder().name("tenantId").type(AttributeType.STRING).build())
             .billingMode(BillingMode.PAY_PER_REQUEST)
-            .removalPolicy(RemovalPolicy.RETAIN)
+            .removalPolicy(RemovalPolicy.DESTROY)
             .pointInTimeRecoverySpecification(PointInTimeRecoverySpecification.builder().pointInTimeRecoveryEnabled(true).build())
             .build();
 
