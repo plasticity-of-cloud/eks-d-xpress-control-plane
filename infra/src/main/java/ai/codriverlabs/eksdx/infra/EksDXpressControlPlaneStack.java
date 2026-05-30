@@ -242,7 +242,8 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "EKS_DX_LT_ARM64_SPOT", ltArm64Spot,
                 "EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand,
                 "EKS_DX_LT_X86_SPOT", ltX86Spot,
-                "EKS_DX_VPC_ID", vpcId))
+                "EKS_DX_VPC_ID", vpcId,
+                "EKS_DX_AVAILABILITY_ZONE", "auto"))
             .build();
 
         // Function URL for SSE /stream endpoint (not via API Gateway)
@@ -266,14 +267,20 @@ public class EksDXpressControlPlaneStack extends Stack {
             .actions(List.of(
                 "ec2:RunInstances", "ec2:TerminateInstances",
                 "ec2:CreateKeyPair", "ec2:DeleteKeyPair",
-                "ec2:DescribeInstances", "ec2:CreateTags"))
+                "ec2:DescribeInstances", "ec2:CreateTags",
+                "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables",
+                "ec2:CreateSubnet", "ec2:CreateSecurityGroup",
+                "ec2:AuthorizeSecurityGroupIngress", "ec2:AssociateRouteTable",
+                "ec2:AllocateAddress", "ec2:AssociateAddress"))
             .resources(List.of("*"))
             .build());
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
                 "iam:CreateRole", "iam:DeleteRole",
-                "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:PassRole"))
-            .resources(List.of("arn:aws:iam::*:role/eks-dx-tenant-*"))
+                "iam:PutRolePolicy", "iam:DeleteRolePolicy", "iam:PassRole",
+                "iam:CreateInstanceProfile", "iam:AddRoleToInstanceProfile"))
+            .resources(List.of("arn:aws:iam::*:role/eks-dx-tenant-*",
+                "arn:aws:iam::*:instance-profile/eks-dx-tenant-*"))
             .build());
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(

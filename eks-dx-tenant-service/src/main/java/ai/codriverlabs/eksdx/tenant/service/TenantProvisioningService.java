@@ -120,7 +120,7 @@ public class TenantProvisioningService {
         String clusterName = "eks-d-xpress-" + tenantId;
 
         // 1. Network isolation (per-tenant subnets + security group)
-        String az = availabilityZone.isEmpty() ? region + "a" : availabilityZone;
+        String az = availabilityZone.isEmpty() || "auto".equals(availabilityZone) ? region + "a" : availabilityZone;
         TenantNetworkService.NetworkResult network = networkService.createTenantNetwork(
             tenantId, clusterName, vpcId, az, sshCidr);
 
