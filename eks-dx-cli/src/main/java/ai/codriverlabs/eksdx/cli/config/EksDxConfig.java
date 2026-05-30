@@ -19,7 +19,9 @@ import java.util.Properties;
  */
 public class EksDxConfig {
 
-    private static final Path CONFIG_DIR = Path.of(System.getProperty("user.home"), ".eks-d-xpress");
+    private static final Path CONFIG_DIR = Path.of(
+            System.getenv("HOME") != null ? System.getenv("HOME") : System.getProperty("user.home"),
+            ".eks-d-xpress");
     private static final Path CONFIG_FILE = CONFIG_DIR.resolve("config");
     static final String SSM_PARAM_ENDPOINT = "/eks-d-xpress/control-plane/api/endpoint";
     static final String SSM_PARAM_STREAM_URL = "/eks-d-xpress/control-plane/api/stream-url";
