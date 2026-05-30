@@ -68,7 +68,14 @@ public class EksDxApiClient {
             var response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() >= 400) {
-                System.err.printf("Error (%d): %s%n", response.statusCode(), response.body());
+                String body2 = response.body();
+                try {
+                    var node = new com.fasterxml.jackson.databind.ObjectMapper().readTree(body2);
+                    String msg = node.has("message") ? node.get("message").asText() : body2;
+                    System.err.println(msg);
+                } catch (Exception ignored) {
+                    System.err.println(body2);
+                }
                 System.exit(1);
             }
 
