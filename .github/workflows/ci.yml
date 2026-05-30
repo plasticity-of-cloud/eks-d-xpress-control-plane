@@ -51,8 +51,8 @@ jobs:
 
       - name: Lint Helm charts
         run: |
-          helm lint eks-dx-auth-proxy/target/helm/kubernetes/eks-dx-auth-proxy
-          helm lint eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-dx-pod-identity-webhook
+          helm lint eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy
+          helm lint eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook
 
   integration-test:
     runs-on: ubuntu-24.04
