@@ -15,16 +15,19 @@ import java.security.*;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.List;
 
 /**
  * Minimal kube-apiserver client that reads kubeconfig and fetches OIDC endpoints.
- * Replaces Fabric8 KubernetesClient for the two raw HTTP calls the CLI needs.
+ * Supports static client cert/key, bearer token, and exec credential plugins (e.g. aws eks get-token).
  */
 public class KubeApiClient {
 
     private final HttpClient http;
     private final String serverUrl;
+    private String bearerToken;
 
     public KubeApiClient(String kubeconfigPathOrUrl) {
         // Allow passing a plain URL directly (e.g. for tests or --server flag)
@@ -41,19 +44,16 @@ public class KubeApiClient {
     }
 
     public String get(String path) {
+        // JWKS endpoint requires application/jwk-set+json; others accept application/json
+        String accept = path.contains("jwks") ? "application/jwk-set+json" : "application/json";
         try {
-            var req = HttpRequest.newBuilder()
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
                     .uri(URI.create(serverUrl + path))
-                    .header("Accept", "application/json")
-                    .GET().build();
+                    .header("Accept", accept);
             if (bearerToken != null) {
-                req = HttpRequest.newBuilder()
-                        .uri(URI.create(serverUrl + path))
-                        .header("Accept", "application/json")
-                        .header("Authorization", "Bearer " + bearerToken)
-                        .GET().build();
+                builder.header("Authorization", "Bearer " + bearerToken);
             }
-            var resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+            var resp = http.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() >= 400) {
                 throw new RuntimeException("kube-apiserver returned " + resp.statusCode() + ": " + resp.body());
             }
@@ -66,8 +66,6 @@ public class KubeApiClient {
     }
 
     // ---- kubeconfig parsing ----
-
-    private String bearerToken;
 
     private record KubeContext(String server, String caCertPem, String clientCertPem,
                                String clientKeyPem, String token) {}
@@ -95,6 +93,12 @@ public class KubeApiClient {
             String key = base64OrFile(user, "client-key-data", "client-key");
             String token = user.path("token").asText(null);
 
+            // exec credential plugin (e.g. aws eks get-token)
+            JsonNode exec = user.path("exec");
+            if (!exec.isMissingNode() && token == null) {
+                token = execToken(exec);
+            }
+
             this.bearerToken = token;
             return new KubeContext(server, ca, cert, key, token);
         } catch (Exception e) {
@@ -119,6 +123,20 @@ public class KubeApiClient {
             return new String(new FileInputStream(file.asText()).readAllBytes());
         }
         return null;
+    }
+
+    /** Runs the exec credential plugin and returns the bearer token. */
+    private String execToken(JsonNode execNode) throws Exception {
+        List<String> cmd = new ArrayList<>();
+        cmd.add(execNode.path("command").asText());
+        for (JsonNode arg : execNode.path("args")) cmd.add(arg.asText());
+
+        Process proc = new ProcessBuilder(cmd).redirectErrorStream(true).start();
+        String output = new String(proc.getInputStream().readAllBytes());
+        proc.waitFor();
+
+        JsonNode result = new ObjectMapper().readTree(output);
+        return result.path("status").path("token").asText(null);
     }
 
     // ---- SSL context ----
