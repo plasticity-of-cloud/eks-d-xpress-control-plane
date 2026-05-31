@@ -10,6 +10,7 @@ public record TenantItem(
     String phase,
     int progress,
     String publicIp,
+    String eipAllocationId,
     String sshKeySecretArn,
     String updatedAt,
     String error

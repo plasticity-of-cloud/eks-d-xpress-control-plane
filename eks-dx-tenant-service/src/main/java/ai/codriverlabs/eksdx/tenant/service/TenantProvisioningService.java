@@ -168,6 +168,7 @@ public class TenantProvisioningService {
                 iamResult.instanceProfileName(), "eks-d-xpress-tenant-" + tenantId,
                 region, k8sVersion, assignElasticIp, diskSizeGb, arch);
             created.instanceId = ec2Result.instanceId();
+            created.eipAllocationId = ec2Result.eipAllocationId();
 
             // 7. Write initial DynamoDB state
             String now = Instant.now().toString();
@@ -179,6 +180,10 @@ public class TenantProvisioningService {
             item.put("progress", AttributeValue.fromN("0"));
             item.put("sshKeySecretArn", AttributeValue.fromS(sshKeyArn));
             item.put("updatedAt", AttributeValue.fromS(now));
+            if (ec2Result.eipAllocationId() != null)
+                item.put("eipAllocationId", AttributeValue.fromS(ec2Result.eipAllocationId()));
+            if (ec2Result.elasticIp() != null)
+                item.put("publicIp", AttributeValue.fromS(ec2Result.elasticIp()));
             dynamoDb.putItem(PutItemRequest.builder().tableName(tenantsTable).item(item).build());
 
             return tenantId;
@@ -202,6 +207,14 @@ public class TenantProvisioningService {
                     .instanceIds(created.instanceId).build());
                 LOG.infof("Rollback: terminated instance %s", created.instanceId);
             } catch (Exception ex) { LOG.warnf("Rollback: failed to terminate instance: %s", ex.getMessage()); }
+        }
+
+        if (created.eipAllocationId != null) {
+            try {
+                ec2.releaseAddress(software.amazon.awssdk.services.ec2.model.ReleaseAddressRequest.builder()
+                    .allocationId(created.eipAllocationId).build());
+                LOG.infof("Rollback: released EIP %s", created.eipAllocationId);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to release EIP: %s", ex.getMessage()); }
         }
 
         if (created.dlmPolicyCreated) {
@@ -278,6 +291,7 @@ public class TenantProvisioningService {
         String eventBridgeRulePrefix;
         boolean dlmPolicyCreated;
         String instanceId;
+        String eipAllocationId;
     }
 
     // -------------------------------------------------------------------------
@@ -321,6 +335,17 @@ public class TenantProvisioningService {
             ec2.terminateInstances(TerminateInstancesRequest.builder()
                 .instanceIds(tenant.instanceId()).build());
             LOG.infof("Terminated instance %s", tenant.instanceId());
+        }
+
+        // 1b. Release EIP
+        if (tenant.eipAllocationId() != null) {
+            try {
+                ec2.releaseAddress(software.amazon.awssdk.services.ec2.model.ReleaseAddressRequest.builder()
+                    .allocationId(tenant.eipAllocationId()).build());
+                LOG.infof("Released EIP %s", tenant.eipAllocationId());
+            } catch (Exception e) {
+                LOG.warnf("Could not release EIP %s: %s", tenant.eipAllocationId(), e.getMessage());
+            }
         }
 
         // 2. Remove cluster registration from eks-dx-clusters table
@@ -476,6 +501,7 @@ public class TenantProvisioningService {
             s(item, "phase"),
             item.containsKey("progress") ? Integer.parseInt(item.get("progress").n()) : 0,
             s(item, "publicIp"),
+            s(item, "eipAllocationId"),
             s(item, "sshKeySecretArn"),
             s(item, "updatedAt"),
             s(item, "error")

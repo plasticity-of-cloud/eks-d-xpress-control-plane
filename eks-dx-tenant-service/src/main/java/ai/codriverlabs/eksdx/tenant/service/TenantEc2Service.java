@@ -30,7 +30,7 @@ public class TenantEc2Service {
     private final Ec2Client ec2 = Ec2Client.create();
     private final SsmClient ssm = SsmClient.create();
 
-    public record Ec2Result(String instanceId, String elasticIp) {}
+    public record Ec2Result(String instanceId, String elasticIp, String eipAllocationId) {}
 
     public Ec2Result launchInstance(String tenantId, String clusterName, String launchTemplateId,
                                    String subnetId, String securityGroupId, String instanceProfileName,
@@ -90,24 +90,24 @@ public class TenantEc2Service {
         LOG.infof("Launched EC2 instance %s for tenant %s", instanceId, tenantId);
 
         String elasticIp = null;
-        if (assignElasticIp) {
-            var allocResp = ec2.allocateAddress(AllocateAddressRequest.builder()
-                .domain("vpc")
-                .tagSpecifications(TagSpecification.builder()
-                    .resourceType(ResourceType.ELASTIC_IP)
-                    .tags(Tag.builder().key("Name").value(clusterName).build(),
-                          Tag.builder().key("eks-d-xpress-tenant").value(tenantId).build())
-                    .build())
-                .build());
-            ec2.associateAddress(AssociateAddressRequest.builder()
-                .instanceId(instanceId)
-                .allocationId(allocResp.allocationId())
-                .build());
-            elasticIp = allocResp.publicIp();
-            LOG.infof("Assigned Elastic IP %s to tenant %s", elasticIp, tenantId);
-        }
+        var allocResp = ec2.allocateAddress(AllocateAddressRequest.builder()
+            .domain("vpc")
+            .tagSpecifications(TagSpecification.builder()
+                .resourceType(ResourceType.ELASTIC_IP)
+                .tags(Tag.builder().key("Name").value(clusterName).build(),
+                      Tag.builder().key("eks-d-xpress-tenant").value(tenantId).build(),
+                      Tag.builder().key("eks-d-xpress-eip-persistent").value(String.valueOf(assignElasticIp)).build())
+                .build())
+            .build());
+        ec2.associateAddress(AssociateAddressRequest.builder()
+            .instanceId(instanceId)
+            .allocationId(allocResp.allocationId())
+            .build());
+        elasticIp = allocResp.publicIp();
+        LOG.infof("Assigned %sElastic IP %s to tenant %s",
+            assignElasticIp ? "persistent " : "", elasticIp, tenantId);
 
-        return new Ec2Result(instanceId, elasticIp);
+        return new Ec2Result(instanceId, elasticIp, allocResp.allocationId());
     }
 
     private String userDataScript(String tenantId, String clusterName,
