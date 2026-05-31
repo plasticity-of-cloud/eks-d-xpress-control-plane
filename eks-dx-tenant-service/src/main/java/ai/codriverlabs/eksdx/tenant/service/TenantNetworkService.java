@@ -111,6 +111,7 @@ public class TenantNetworkService {
                 .resourceType(software.amazon.awssdk.services.ec2.model.ResourceType.SECURITY_GROUP)
                 .tags(
                     Tag.builder().key("Name").value(sgName).build(),
+                    Tag.builder().key("eks-d-xpress-tenant").value(tenantId).build(),
                     Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
                     Tag.builder().key("Platform").value("eks-d-xpress").build())
                 .build())
