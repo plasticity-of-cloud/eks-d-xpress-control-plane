@@ -2,304 +2,181 @@
 
 ## Prerequisites
 
-- Java 21 or later
-- Maven 3.8+
-- Docker (for native builds)
-- Kubernetes cluster access (optional, for testing)
+- Java 25 (GraalVM JDK for native builds)
+- Maven 3.9+
+- Docker (for native builds via Mandrel container)
+- AWS CLI + CDK CLI (`npm install -g aws-cdk`)
+- AWS credentials with appropriate permissions
 
-## Development Workflow
+## Build — `build-local.sh`
 
-### 1. Local Development
+### Full Build
 
-Start in development mode with hot reload:
 ```bash
-./mvnw compile quarkus:dev
+./build-local.sh                    # All modules, JVM mode
+./build-local.sh --native           # All modules, GraalVM native for tenant-service + CLI
+./build-local.sh --skip-tests       # Skip unit tests
 ```
 
-This starts the application on `http://localhost:8080` with:
-- Hot reload enabled
-- Dev UI available at `http://localhost:8080/q/dev/`
-- Swagger UI at `http://localhost:8080/swagger-ui`
+### Selective Build (`--only`)
 
-### 2. Testing
+Build only specific modules (parent POM + model always built for dependency resolution):
 
-Run unit tests:
 ```bash
-./mvnw test
+./build-local.sh --only tenant                  # tenant-service only (JVM)
+./build-local.sh --only tenant --native         # tenant-service native binary
+./build-local.sh --only tenant,cli --native     # tenant + CLI native
+./build-local.sh --only credential,mgmt         # both JVM Lambda services
+./build-local.sh --only cdk                     # CDK synth validation only
+./build-local.sh --only auth-proxy,webhook      # container images only
 ```
 
-Run integration tests:
+Available module selectors: `credential`, `mgmt`, `tenant`, `auth-proxy`, `webhook`, `cli`, `cdk`
+
+### CPU Architecture & Native Builds
+
+The tenant-service and CLI support GraalVM native compilation. The target architecture depends on your build environment:
+
+| Build Host | `--native` produces | Lambda Architecture | CDK Context |
+|------------|--------------------|--------------------|-------------|
+| arm64 (Graviton/M-series) | arm64 binary | `ARM_64` | (default) |
+| x86_64 | x86_64 binary | `X86_64` | `-c nativeArch=x86` |
+| Any (JVM mode) | uber-jar | `X86_64` | `-c jvmTenant=true` |
+
+**Important**: The native binary architecture must match the Lambda runtime architecture set in CDK. Use CDK context flags to align:
+
 ```bash
-./mvnw verify
+# Building on x86_64 host → deploy as x86 native
+./build-local.sh --only tenant --native
+./deploy-local.sh --context nativeArch=x86
+
+# Building on arm64 host → deploy as arm64 native (default, prod)
+./build-local.sh --only tenant --native
+./deploy-local.sh
+
+# Skip native entirely → deploy as JVM on x86_64
+./build-local.sh --only tenant
+./deploy-local.sh --context jvmTenant=true
 ```
 
-### 3. Building
+### Build Outputs
 
-#### JVM Build
+| Module | Output | Description |
+|--------|--------|-------------|
+| credential-service | `eks-dx-credential-service/target/function.zip` | Lambda zip (JVM, SnapStart) |
+| mgmt-service | `eks-dx-mgmt-service/target/function.zip` | Lambda zip (JVM) |
+| tenant-service | `eks-dx-tenant-service/target/function.zip` | Lambda zip (native or JVM) |
+| auth-proxy | Docker image `eks-dx-auth-proxy` | In-cluster container |
+| webhook | Docker image `eks-dx-pod-identity-webhook` | In-cluster container |
+| cli | `eks-dx-cli/target/eks-dx` (native) or `target/*-runner.jar` | CLI binary |
+
+## Deploy — `deploy-local.sh`
+
+### Basic Deploy
+
 ```bash
-./mvnw package
+./deploy-local.sh                          # Build JVM + deploy
+./deploy-local.sh --native                 # Build native + deploy
+./deploy-local.sh --skip-build             # Deploy only (reuse existing zips)
 ```
 
-#### Native Build
+### Options
+
 ```bash
-./mvnw package -Dnative
+./deploy-local.sh --profile my-profile     # Use specific AWS profile
+./deploy-local.sh --context nativeArch=x86 # Deploy x86 native Lambda
+./deploy-local.sh --context jvmTenant=true # Deploy JVM mode Lambda
 ```
 
-#### Native Build with Docker
+### CDK Context Flags
+
+| Flag | Value | Effect |
+|------|-------|--------|
+| `nativeArch` | `x86` | Deploy tenant-service as x86_64 native binary |
+| `jvmTenant` | `true` | Deploy tenant-service as JVM (Java 25 runtime) |
+| (neither) | — | Deploy as arm64 native binary (production default) |
+
+### Typical Workflows
+
+**Fast iteration on tenant-service (JVM, no native build):**
 ```bash
-./mvnw package -Dnative -Dquarkus.native.container-build=true
+./build-local.sh --only tenant --skip-tests
+./deploy-local.sh --skip-build --context jvmTenant=true
 ```
 
-### 4. Running
-
-#### JVM Mode
+**Production-like deploy (native arm64, from Graviton host):**
 ```bash
-java -jar target/quarkus-app/quarkus-run.jar
+./build-local.sh --only tenant,credential,mgmt --native
+./deploy-local.sh --skip-build
 ```
 
-#### Native Mode
+**Rebuild and deploy everything:**
 ```bash
-./target/eks-dx-control-plane-1.0.0-SNAPSHOT-runner
+./deploy-local.sh --native
 ```
 
-## Configuration
+## Integration Tests
 
-### Development Configuration
+DynamoDB integration tests require DynamoDB Local:
 
-Create `src/main/resources/application-dev.properties`:
-```properties
-# Development overrides
-quarkus.log.level=DEBUG
-aws.sts.session-duration=PT15M
-eks.pod-identity.configmap.name=dev-pod-identity-associations
+```bash
+docker run -d -p 18000:8000 public.ecr.aws/aws-dynamodb-local/aws-dynamodb-local:latest
+mvn test -Dintegration.dynamodb=true
 ```
 
-### Testing Configuration
+## Module-Specific Development
 
-Create `src/test/resources/application-test.properties`:
-```properties
-# Test overrides
-quarkus.log.level=WARN
-aws.sts.session-duration=PT5M
+### Tenant Service (hot path for provisioning)
+
+```bash
+# Quick rebuild + redeploy cycle:
+./build-local.sh --only tenant --skip-tests
+./deploy-local.sh --skip-build --context jvmTenant=true
+
+# Watch logs after invoking:
+aws logs tail /aws/lambda/eks-d-xpress-tenant-service --follow --region us-east-1
 ```
 
-## Code Structure
+### CLI
 
-```
-src/main/java/com/plcloud/eksauth/
-├── model/                    # Request/Response models
-│   ├── AssumeRoleForPodIdentityRequest.java
-│   └── AssumeRoleForPodIdentityResponse.java
-├── resource/                 # REST endpoints
-│   ├── EksAuthResource.java
-│   └── HealthResource.java
-├── service/                  # Business logic
-│   ├── TokenValidationService.java
-│   ├── PodIdentityAssociationService.java
-│   └── AwsCredentialService.java
+```bash
+# Build native CLI:
+./build-local.sh --only cli --native
+
+# Run directly:
+./eks-dx-cli/target/eks-dx --help
 ```
 
-## Adding New Features
+### CDK Stack
 
-### 1. Add New Service
+```bash
+# Validate changes without deploying:
+./build-local.sh --only cdk
 
-```java
-@ApplicationScoped
-public class MyNewService {
-    
-    private static final Logger LOG = Logger.getLogger(MyNewService.class);
-    
-    public void doSomething() {
-        LOG.info("Doing something");
-    }
-}
-```
+# Full synth:
+cd infra && cdk synth
 
-### 2. Add New Endpoint
-
-```java
-@Path("/my-endpoint")
-@Produces(MediaType.APPLICATION_JSON)
-public class MyResource {
-    
-    @Inject
-    MyNewService myService;
-    
-    @GET
-    public Response get() {
-        myService.doSomething();
-        return Response.ok().build();
-    }
-}
-```
-
-### 3. Add Configuration
-
-In `application.properties`:
-```properties
-my.new.config.property=default-value
-```
-
-In your service:
-```java
-@ConfigProperty(name = "my.new.config.property")
-String myProperty;
-```
-
-## Testing Guidelines
-
-### Unit Tests
-
-```java
-@QuarkusTest
-public class MyServiceTest {
-    
-    @Inject
-    MyService myService;
-    
-    @Test
-    public void testMyService() {
-        // Test logic
-    }
-}
-```
-
-### Integration Tests
-
-```java
-@QuarkusTest
-public class MyResourceTest {
-    
-    @Test
-    public void testEndpoint() {
-        given()
-          .when().get("/my-endpoint")
-          .then()
-             .statusCode(200);
-    }
-}
+# Diff before deploy:
+cd infra && cdk diff
 ```
 
 ## Debugging
 
-### Enable Debug Logging
-
-```properties
-quarkus.log.category."com.plcloud".level=DEBUG
-```
-
-### Remote Debugging
-
-JVM mode:
-```bash
-java -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005 -jar target/quarkus-app/quarkus-run.jar
-```
-
-Dev mode (automatic):
-```bash
-./mvnw compile quarkus:dev
-# Debug port 5005 is automatically available
-```
-
-## Performance Optimization
-
-### Native Build Optimization
-
-Add to `application.properties`:
-```properties
-quarkus.native.additional-build-args=--initialize-at-build-time=com.mypackage
-```
-
-### Memory Tuning
-
-For native builds:
-```properties
-quarkus.native.native-image-xmx=4g
-```
-
-## Deployment
-
-### Kubernetes Deployment
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: eks-dx-auth-proxy
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: eks-dx-auth-proxy
-  template:
-    metadata:
-      labels:
-        app: eks-dx-auth-proxy
-    spec:
-      containers:
-      - name: eks-dx-auth-proxy
-        image: eks-dx-auth-proxy:latest
-        ports:
-        - containerPort: 8080
-        env:
-        - name: AWS_ACCOUNT_ID
-          value: "123456789012"
-        livenessProbe:
-          httpGet:
-            path: /health/live
-            port: 8080
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 8080
-```
-
-### Service
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: eks-dx-auth-proxy
-spec:
-  selector:
-    app: eks-dx-auth-proxy
-  ports:
-  - port: 80
-    targetPort: 8080
-  type: ClusterIP
-```
-
-## Troubleshooting
-
-### Common Development Issues
-
-1. **Native Build Fails**
-   - Check GraalVM compatibility
-   - Add reflection configuration if needed
-   - Use `--initialize-at-build-time` for problematic classes
-
-2. **Kubernetes Client Issues**
-   - Ensure proper RBAC permissions
-   - Check cluster connectivity
-   - Verify ConfigMap exists
-
-3. **AWS STS Issues**
-   - Check AWS credentials
-   - Verify IAM role trust policies
-   - Check network connectivity to AWS
-
-### Debug Commands
+### Lambda Logs
 
 ```bash
-# Check application health
-curl http://localhost:8080/health/live
+# Tail tenant-service logs:
+aws logs tail /aws/lambda/eks-d-xpress-tenant-service --follow --region us-east-1
 
-# View metrics
-curl http://localhost:8080/metrics
-
-# Test API endpoint
-curl -X POST http://localhost:8080/ \
-  -H "Content-Type: application/json" \
-  -d '{"ClusterName":"test","Token":"test-token"}'
+# Tail mgmt-service logs:
+aws logs tail /aws/lambda/eks-d-xpress-mgmt-service --follow --region us-east-1
 ```
+
+### Common Issues
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `Runtime.ExitError` on init | Missing env var or native config issue | Check Lambda env vars match `application.properties` |
+| `cannot execute binary file` | Architecture mismatch (built x86, deployed arm64) | Align `--native` host arch with CDK context |
+| `NoSuchElementException: null` | Resource lookup returned empty (e.g., missing route table) | Verify shared infra resources exist with expected tags |
+| Quarkus config warning about `quarkus.native.*` | Running in JVM mode, native props ignored | Safe to ignore |
