@@ -15,6 +15,14 @@ NATIVE=false
 AWS_PROFILE_ARG=""
 CDK_CONTEXT_ARGS=""
 
+# Auto-detect host architecture for native builds
+HOST_ARCH=$(uname -m)
+if [[ "$HOST_ARCH" == "x86_64" ]]; then
+  NATIVE_ARCH_CONTEXT="-c nativeArch=x86"
+else
+  NATIVE_ARCH_CONTEXT=""
+fi
+
 while [[ $# -gt 0 ]]; do
   case $1 in
     --help)
@@ -61,10 +69,18 @@ if ! $SKIP_BUILD; then
 fi
 
 echo "==> Deploying CDK stack"
+# Auto-pass architecture context when deploying native builds
+ARCH_CONTEXT=""
+if $NATIVE; then
+  ARCH_CONTEXT="$NATIVE_ARCH_CONTEXT"
+  echo "    Host arch: $HOST_ARCH → ${NATIVE_ARCH_CONTEXT:-arm64 (default)}"
+fi
+
 cd infra
 cdk deploy EksDXpressControlPlaneStack \
   --require-approval never \
   $AWS_PROFILE_ARG \
+  $ARCH_CONTEXT \
   $CDK_CONTEXT_ARGS
 
 echo ""
