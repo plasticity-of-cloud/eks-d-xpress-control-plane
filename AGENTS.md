@@ -2,7 +2,7 @@
 
 ## Directory Overview
 
-Multi-module Quarkus 3.33.1 LTS + Java 25 project. Brings EKS Pod Identity to non-EKS Kubernetes clusters (EKS-D via kubeadm) through a serverless Lambda backend with composable tenant provisioning.
+Multi-module Quarkus 3.35.4 + Java 25 project. Brings EKS Pod Identity to non-EKS Kubernetes clusters (EKS-D via kubeadm) through a serverless Lambda backend with composable tenant provisioning and compensating rollback.
 
 ```
 eks-dx-credential-service/   # Lambda: credential exchange (hot path, SnapStart)
@@ -15,6 +15,7 @@ eks-dx-model/                # Shared library: TokenClaims record
 infra/                       # CDK infrastructure (Java, primary deployment path)
 docs/                        # Architecture docs, SSM contract, migration plans
 .agents/summary/             # Generated documentation (index.md is the knowledge base entry point)
+.kiro/steering/              # Kiro steering documents (DEVELOPMENT.md, CI_CD_INTEGRATION.md)
 ```
 
 ## Key Entry Points
@@ -52,41 +53,50 @@ docs/                        # Architecture docs, SSM contract, migration plans
 
 **Three-Lambda split**: credential-service (SnapStart, 512MB, 30s), mgmt-service (JVM, 256MB, 30s), tenant-service (native arm64, 128MB, 900s). Different scaling profiles.
 
-**Composable tenant provisioning**: `TenantProvisioningService` orchestrates `TenantNetworkService`, `TenantIamService`, `TenantEc2Service`, `TenantDlmService`. Each independently testable.
+**Composable tenant provisioning with rollback**: `TenantProvisioningService` orchestrates `TenantNetworkService`, `TenantIamService`, `TenantEc2Service`, `TenantDlmService`. Each has create + delete methods. `ProvisionedResources` tracks what was created; on failure, `rollback()` cleans up in reverse order.
 
-**SSM as interface**: Infrastructure (Terraform/CDK) writes `/eks-dx/launch-template/{arch}/{pricing}`, `/eks-dx/ami/{arch}/{version}`, `/eks-dx/network/*`. Lambda reads at runtime. Hierarchical paths support `get-parameters-by-path` discovery.
+**SSM as interface**: Infrastructure (CDK) writes `/eks-dx/launch-template/{arch}/{pricing}`, `/eks-dx/ami/{arch}/{version}`, `/eks-dx/network/*`. Lambda reads at runtime.
 
-**Per-tenant isolation**: Each tenant gets dedicated subnets (auto-indexed CIDR), security group, IAM role, SQS queue, EventBridge rules, DLM policy.
+**Per-tenant isolation**: Each tenant gets dedicated subnets (auto-indexed CIDR from shared VPC), security group, IAM role, SQS queue, EventBridge rules, DLM policy.
+
+**Shared infra naming**: Route tables are `eks-dx-infra-public-rt` / `eks-dx-infra-private-rt` (from `EksDxSharedInfraStack`).
 
 **DynamoDB key design**: Associations use `PK=CLUSTER#<name>` / `SK=<namespace>#<serviceAccount>`. O(1) GetItem for credential exchange.
 
-**Role naming constraint**: STS AssumeRole scoped to `arn:aws:iam::*:role/eks-dx-pod-*`.
+**Role naming constraint**: STS AssumeRole scoped to `arn:aws:iam::*:role/eks-dx-pod-*`. Tenant IAM roles scoped to `eks-dx-tenant-*`.
 
 **JWKS caching**: Per `clusterName|audience` in ConcurrentHashMap, 5-minute TTL, per Lambda instance.
 
-**CLI config resolution**: flag → env var → `~/.eks-dx/config` → defaults.
+**CLI config resolution**: flag → env var → `~/.eks-dx/config` → SSM → defaults.
 
-**CDK asset path resolution**: Detects working directory (project root vs `infra/`) to resolve Lambda zip paths correctly for both `mvn exec:java` and `cdk synth`.
+**CDK asset path resolution**: Detects working directory (project root vs `infra/`) to resolve Lambda zip paths correctly.
 
 **Native binary name**: CLI outputs as `eks-dx` (not `eks-dx-cli`) via `quarkus.native.output-name-prefix`.
+
+**IAM permissions scoping**: EC2 networking actions (CreateSubnet, CreateSG) scoped to shared VPC ARN. Instance lifecycle actions use `Resource: *` (EC2 API requirement). IAM actions scoped to `eks-dx-tenant-*`.
 
 ## Build
 
 ```bash
-./build-local.sh              # JVM mode
-./build-local.sh --native     # GraalVM native (tenant-service + CLI)
-./build-local.sh --skip-tests # Skip unit tests
+./build-local.sh                           # All modules, JVM
+./build-local.sh --native                  # GraalVM native (tenant + CLI)
+./build-local.sh --only tenant --native    # Single module
+./build-local.sh --only tenant,cli --native --skip-tests
 ```
+
+Modules: `credential`, `mgmt`, `tenant`, `auth-proxy`, `webhook`, `cli`, `cdk`
 
 Requires: Java 25, Maven 3.9+, Docker (for native builds via Mandrel container).
 
 ## Deploy
 
 ```bash
-cd infra && cdk deploy EksDXpressControlPlaneStack
+./deploy-local.sh                          # Build + deploy
+./deploy-local.sh --skip-build             # Reuse existing zips
+./deploy-local.sh --native                 # Native build + deploy
+./deploy-local.sh --context jvmTenant=true # JVM mode (fast iteration)
+./deploy-local.sh --context nativeArch=x86 # x86 native (when building on x86 host)
 ```
-
-Requires: SSM parameters written by infrastructure stack first.
 
 ## Integration Tests
 

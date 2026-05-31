@@ -1,101 +1,41 @@
 # Data Models
 
-## TokenClaims (eks-dx-model)
+## DynamoDB Tables
 
-Shared record extracted from validated JWT tokens.
+### eks-d-xpress-clusters
+| Key | Type | Description |
+|-----|------|-------------|
+| `clusterName` (PK) | S | Cluster identifier |
+| `issuer` | S | OIDC issuer URL |
+| `jwks` | S | JSON Web Key Set (cached) |
+| `jwksUpdatedAt` | S | ISO timestamp |
+| `createdAt` | S | ISO timestamp |
 
-```java
-public record TokenClaims(
-    String subject,           // "system:serviceaccount:namespace:sa-name"
-    String namespace,         // Kubernetes namespace
-    String serviceAccount,    // Service account name
-    String podName,           // Pod name (from claims)
-    String podUid,            // Pod UID
-    String serviceAccountUid, // SA UID
-    Map<String, String> sessionTags  // Passed to STS AssumeRole
-) {}
-```
+### eks-d-xpress-associations
+| Key | Type | Description |
+|-----|------|-------------|
+| `PK` | S | `CLUSTER#<clusterName>` |
+| `SK` | S | `<namespace>#<serviceAccount>` |
+| `roleArn` | S | IAM role to assume |
+| `associationId` | S | Unique ID |
+| `createdAt` | S | ISO timestamp |
 
-## DynamoDB Key Design
+O(1) GetItem for credential exchange hot path.
 
-### Clusters Table
-```
-┌─────────────────────────────────────────────┐
-│ PK: clusterName                             │
-├─────────────────────────────────────────────┤
-│ issuer: "https://oidc.eks-dx.example.com"   │
-│ jwks: "{\"keys\":[...]}"                    │
-│ createdAt: "2026-05-25T..."                 │
-└─────────────────────────────────────────────┘
-```
+### eks-d-xpress-tenants
+| Key | Type | Description |
+|-----|------|-------------|
+| `tenantId` (PK) | S | Tenant identifier |
+| `instanceId` | S | EC2 instance ID |
+| `state` | S | `provisioning` / `running` / `terminated` |
+| `phase` | S | Current provisioning step |
+| `progress` | N | 0-100 |
+| `ownerArn` | S | IAM principal that owns this tenant |
+| `ownerRole` | S | Resolved eks-dx-role at creation |
+| `provisionedBy` | S | Operator ARN (if provisioned for another) |
+| `sshKeySecretArn` | S | Secrets Manager ARN for SSH key |
+| `updatedAt` | S | ISO timestamp |
 
-### Associations Table (Composite Key)
-```
-┌──────────────────────────────────────────────────────────┐
-│ PK: CLUSTER#my-cluster  │  SK: default#my-service-account│
-├──────────────────────────────────────────────────────────┤
-│ roleArn: "arn:aws:iam::123:role/eks-dx-pod-my-role"      │
-│ associationId: "uuid-..."                                │
-│ createdAt: "2026-05-25T..."                              │
-└──────────────────────────────────────────────────────────┘
-```
-
-**Access patterns**:
-- `GetItem(PK, SK)` → O(1) role ARN lookup during credential exchange
-- `Query(PK)` → all associations for a cluster
-- `Scan(filter: associationId=X)` → describe by ID (no GSI)
-
-### Tenants Table
-```
-┌─────────────────────────────────────────────┐
-│ PK: tenantId                                │
-├─────────────────────────────────────────────┤
-│ instanceId: "i-0abc123..."                  │
-│ state: "running|provisioning|stopped"       │
-│ phase: "EC2 instance launched"              │
-│ progress: 0-100                             │
-│ publicIp: "1.2.3.4"                         │
-│ sshKeySecretArn: "arn:aws:secretsmanager:." │
-│ updatedAt: "2026-05-25T..."                 │
-│ error: null | "error message"               │
-└─────────────────────────────────────────────┘
-```
-
-## Tenant Instance State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> provisioning: POST /tenants
-    provisioning --> running: bootstrap complete
-    provisioning --> failed: error
-    running --> stopped: hibernate
-    stopped --> running: resume
-    running --> terminated: DELETE /tenants
-    stopped --> terminated: DELETE /tenants
-    failed --> terminated: DELETE /tenants
-```
-
-## IAM Role Structure (Per-Tenant)
-
-```
-eks-dx-tenant-{tenantId}-instance-role
-├── Managed Policies:
-│   ├── AmazonSSMManagedInstanceCore
-│   ├── AmazonEC2ContainerRegistryPullOnly
-│   ├── AmazonEKS_CNI_Policy
-│   ├── AmazonEBSCSIDriverEKSClusterScopedPolicy
-│   └── CloudWatchAgentServerPolicy
-└── Inline Policy (eks-dx-tenant-policy):
-    ├── SecretsAccess (tenant-scoped)
-    ├── EksDxApiInvoke (cluster-scoped)
-    ├── TenantStateUpdate (DynamoDB, tenant-scoped)
-    ├── SSMAndECRAndCloudWatch (*)
-    ├── EKSCNI (*)
-    ├── KarpenterRead (*)
-    ├── KarpenterWrite (cluster-tag-scoped)
-    ├── KarpenterDelete (cluster-tag-scoped)
-    ├── KarpenterPassRole (self)
-    ├── KarpenterSQS (queue-scoped)
-    ├── CloudProviderRead (*)
-    └── CloudProviderWriteTagged (cluster-tag-scoped)
-```
+**GSIs** (planned):
+- `ownerArn-index` (PK: ownerArn, SK: tenantId) — quota checks
+- `provisionedBy-index` (PK: provisionedBy, SK: tenantId) — operator visibility

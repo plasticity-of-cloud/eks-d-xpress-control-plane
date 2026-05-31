@@ -1,120 +1,73 @@
 # Components
 
-## Module Map
-
-```mermaid
-graph LR
-    subgraph "Shared"
-        Model[eks-dx-model<br/>TokenClaims record]
-    end
-    subgraph "Lambda Functions"
-        Cred[eks-dx-credential-service]
-        Mgmt[eks-dx-mgmt-service]
-        Tenant[eks-dx-tenant-service]
-    end
-    subgraph "Containers"
-        Proxy[eks-dx-auth-proxy]
-        Webhook[eks-dx-pod-identity-webhook]
-    end
-    subgraph "Tools"
-        CLI[eks-dx-cli]
-        Infra[infra CDK]
-    end
-    
-    Cred --> Model
-    Mgmt --> Model
-    Proxy --> Model
-```
-
 ## eks-dx-credential-service
+Hot-path Lambda for credential exchange. Validates pod SA tokens via JWKS, looks up association in DynamoDB, calls STS AssumeRole.
 
-**Purpose**: Credential exchange — validates pod tokens and returns temporary AWS credentials.
-
-| Class | Responsibility |
-|-------|---------------|
-| `EksAuthResource` | REST endpoint `POST /clusters/{name}/assets` |
-| `JwksTokenValidationService` | JWT validation via DynamoDB-cached JWKS (5-min TTL) |
-| `AwsCredentialService` | STS AssumeRole with session tags from token claims |
-
-**Runtime**: Lambda, JVM, SnapStart. Memory: 512MB. Timeout: 30s.
+| Class | Role |
+|-------|------|
+| `EksAuthResource` | REST endpoint, request/response mapping |
+| `JwksTokenValidationService` | JWKS fetch + cache (5min TTL), JWT validation |
+| `AwsCredentialService` | STS AssumeRole with session tags |
 
 ## eks-dx-mgmt-service
+CRUD Lambda for clusters and pod identity associations.
 
-**Purpose**: Cluster and association CRUD management.
-
-| Class | Responsibility |
-|-------|---------------|
-| `ClusterResource` | REST: register/list/describe/deregister clusters, refresh JWKS |
-| `AssociationResource` | REST: create/list/describe/delete pod identity associations |
-| `DynamoDbClusterService` | DynamoDB CRUD for clusters table |
-| `DynamoDbAssociationService` | DynamoDB CRUD for associations table + IAM role validation |
-| `JwksTokenValidationService` | Validates webhook Bearer tokens |
-| `WebhookAuthFilter` | JAX-RS filter for Bearer token auth on GET associations |
-
-**Runtime**: Lambda, JVM. Memory: 256MB. Timeout: 30s.
+| Class | Role |
+|-------|------|
+| `ClusterResource` | Register/list/describe/delete clusters, refresh JWKS |
+| `AssociationResource` | Create/list/describe/delete associations |
+| `DynamoDbClusterService` | Cluster table operations |
+| `DynamoDbAssociationService` | Association table operations, role validation |
+| `WebhookAuthFilter` | Optional Bearer token validation for webhook calls |
 
 ## eks-dx-tenant-service
+Long-running native Lambda for tenant provisioning with compensating rollback.
 
-**Purpose**: Tenant EC2 instance lifecycle (provision, deprovision, hibernate, resume).
-
-| Class | Responsibility |
-|-------|---------------|
-| `TenantResource` | REST: `POST /tenants`, `GET /tenants/{id}`, `DELETE /tenants/{id}` |
-| `TenantStreamResource` | SSE: `GET /tenants/{id}/stream` (provisioning progress) |
-| `TenantProvisioningService` | Orchestrator — delegates to composable services |
-| `TenantNetworkService` | Per-tenant subnets, SG, route table associations |
-| `TenantIamService` | IAM role, 5 managed policies, inline policy, instance profile |
-| `TenantEc2Service` | EC2 launch, user data injection, Elastic IP |
-| `TenantDlmService` | DLM policy for daily etcd volume snapshots |
-
-**Runtime**: Lambda, GraalVM native arm64. Memory: 128MB. Timeout: 900s. Function URL (SSE).
+| Class | Role |
+|-------|------|
+| `TenantResource` | REST endpoint, SSH CIDR resolution, error handling |
+| `TenantStreamResource` | SSE progress stream via Function URL |
+| `TenantProvisioningService` | Orchestrator: provision(), rollback(), deprovision() |
+| `TenantNetworkService` | Subnets, SG, route table association; create + delete |
+| `TenantIamService` | Role, inline policy, instance profile; create + delete |
+| `TenantEc2Service` | Instance launch, user data, EIP |
+| `TenantDlmService` | Etcd backup lifecycle policy; create + delete |
+| `ProvisionedResources` | Tracks created resources for rollback |
 
 ## eks-dx-auth-proxy
+In-cluster sidecar/proxy. Fast-fails via Kubernetes TokenReview, then forwards to Lambda.
 
-**Purpose**: In-cluster proxy that validates tokens via Kubernetes TokenReview then forwards to Lambda.
-
-| Class | Responsibility |
-|-------|---------------|
-| `EksAuthAgentResource` | REST endpoint matching Pod Identity Agent protocol |
-| `TokenValidationService` | Kubernetes TokenReview API call + claim extraction |
+| Class | Role |
+|-------|------|
+| `EksAuthAgentResource` | REST endpoint mimicking EKS Pod Identity Agent |
+| `TokenValidationService` | Kubernetes TokenReview API call |
 | `EksDxCredentialServiceClient` | HTTP forwarding to Lambda via API Gateway |
 
-**Deployment**: Container image (Jib), Kubernetes Deployment + Service.
-
 ## eks-dx-pod-identity-webhook
+Mutating admission webhook. Injects env vars and projected SA token volume into pods with associations.
 
-**Purpose**: Mutating admission webhook that injects env vars and projected token volumes into pods.
-
-| Class | Responsibility |
-|-------|---------------|
-| `WebhookEndpoint` | Admission webhook HTTP endpoint |
-| `PodIdentityMutator` | Pod mutation logic (env vars + volume injection) |
-| `LambdaAssociationLookup` | Checks if namespace/SA has an association via Lambda |
-
-**Deployment**: Container image (Jib), Kubernetes Deployment + MutatingWebhookConfiguration.
+| Class | Role |
+|-------|------|
+| `PodIdentityMutator` | Core mutation logic (env + volume injection) |
+| `WebhookEndpoint` | AdmissionReview handling |
+| `LambdaAssociationLookup` | Queries Lambda API for association existence |
 
 ## eks-dx-cli
+Native GraalVM binary. Picocli-based CLI with SigV4 signing.
 
-**Purpose**: Native CLI for cluster, association, and tenant management.
-
-| Class | Responsibility |
-|-------|---------------|
-| `EksDxCommand` | Picocli root command |
-| `Create/List/Describe/Delete*Command` | Subcommands for each resource type |
-| `CreateTenantCommand` | Tenant provisioning with SSE progress streaming |
+| Class | Role |
+|-------|------|
+| `EksDxCommand` | Root command, subcommand registration |
+| `CreateTenantCommand` | Tenant provisioning + SSE progress streaming |
 | `EksDxApiClient` | HTTP client with SigV4 signing |
 | `AwsSigV4Signer` | AWS Signature V4 implementation |
-| `EksDxConfig` | Config file management (~/.eks-dx/config) |
+| `KubeApiClient` | Kubernetes API access for OIDC/JWKS discovery |
+| `EksDxConfig` | Config resolution: flag → env → file → SSM → defaults |
 
-**Output**: Native binary `eks-dx` (GraalVM).
+## infra
+CDK stack defining all AWS resources.
 
-## infra (CDK)
-
-**Purpose**: AWS infrastructure as code.
-
-| Class | Responsibility |
-|-------|---------------|
+| Class | Role |
+|-------|------|
+| `EksDXpressControlPlaneStack` | API Gateway, 3 Lambdas, DynamoDB tables, IAM, Function URL |
 | `InfraApp` | CDK app entry point |
-| `EksDxStack` | Full stack: 3 Lambdas, 3 DynamoDB tables, API Gateway, IAM, CloudWatch |
-
-**Deployment**: `cdk deploy` from `infra/` directory.

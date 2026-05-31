@@ -1,33 +1,25 @@
 # Review Notes
 
-## Inconsistencies Found
+## Unimplemented Designs
 
-1. **AGENTS.md references stale module names**: The existing AGENTS.md still references `eks-dx-lambda` (the pre-split monolith). It should reference `eks-dx-credential-service`, `eks-dx-mgmt-service`, and `eks-dx-tenant-service`.
+### Tenant Authorization & Quota Enforcement
+`docs/TENANT_AUTHORIZATION_ROLES.md` defines a four-tier role model (SingleTenant, MultiTenant, ProvisioningOperator, Administrator) with session tag-based resolution and quota enforcement. **Not yet implemented in code** — the tenant-service currently accepts any IAM-authenticated request without role/quota checks.
 
-2. **CDK vs SAM note is outdated**: AGENTS.md states "CDK is not maintained at parity" — this is no longer true. CDK is now the primary deployment path with full Lambda runtime, SSM lookups, and proper IAM.
+### Source IP Extraction
+`TenantResource.java` reads `ctx.getProperty("sourceIp")` for auto-detecting SSH CIDR, but no JAX-RS filter sets this property from the API Gateway request context. Callers must pass `--ssh-cidr` explicitly.
 
-3. **sam.yaml may be stale**: The SAM template (`sam.yaml`) predates the 3-Lambda split and tenant-service additions. It likely doesn't match the current CDK stack.
+## Known Issues
 
-4. **README.md references old architecture**: README still shows the single-Lambda flow and doesn't mention tenant-service or the composable provisioning architecture.
+### DLM Delete
+`TenantDlmService.deleteEtcdBackupPolicy()` uses `tagsToAdd` filter on `GetLifecyclePolicies` — verify this correctly filters by the `Tenant` tag. May need to use `targetTags` instead.
 
-## Completeness Gaps
+### Orphaned Resources
+If the Lambda times out (900s) mid-provisioning, the rollback won't execute. Consider a separate cleanup Lambda triggered by DynamoDB stream on `state=failed` or a scheduled sweeper.
 
-1. **No deprovision documentation**: The deprovision flow (cleanup of subnets, SG, IAM, SQS, EventBridge, DLM) is implemented but not documented in workflows.
+## Gaps
 
-2. **No error handling documentation**: What happens when provisioning partially fails? No rollback/compensation logic is documented.
-
-3. **Hibernate/Resume not implemented**: Documented in `docs/TENANT_HIBERNATE_RESUME.md` but the actual `POST /tenants/{id}/hibernate` and `/resume` endpoints don't exist yet in code.
-
-4. **Kube-API proxy not implemented**: Documented in `docs/KUBE_API_PROXY_ARCHITECTURE.md` but no code exists for this feature.
-
-5. **Missing integration test for tenant provisioning**: No test exercises the full provisioning flow (would need LocalStack or mocked AWS services).
-
-6. **No Helm chart documentation**: Auth-proxy and webhook generate Helm charts via quarkus-helm but chart values/configuration aren't documented.
-
-## Recommendations
-
-1. **Update AGENTS.md** — regenerate with current module structure (this run will do it)
-2. **Archive or update sam.yaml** — either bring to parity with CDK or mark as deprecated
-3. **Add compensation logic** — if EC2 launch fails, clean up IAM role, subnets, SG created earlier
-4. **Implement hibernate/resume endpoints** — code is straightforward per the design doc
-5. **Add tenant provisioning integration test** — use LocalStack in CI
+- No unit tests for `TenantProvisioningService.rollback()`
+- No integration test for full provisioning flow
+- `ownerArn` and `provisionedBy` fields not yet written to DynamoDB (authorization design not implemented)
+- GSIs (`ownerArn-index`, `provisionedBy-index`) not yet created in CDK stack
+- CLI `provision_tenant.sh` wrapper script is a thin shim — consider folding into `eks-dx create tenant`
