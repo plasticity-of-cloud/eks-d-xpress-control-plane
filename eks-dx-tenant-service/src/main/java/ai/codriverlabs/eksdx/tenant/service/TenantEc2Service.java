@@ -14,6 +14,8 @@ import software.amazon.awssdk.services.ec2.model.RunInstancesRequest;
 import software.amazon.awssdk.services.ec2.model.RunInstancesResponse;
 import software.amazon.awssdk.services.ec2.model.Tag;
 import software.amazon.awssdk.services.ec2.model.TagSpecification;
+import software.amazon.awssdk.services.ssm.SsmClient;
+import software.amazon.awssdk.services.ssm.model.GetParameterRequest;
 
 import java.util.Base64;
 
@@ -26,18 +28,24 @@ public class TenantEc2Service {
     private static final Logger LOG = Logger.getLogger(TenantEc2Service.class);
 
     private final Ec2Client ec2 = Ec2Client.create();
+    private final SsmClient ssm = SsmClient.create();
 
     public record Ec2Result(String instanceId, String elasticIp) {}
 
     public Ec2Result launchInstance(String tenantId, String clusterName, String launchTemplateId,
                                    String subnetId, String securityGroupId, String instanceProfileName,
                                    String keyName, String region, String k8sVersion,
-                                   boolean assignElasticIp, int diskSizeGb) {
+                                   boolean assignElasticIp, int diskSizeGb, String arch) {
+
+        String amiId = ssm.getParameter(GetParameterRequest.builder()
+            .name("/eks-d-xpress/infra/ami/" + arch + "/" + k8sVersion)
+            .build()).parameter().value();
 
         String userData = Base64.getEncoder().encodeToString(userDataScript(
             tenantId, clusterName, region, k8sVersion).getBytes());
 
         RunInstancesResponse runResp = ec2.runInstances(RunInstancesRequest.builder()
+            .imageId(amiId)
             .launchTemplate(LaunchTemplateSpecification.builder()
                 .launchTemplateId(launchTemplateId).build())
             .subnetId(subnetId)

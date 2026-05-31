@@ -166,7 +166,7 @@ public class TenantProvisioningService {
                 tenantId, clusterName, launchTemplateId,
                 network.publicSubnetId(), network.securityGroupId(),
                 iamResult.instanceProfileName(), "eks-d-xpress-tenant-" + tenantId,
-                region, k8sVersion, assignElasticIp, diskSizeGb);
+                region, k8sVersion, assignElasticIp, diskSizeGb, arch);
             created.instanceId = ec2Result.instanceId();
 
             // 7. Write initial DynamoDB state

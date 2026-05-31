@@ -74,6 +74,10 @@
       <groupId>software.amazon.awssdk</groupId>
       <artifactId>dlm</artifactId>
     </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>ssm</artifactId>
+    </dependency>
     <!-- IAM and STS via Quarkus extension (available in BOM) -->
     <dependency>
       <groupId>io.quarkiverse.amazonservices</groupId>

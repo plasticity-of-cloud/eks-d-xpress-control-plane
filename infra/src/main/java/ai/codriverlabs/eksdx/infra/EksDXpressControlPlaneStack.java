@@ -335,8 +335,11 @@ public class EksDXpressControlPlaneStack extends Stack {
             .build());
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of("ssm:GetParameter"))
-            .resources(List.of(String.format("arn:aws:ssm:%s:%s:parameter%s",
-                Stack.of(this).getRegion(), Stack.of(this).getAccount(), endpointParamName)))
+            .resources(List.of(
+                String.format("arn:aws:ssm:%s:%s:parameter%s",
+                    Stack.of(this).getRegion(), Stack.of(this).getAccount(), endpointParamName),
+                String.format("arn:aws:ssm:%s:%s:parameter/eks-d-xpress/infra/ami/*",
+                    Stack.of(this).getRegion(), Stack.of(this).getAccount())))
             .build());
 
         // -----------------------------------------------------------------------
