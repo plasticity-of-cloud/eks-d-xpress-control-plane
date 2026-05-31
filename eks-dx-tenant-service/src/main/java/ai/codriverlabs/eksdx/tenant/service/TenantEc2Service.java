@@ -89,6 +89,11 @@ public class TenantEc2Service {
         String instanceId = runResp.instances().getFirst().instanceId();
         LOG.infof("Launched EC2 instance %s for tenant %s", instanceId, tenantId);
 
+        // Wait for instance to reach running state before associating EIP
+        LOG.infof("Waiting for instance %s to reach running state...", instanceId);
+        ec2.waiter().waitUntilInstanceRunning(r -> r.instanceIds(instanceId));
+        LOG.infof("Instance %s is running", instanceId);
+
         String elasticIp = null;
         var allocResp = ec2.allocateAddress(AllocateAddressRequest.builder()
             .domain("vpc")

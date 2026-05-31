@@ -206,6 +206,8 @@ public class TenantProvisioningService {
                 ec2.terminateInstances(software.amazon.awssdk.services.ec2.model.TerminateInstancesRequest.builder()
                     .instanceIds(created.instanceId).build());
                 LOG.infof("Rollback: terminated instance %s", created.instanceId);
+                // Wait for termination before deleting network resources (SG has dependency)
+                ec2.waiter().waitUntilInstanceTerminated(r -> r.instanceIds(created.instanceId));
             } catch (Exception ex) { LOG.warnf("Rollback: failed to terminate instance: %s", ex.getMessage()); }
         }
 
