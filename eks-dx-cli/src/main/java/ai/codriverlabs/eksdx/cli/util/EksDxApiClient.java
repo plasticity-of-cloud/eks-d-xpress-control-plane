@@ -39,6 +39,19 @@ public class EksDxApiClient {
         return send("GET", path, null);
     }
 
+    /** Returns the HTTP status code without throwing on 4xx/5xx. */
+    public int getStatus(String path) {
+        try {
+            URI uri = URI.create(endpoint + path);
+            var builder = HttpRequest.newBuilder().uri(uri).GET();
+            if (signer != null) signer.sign(builder, "GET", uri, null, "execute-api");
+            else builder.header("Content-Type", "application/json");
+            return httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     public String put(String path, String body) {
         return send("PUT", path, body);
     }
