@@ -211,4 +211,26 @@ public class TenantIamService {
                 clusterName                        // CloudProviderWriteTagged
             );
     }
+
+    /**
+     * Best-effort cleanup of tenant IAM role and instance profile.
+     */
+    public void deleteTenantRole(String roleName, String instanceProfileName) {
+        try {
+            iam.removeRoleFromInstanceProfile(software.amazon.awssdk.services.iam.model.RemoveRoleFromInstanceProfileRequest.builder()
+                .instanceProfileName(instanceProfileName).roleName(roleName).build());
+        } catch (Exception ignored) {}
+        try {
+            iam.deleteInstanceProfile(software.amazon.awssdk.services.iam.model.DeleteInstanceProfileRequest.builder()
+                .instanceProfileName(instanceProfileName).build());
+        } catch (Exception ignored) {}
+        try {
+            iam.listRolePolicies(software.amazon.awssdk.services.iam.model.ListRolePoliciesRequest.builder()
+                .roleName(roleName).build()).policyNames().forEach(policy ->
+                    iam.deleteRolePolicy(software.amazon.awssdk.services.iam.model.DeleteRolePolicyRequest.builder()
+                        .roleName(roleName).policyName(policy).build()));
+        } catch (Exception ignored) {}
+        iam.deleteRole(software.amazon.awssdk.services.iam.model.DeleteRoleRequest.builder()
+            .roleName(roleName).build());
+    }
 }

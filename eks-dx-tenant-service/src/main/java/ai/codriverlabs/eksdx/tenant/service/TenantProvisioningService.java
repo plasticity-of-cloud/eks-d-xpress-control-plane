@@ -119,53 +119,151 @@ public class TenantProvisioningService {
         String accountId = sts.getCallerIdentity(GetCallerIdentityRequest.builder().build()).account();
         String clusterName = "eks-d-xpress-" + tenantId;
 
-        // 1. Network isolation (per-tenant subnets + security group)
-        String az = availabilityZone.isEmpty() || "auto".equals(availabilityZone) ? region + "a" : availabilityZone;
-        TenantNetworkService.NetworkResult network = networkService.createTenantNetwork(
-            tenantId, clusterName, vpcId, az, sshCidr);
+        // Track created resources for rollback on failure
+        var created = new ProvisionedResources();
 
-        // 2. Secrets (SA signing key + SSH key pair)
-        String signingKeyPem = generateRsaPrivateKeyPem();
-        secretsManager.createSecret(CreateSecretRequest.builder()
-            .name("eks-d-xpress/tenant/" + tenantId + "/signing-key")
-            .secretString(signingKeyPem).build());
-        CreateKeyPairResponse keyPairResp = ec2.createKeyPair(CreateKeyPairRequest.builder()
-            .keyName("eks-d-xpress-tenant-" + tenantId).build());
-        String sshKeyArn = secretsManager.createSecret(CreateSecretRequest.builder()
-            .name("eks-d-xpress/tenant/" + tenantId + "/ssh-key")
-            .secretString(keyPairResp.keyMaterial()).build()).arn();
+        try {
+            // 1. Network isolation (per-tenant subnets + security group)
+            String az = availabilityZone.isEmpty() || "auto".equals(availabilityZone) ? region + "a" : availabilityZone;
+            TenantNetworkService.NetworkResult network = networkService.createTenantNetwork(
+                tenantId, clusterName, vpcId, az, sshCidr);
+            created.network = network;
 
-        // 3. IAM role + instance profile
-        TenantIamService.IamResult iamResult = iamService.createTenantRole(
-            tenantId, clusterName, region, accountId);
+            // 2. Secrets (SA signing key + SSH key pair)
+            String signingKeyPem = generateRsaPrivateKeyPem();
+            secretsManager.createSecret(CreateSecretRequest.builder()
+                .name("eks-d-xpress/tenant/" + tenantId + "/signing-key")
+                .secretString(signingKeyPem).build());
+            created.signingKeySecret = "eks-d-xpress/tenant/" + tenantId + "/signing-key";
 
-        // 4. SQS + EventBridge (Karpenter interruption handling)
-        String queueArn = createInterruptionQueue(clusterName, region, accountId);
-        createEventBridgeRules(clusterName, queueArn);
+            CreateKeyPairResponse keyPairResp = ec2.createKeyPair(CreateKeyPairRequest.builder()
+                .keyName("eks-d-xpress-tenant-" + tenantId).build());
+            created.keyPairName = "eks-d-xpress-tenant-" + tenantId;
 
-        // 5. DLM (daily etcd backup)
-        dlmService.createEtcdBackupPolicy(tenantId, clusterName);
+            String sshKeyArn = secretsManager.createSecret(CreateSecretRequest.builder()
+                .name("eks-d-xpress/tenant/" + tenantId + "/ssh-key")
+                .secretString(keyPairResp.keyMaterial()).build()).arn();
+            created.sshKeySecret = "eks-d-xpress/tenant/" + tenantId + "/ssh-key";
 
-        // 6. EC2 instance launch
-        TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
-            tenantId, clusterName, launchTemplateId,
-            network.publicSubnetId(), network.securityGroupId(),
-            iamResult.instanceProfileName(), "eks-d-xpress-tenant-" + tenantId,
-            region, k8sVersion, assignElasticIp, diskSizeGb);
+            // 3. IAM role + instance profile
+            TenantIamService.IamResult iamResult = iamService.createTenantRole(
+                tenantId, clusterName, region, accountId);
+            created.iamRoleName = iamResult.roleName();
+            created.instanceProfileName = iamResult.instanceProfileName();
 
-        // 7. Write initial DynamoDB state
-        String now = Instant.now().toString();
-        Map<String, AttributeValue> item = new HashMap<>();
-        item.put("tenantId", AttributeValue.fromS(tenantId));
-        item.put("instanceId", AttributeValue.fromS(ec2Result.instanceId()));
-        item.put("state", AttributeValue.fromS("provisioning"));
-        item.put("phase", AttributeValue.fromS("EC2 instance launched"));
-        item.put("progress", AttributeValue.fromN("0"));
-        item.put("sshKeySecretArn", AttributeValue.fromS(sshKeyArn));
-        item.put("updatedAt", AttributeValue.fromS(now));
-        dynamoDb.putItem(PutItemRequest.builder().tableName(tenantsTable).item(item).build());
+            // 4. SQS + EventBridge (Karpenter interruption handling)
+            String queueArn = createInterruptionQueue(clusterName, region, accountId);
+            created.queueUrl = queueArn;
+            createEventBridgeRules(clusterName, queueArn);
+            created.eventBridgeRulePrefix = clusterName;
 
-        return tenantId;
+            // 5. DLM (daily etcd backup)
+            dlmService.createEtcdBackupPolicy(tenantId, clusterName);
+            created.dlmPolicyCreated = true;
+
+            // 6. EC2 instance launch
+            TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
+                tenantId, clusterName, launchTemplateId,
+                network.publicSubnetId(), network.securityGroupId(),
+                iamResult.instanceProfileName(), "eks-d-xpress-tenant-" + tenantId,
+                region, k8sVersion, assignElasticIp, diskSizeGb);
+            created.instanceId = ec2Result.instanceId();
+
+            // 7. Write initial DynamoDB state
+            String now = Instant.now().toString();
+            Map<String, AttributeValue> item = new HashMap<>();
+            item.put("tenantId", AttributeValue.fromS(tenantId));
+            item.put("instanceId", AttributeValue.fromS(ec2Result.instanceId()));
+            item.put("state", AttributeValue.fromS("provisioning"));
+            item.put("phase", AttributeValue.fromS("EC2 instance launched"));
+            item.put("progress", AttributeValue.fromN("0"));
+            item.put("sshKeySecretArn", AttributeValue.fromS(sshKeyArn));
+            item.put("updatedAt", AttributeValue.fromS(now));
+            dynamoDb.putItem(PutItemRequest.builder().tableName(tenantsTable).item(item).build());
+
+            return tenantId;
+        } catch (Exception e) {
+            LOG.errorf("Provisioning failed at step, initiating rollback for tenant %s: %s", tenantId, e.getMessage());
+            rollback(tenantId, clusterName, created);
+            throw e;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Rollback — best-effort cleanup of partially-created resources
+    // -------------------------------------------------------------------------
+
+    private void rollback(String tenantId, String clusterName, ProvisionedResources created) {
+        LOG.infof("Rolling back tenant %s", tenantId);
+
+        if (created.instanceId != null) {
+            try {
+                ec2.terminateInstances(software.amazon.awssdk.services.ec2.model.TerminateInstancesRequest.builder()
+                    .instanceIds(created.instanceId).build());
+                LOG.infof("Rollback: terminated instance %s", created.instanceId);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to terminate instance: %s", ex.getMessage()); }
+        }
+
+        if (created.dlmPolicyCreated) {
+            try {
+                dlmService.deleteEtcdBackupPolicy(tenantId, clusterName);
+                LOG.infof("Rollback: deleted DLM policy for %s", tenantId);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete DLM policy: %s", ex.getMessage()); }
+        }
+
+        if (created.instanceProfileName != null) {
+            try {
+                iamService.deleteTenantRole(created.iamRoleName, created.instanceProfileName);
+                LOG.infof("Rollback: deleted IAM role %s", created.iamRoleName);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete IAM role: %s", ex.getMessage()); }
+        }
+
+        if (created.keyPairName != null) {
+            try {
+                ec2.deleteKeyPair(software.amazon.awssdk.services.ec2.model.DeleteKeyPairRequest.builder()
+                    .keyName(created.keyPairName).build());
+                LOG.infof("Rollback: deleted key pair %s", created.keyPairName);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete key pair: %s", ex.getMessage()); }
+        }
+
+        if (created.sshKeySecret != null) {
+            try {
+                secretsManager.deleteSecret(DeleteSecretRequest.builder()
+                    .secretId(created.sshKeySecret).forceDeleteWithoutRecovery(true).build());
+                LOG.infof("Rollback: deleted secret %s", created.sshKeySecret);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete secret: %s", ex.getMessage()); }
+        }
+
+        if (created.signingKeySecret != null) {
+            try {
+                secretsManager.deleteSecret(DeleteSecretRequest.builder()
+                    .secretId(created.signingKeySecret).forceDeleteWithoutRecovery(true).build());
+                LOG.infof("Rollback: deleted secret %s", created.signingKeySecret);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete secret: %s", ex.getMessage()); }
+        }
+
+        if (created.network != null) {
+            try {
+                networkService.deleteTenantNetwork(created.network);
+                LOG.infof("Rollback: deleted network resources for %s", tenantId);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete network: %s", ex.getMessage()); }
+        }
+    }
+
+    /**
+     * Tracks resources created during provisioning for rollback on failure.
+     */
+    private static class ProvisionedResources {
+        TenantNetworkService.NetworkResult network;
+        String signingKeySecret;
+        String sshKeySecret;
+        String keyPairName;
+        String iamRoleName;
+        String instanceProfileName;
+        String queueUrl;
+        String eventBridgeRulePrefix;
+        boolean dlmPolicyCreated;
+        String instanceId;
     }
 
     // -------------------------------------------------------------------------

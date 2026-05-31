@@ -91,4 +91,20 @@ public class TenantDlmService {
             .getCallerIdentity(software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest.builder().build())
             .account();
     }
+
+    /**
+     * Best-effort cleanup of DLM policy for a tenant.
+     */
+    public void deleteEtcdBackupPolicy(String tenantId, String clusterName) {
+        var policies = dlm.getLifecyclePolicies(
+            software.amazon.awssdk.services.dlm.model.GetLifecyclePoliciesRequest.builder()
+                .tagsToAdd("Tenant=" + tenantId)
+                .build()).policies();
+        for (var summary : policies) {
+            dlm.deleteLifecyclePolicy(
+                software.amazon.awssdk.services.dlm.model.DeleteLifecyclePolicyRequest.builder()
+                    .policyId(summary.policyId()).build());
+            LOG.infof("Deleted DLM policy %s for tenant %s", summary.policyId(), tenantId);
+        }
+    }
 }

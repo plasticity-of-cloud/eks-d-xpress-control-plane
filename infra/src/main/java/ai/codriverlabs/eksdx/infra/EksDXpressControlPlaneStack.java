@@ -273,7 +273,8 @@ public class EksDXpressControlPlaneStack extends Stack {
             Stack.of(this).getRegion(), Stack.of(this).getAccount(), vpcId);
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
-                "ec2:CreateSubnet", "ec2:CreateSecurityGroup",
+                "ec2:CreateSubnet", "ec2:DeleteSubnet",
+                "ec2:CreateSecurityGroup", "ec2:DeleteSecurityGroup",
                 "ec2:AuthorizeSecurityGroupIngress", "ec2:AssociateRouteTable"))
             .resources(List.of(vpcArn,
                 String.format("arn:aws:ec2:%s:%s:subnet/*", Stack.of(this).getRegion(), Stack.of(this).getAccount()),

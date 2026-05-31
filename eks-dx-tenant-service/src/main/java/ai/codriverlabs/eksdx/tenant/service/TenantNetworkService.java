@@ -176,4 +176,22 @@ public class TenantNetworkService {
         }
         return maxIndex + 1;
     }
+
+    /**
+     * Best-effort cleanup of tenant network resources.
+     */
+    public void deleteTenantNetwork(NetworkResult network) {
+        if (network.securityGroupId() != null) {
+            ec2.deleteSecurityGroup(software.amazon.awssdk.services.ec2.model.DeleteSecurityGroupRequest.builder()
+                .groupId(network.securityGroupId()).build());
+        }
+        if (network.publicSubnetId() != null) {
+            ec2.deleteSubnet(software.amazon.awssdk.services.ec2.model.DeleteSubnetRequest.builder()
+                .subnetId(network.publicSubnetId()).build());
+        }
+        if (network.privateSubnetId() != null) {
+            ec2.deleteSubnet(software.amazon.awssdk.services.ec2.model.DeleteSubnetRequest.builder()
+                .subnetId(network.privateSubnetId()).build());
+        }
+    }
 }
