@@ -87,8 +87,8 @@ public class TenantNetworkService {
         LOG.infof("Created private subnet %s (%s) for tenant %s", privateSubnetId, privateCidr, tenantId);
 
         // Route table associations
-        String publicRtId = findRouteTable(vpcId, "eks-d-xpress-public-rt");
-        String privateRtId = findRouteTable(vpcId, "eks-d-xpress-private-rt");
+        String publicRtId = findRouteTable(vpcId, "eks-dx-infra-public-rt");
+        String privateRtId = findRouteTable(vpcId, "eks-dx-infra-private-rt");
         ec2.associateRouteTable(AssociateRouteTableRequest.builder()
             .subnetId(publicSubnetId).routeTableId(publicRtId).build());
         ec2.associateRouteTable(AssociateRouteTableRequest.builder()

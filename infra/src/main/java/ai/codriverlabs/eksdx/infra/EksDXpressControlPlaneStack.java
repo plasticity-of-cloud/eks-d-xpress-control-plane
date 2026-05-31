@@ -263,14 +263,29 @@ public class EksDXpressControlPlaneStack extends Stack {
             .actions(List.of("dynamodb:DeleteItem"))
             .resources(List.of(clustersTable.getTableArn()))
             .build());
+        // EC2: read-only on shared VPC infrastructure
+        tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
+            .actions(List.of("ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables"))
+            .resources(List.of("*"))
+            .build());
+        // EC2: mutating actions scoped to shared VPC
+        String vpcArn = String.format("arn:aws:ec2:%s:%s:vpc/%s",
+            Stack.of(this).getRegion(), Stack.of(this).getAccount(), vpcId);
+        tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
+            .actions(List.of(
+                "ec2:CreateSubnet", "ec2:CreateSecurityGroup",
+                "ec2:AuthorizeSecurityGroupIngress", "ec2:AssociateRouteTable"))
+            .resources(List.of(vpcArn,
+                String.format("arn:aws:ec2:%s:%s:subnet/*", Stack.of(this).getRegion(), Stack.of(this).getAccount()),
+                String.format("arn:aws:ec2:%s:%s:security-group/*", Stack.of(this).getRegion(), Stack.of(this).getAccount()),
+                String.format("arn:aws:ec2:%s:%s:route-table/*", Stack.of(this).getRegion(), Stack.of(this).getAccount())))
+            .build());
+        // EC2: instance lifecycle + EIP
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
                 "ec2:RunInstances", "ec2:TerminateInstances",
                 "ec2:CreateKeyPair", "ec2:DeleteKeyPair",
                 "ec2:DescribeInstances", "ec2:CreateTags",
-                "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables",
-                "ec2:CreateSubnet", "ec2:CreateSecurityGroup",
-                "ec2:AuthorizeSecurityGroupIngress", "ec2:AssociateRouteTable",
                 "ec2:AllocateAddress", "ec2:AssociateAddress"))
             .resources(List.of("*"))
             .build());
