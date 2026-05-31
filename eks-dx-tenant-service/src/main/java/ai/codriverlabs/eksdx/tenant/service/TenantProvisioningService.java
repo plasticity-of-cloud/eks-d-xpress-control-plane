@@ -211,6 +211,20 @@ public class TenantProvisioningService {
             } catch (Exception ex) { LOG.warnf("Rollback: failed to delete DLM policy: %s", ex.getMessage()); }
         }
 
+        if (created.eventBridgeRulePrefix != null) {
+            try {
+                deleteEventBridgeRules(created.eventBridgeRulePrefix);
+                LOG.infof("Rollback: deleted EventBridge rules for %s", created.eventBridgeRulePrefix);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete EventBridge rules: %s", ex.getMessage()); }
+        }
+
+        if (created.queueUrl != null) {
+            try {
+                deleteInterruptionQueue(clusterName);
+                LOG.infof("Rollback: deleted SQS queue for %s", clusterName);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete SQS queue: %s", ex.getMessage()); }
+        }
+
         if (created.instanceProfileName != null) {
             try {
                 iamService.deleteTenantRole(created.iamRoleName, created.instanceProfileName);
@@ -338,7 +352,21 @@ public class TenantProvisioningService {
             LOG.warnf("Could not delete IAM role %s: %s", roleName, e.getMessage());
         }
 
-        // 6. Delete tenant DynamoDB item
+        // 6. Delete EventBridge rules + SQS queue
+        String clusterName = "eks-d-xpress-" + tenantId;
+        try { deleteEventBridgeRules(clusterName); } catch (Exception e) {
+            LOG.warnf("Could not delete EventBridge rules for %s: %s", tenantId, e.getMessage());
+        }
+        try { deleteInterruptionQueue(clusterName); } catch (Exception e) {
+            LOG.warnf("Could not delete SQS queue for %s: %s", tenantId, e.getMessage());
+        }
+
+        // 7. Delete DLM policy
+        try { dlmService.deleteEtcdBackupPolicy(tenantId, clusterName); } catch (Exception e) {
+            LOG.warnf("Could not delete DLM policy for %s: %s", tenantId, e.getMessage());
+        }
+
+        // 8. Delete tenant DynamoDB item
         dynamoDb.deleteItem(DeleteItemRequest.builder()
             .tableName(tenantsTable)
             .key(Map.of("tenantId", AttributeValue.fromS(tenantId)))
@@ -393,6 +421,27 @@ public class TenantProvisioningService {
             .rule(ruleName)
             .targets(Target.builder().id("sqs").arn(targetArn).build())
             .build());
+    }
+
+    private void deleteEventBridgeRules(String clusterName) {
+        for (String suffix : List.of("-spot-interruption", "-instance-state-change", "-instance-rebalance")) {
+            String ruleName = clusterName + suffix;
+            try {
+                events.removeTargets(software.amazon.awssdk.services.cloudwatchevents.model.RemoveTargetsRequest.builder()
+                    .rule(ruleName).ids("sqs").build());
+                events.deleteRule(software.amazon.awssdk.services.cloudwatchevents.model.DeleteRuleRequest.builder()
+                    .name(ruleName).build());
+            } catch (Exception e) {
+                LOG.warnf("Could not delete EventBridge rule %s: %s", ruleName, e.getMessage());
+            }
+        }
+    }
+
+    private void deleteInterruptionQueue(String clusterName) {
+        String queueUrl = sqs.getQueueUrl(software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest.builder()
+            .queueName(clusterName).build()).queueUrl();
+        sqs.deleteQueue(software.amazon.awssdk.services.sqs.model.DeleteQueueRequest.builder()
+            .queueUrl(queueUrl).build());
     }
 
     private String resolveLaunchTemplate(String arch, String pricingModel) {

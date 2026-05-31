@@ -44,7 +44,7 @@ public class TenantEc2Service {
         String userData = Base64.getEncoder().encodeToString(userDataScript(
             tenantId, clusterName, region, k8sVersion).getBytes());
 
-        RunInstancesResponse runResp = ec2.runInstances(RunInstancesRequest.builder()
+        var runRequest = RunInstancesRequest.builder()
             .imageId(amiId)
             .launchTemplate(LaunchTemplateSpecification.builder()
                 .launchTemplateId(launchTemplateId).build())
@@ -68,7 +68,23 @@ public class TenantEc2Service {
                     Tag.builder().key("ebs.csi.aws.com/cluster-name").value(clusterName).build(),
                     Tag.builder().key("Platform").value("eks-d-xpress").build())
                 .build())
-            .build());
+            .build();
+
+        // IAM instance profiles are eventually consistent — retry up to 30s
+        RunInstancesResponse runResp = null;
+        for (int attempt = 1; attempt <= 6; attempt++) {
+            try {
+                runResp = ec2.runInstances(runRequest);
+                break;
+            } catch (software.amazon.awssdk.services.ec2.model.Ec2Exception e) {
+                if (attempt < 6 && e.getMessage().contains("Invalid IAM Instance Profile")) {
+                    LOG.infof("Instance profile not yet propagated, retrying (%d/6)...", attempt);
+                    try { Thread.sleep(5_000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); throw e; }
+                } else {
+                    throw e;
+                }
+            }
+        }
 
         String instanceId = runResp.instances().getFirst().instanceId();
         LOG.infof("Launched EC2 instance %s for tenant %s", instanceId, tenantId);
