@@ -1,6 +1,7 @@
 package ai.codriverlabs.eksdx.cli.tenant;
 
 import ai.codriverlabs.eksdx.cli.config.EksDxConfig;
+import ai.codriverlabs.eksdx.cli.util.AwsSigV4Signer;
 import ai.codriverlabs.eksdx.cli.util.EksDxApiClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -76,7 +77,12 @@ public class CreateTenantCommand implements Runnable {
 
             EksDxConfig config = new EksDxConfig();
             String region = config.getRegion();
-            String url = (streamUrl != null ? streamUrl : config.getStreamUrl())
+            String resolvedStreamUrl = streamUrl != null ? streamUrl : config.getStreamUrl();
+            if (resolvedStreamUrl == null) {
+                System.err.println("Error: stream URL not configured. Set EKS_DX_STREAM_URL or run 'eks-dx configure'.");
+                System.exit(1);
+            }
+            String url = resolvedStreamUrl.stripTrailing().replaceAll("/$", "")
                 + "/tenants/" + tenantId + "/stream";
 
             streamProgress(url, region);
@@ -88,15 +94,25 @@ public class CreateTenantCommand implements Runnable {
 
     private void streamProgress(String url, String region) {
         try {
-            HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
+            URI uri = URI.create(url);
+            HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(uri)
                 .header("Accept", "text/event-stream")
-                .GET()
-                .build();
+                .GET();
+
+            AwsSigV4Signer signer = AwsSigV4Signer.create(region);
+            if (signer != null) {
+                signer.sign(builder, "GET", uri, null, "lambda");
+            }
 
             HttpClient client = HttpClient.newHttpClient();
-            HttpResponse<java.io.InputStream> response = client.send(request,
+            HttpResponse<java.io.InputStream> response = client.send(builder.build(),
                 HttpResponse.BodyHandlers.ofInputStream());
+
+            if (response.statusCode() >= 400) {
+                System.err.println("Stream error: HTTP " + response.statusCode());
+                System.exit(1);
+            }
 
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
                 String line;
