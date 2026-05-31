@@ -303,7 +303,7 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "secretsmanager:CreateSecret",
                 "secretsmanager:DeleteSecret",
                 "secretsmanager:GetSecretValue"))
-            .resources(List.of("arn:aws:secretsmanager:*:*:secret:eks-dx/tenant/*"))
+            .resources(List.of("arn:aws:secretsmanager:*:*:secret:eks-d-xpress/tenant/*"))
             .build());
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of("sts:GetCallerIdentity"))
