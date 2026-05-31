@@ -366,15 +366,27 @@ public class TenantProvisioningService {
             LOG.warnf("Could not delete key pair for tenant %s: %s", tenantId, e.getMessage());
         }
 
-        // 5. Delete IAM role
+        // 5. Delete IAM role + instance profile
         String roleName = "eks-d-xpress-tenant-" + tenantId + "-instance-role";
         try {
-            iam.deleteRolePolicy(DeleteRolePolicyRequest.builder()
-                .roleName(roleName).policyName("eks-dx-tenant-policy").build());
-            iam.deleteRole(DeleteRoleRequest.builder().roleName(roleName).build());
-            LOG.infof("Deleted IAM role %s", roleName);
+            iamService.deleteTenantRole(roleName, roleName);
+            LOG.infof("Deleted IAM role + instance profile %s", roleName);
         } catch (Exception e) {
             LOG.warnf("Could not delete IAM role %s: %s", roleName, e.getMessage());
+        }
+
+        // 5b. Delete DLM execution role
+        String dlmRoleName = "eks-d-xpress-tenant-" + tenantId + "-dlm";
+        try {
+            iam.detachRolePolicy(software.amazon.awssdk.services.iam.model.DetachRolePolicyRequest.builder()
+                .roleName(dlmRoleName)
+                .policyArn("arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole")
+                .build());
+            iam.deleteRole(software.amazon.awssdk.services.iam.model.DeleteRoleRequest.builder()
+                .roleName(dlmRoleName).build());
+            LOG.infof("Deleted DLM role %s", dlmRoleName);
+        } catch (Exception e) {
+            LOG.warnf("Could not delete DLM role %s: %s", dlmRoleName, e.getMessage());
         }
 
         // 6. Delete EventBridge rules + SQS queue
@@ -384,6 +396,21 @@ public class TenantProvisioningService {
         }
         try { deleteInterruptionQueue(clusterName); } catch (Exception e) {
             LOG.warnf("Could not delete SQS queue for %s: %s", tenantId, e.getMessage());
+        }
+
+        // 6b. Delete security group (look up by tenant tag)
+        try {
+            var sgResp = ec2.describeSecurityGroups(software.amazon.awssdk.services.ec2.model.DescribeSecurityGroupsRequest.builder()
+                .filters(software.amazon.awssdk.services.ec2.model.Filter.builder()
+                    .name("tag:eks-d-xpress-tenant").values(tenantId).build())
+                .build());
+            for (var sg : sgResp.securityGroups()) {
+                ec2.deleteSecurityGroup(software.amazon.awssdk.services.ec2.model.DeleteSecurityGroupRequest.builder()
+                    .groupId(sg.groupId()).build());
+                LOG.infof("Deleted security group %s", sg.groupId());
+            }
+        } catch (Exception e) {
+            LOG.warnf("Could not delete security group for tenant %s: %s", tenantId, e.getMessage());
         }
 
         // 7. Delete DLM policy
