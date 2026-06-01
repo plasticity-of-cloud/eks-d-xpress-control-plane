@@ -246,8 +246,8 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "EKS_DX_AVAILABILITY_ZONE", "auto"))
             .build();
 
-        // Function URL for SSE /stream endpoint (not via API Gateway)
-        // Uses addFunctionUrl() to preserve the existing CloudFormation resource ID
+        // Single Function URL for both SSE stream and provisioning — bypasses API Gateway's 29s timeout.
+        // RESPONSE_STREAM mode supports both streaming (SSE) and buffered responses.
         FunctionUrl tenantFunctionUrl = tenantFn.addFunctionUrl(FunctionUrlOptions.builder()
             .authType(FunctionUrlAuthType.AWS_IAM)
             .invokeMode(InvokeMode.RESPONSE_STREAM)
@@ -256,20 +256,14 @@ public class EksDXpressControlPlaneStack extends Stack {
         StringParameter.Builder.create(this, "TenantStreamUrlParam")
             .parameterName("/eks-d-xpress/control-plane/api/stream-url")
             .stringValue(tenantFunctionUrl.getUrl())
-            .description("EKS-DX tenant SSE stream Function URL — read by CLI")
+            .description("EKS-DX tenant Function URL — used for both SSE stream and provisioning")
             .build();
 
-        // Function URL for POST /tenants provisioning — bypasses API Gateway's 29s timeout
-        FunctionUrl tenantProvisioningUrl = FunctionUrl.Builder.create(this, "TenantProvisioningFunctionUrl")
-            .function(tenantFn)
-            .authType(FunctionUrlAuthType.AWS_IAM)
-            .invokeMode(InvokeMode.BUFFERED)
-            .build();
-
+        // Provisioning URL reuses the same Function URL (Lambda supports only one Function URL)
         StringParameter.Builder.create(this, "TenantProvisioningUrlParam")
             .parameterName("/eks-d-xpress/control-plane/api/provisioning-url")
-            .stringValue(tenantProvisioningUrl.getUrl())
-            .description("EKS-DX tenant provisioning Function URL — bypasses API Gateway 29s timeout")
+            .stringValue(tenantFunctionUrl.getUrl())
+            .description("EKS-DX tenant provisioning Function URL — same as stream URL")
             .build();
 
         tenantsTable.grantReadWriteData(tenantFn);
