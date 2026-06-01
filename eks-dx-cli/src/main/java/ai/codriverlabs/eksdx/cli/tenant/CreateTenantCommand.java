@@ -68,7 +68,24 @@ public class CreateTenantCommand implements Runnable {
             body.put("diskSizeGb", diskSizeGb);
             body.put("assignElasticIp", assignElasticIp);
             if (sshCidr != null) body.put("sshCidr", sshCidr);
-            String resp = apiClient.post("/tenants", MAPPER.writeValueAsString(body));
+            String resp = apiClient.postTolerant504("/tenants", MAPPER.writeValueAsString(body));
+
+            // null means 504 — Lambda may have succeeded past API Gateway's 29s timeout.
+            // Poll GET /tenants/{id} to confirm before proceeding to stream.
+            if (resp == null) {
+                System.out.println("Request timed out at API Gateway — checking if provisioning started...");
+                long deadline = System.currentTimeMillis() + 30_000;
+                while (System.currentTimeMillis() < deadline) {
+                    Thread.sleep(3_000);
+                    int status = apiClient.getStatus("/tenants/" + tenantId);
+                    if (status == 200) { System.out.println("Provisioning confirmed."); break; }
+                    if (status != 404) continue;
+                }
+                if (apiClient.getStatus("/tenants/" + tenantId) != 200) {
+                    System.err.println("Provisioning did not start within timeout.");
+                    System.exit(1);
+                }
+            }
 
             if (!wait) {
                 System.out.println(resp);

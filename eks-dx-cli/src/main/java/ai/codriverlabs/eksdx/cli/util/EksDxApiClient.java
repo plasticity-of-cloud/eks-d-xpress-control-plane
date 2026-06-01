@@ -35,6 +35,14 @@ public class EksDxApiClient {
         return send("POST", path, body);
     }
 
+    /**
+     * POST that tolerates 504 (API Gateway timeout) — the Lambda may have succeeded.
+     * Returns null on 504 so the caller can poll to confirm.
+     */
+    public String postTolerant504(String path, String body) {
+        return send504Tolerant("POST", path, body);
+    }
+
     public String get(String path) {
         return send("GET", path, null);
     }
@@ -92,6 +100,31 @@ public class EksDxApiClient {
                 System.exit(1);
             }
 
+            return response.body();
+        } catch (Exception e) {
+            System.err.printf("Failed to reach EKS-DX service at %s: %s%n", endpoint, e.getMessage());
+            System.exit(1);
+            return null;
+        }
+    }
+
+    private String send504Tolerant(String method, String path, String body) {
+        try {
+            URI uri = URI.create(endpoint + path);
+            var builder = HttpRequest.newBuilder().uri(uri);
+            if (body != null) builder.method(method, HttpRequest.BodyPublishers.ofString(body));
+            else builder.method(method, HttpRequest.BodyPublishers.noBody());
+            if (signer != null && !path.contains("/assets")) signer.sign(builder, method, uri, body, "execute-api");
+            else builder.header("Content-Type", "application/json");
+            var response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 504) return null; // Lambda may have succeeded past API GW timeout
+            if (response.statusCode() >= 400) {
+                String b = response.body();
+                try { var n = new com.fasterxml.jackson.databind.ObjectMapper().readTree(b);
+                    System.err.println(n.has("message") ? n.get("message").asText() : b);
+                } catch (Exception ignored) { System.err.println(b); }
+                System.exit(1);
+            }
             return response.body();
         } catch (Exception e) {
             System.err.printf("Failed to reach EKS-DX service at %s: %s%n", endpoint, e.getMessage());
