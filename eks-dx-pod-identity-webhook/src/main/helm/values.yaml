@@ -1,5 +1,5 @@
 app:
   imageConfig:
-    registry: 864899852480.dkr.ecr.us-east-1.amazonaws.com
+    registry: ghcr.io
     repository: codriverlabs/eks-dx-pod-identity-webhook
     tag: latest

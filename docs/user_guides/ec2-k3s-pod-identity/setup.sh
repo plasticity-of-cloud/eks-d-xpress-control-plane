@@ -3,7 +3,7 @@
 # Automated setup: EC2 + k3s for EKS-DX Pod Identity
 #
 # Prerequisites:
-#   - Lambda backend deployed (sam deploy)
+#   - Lambda backend deployed (./deploy-local.sh — see README.md)
 #   - AWS CLI v2 configured
 #   - helm 3 installed locally
 #
@@ -101,7 +101,10 @@ MY_IP=$(curl -sf https://checkip.amazonaws.com) || err "Could not determine publ
 aws ec2 authorize-security-group-ingress \
   --group-id "$SG_ID" --protocol tcp --port 22 --cidr "${MY_IP}/32" \
   --region "$REGION" 2>/dev/null || true
-log "SSH access restricted to $MY_IP"
+aws ec2 authorize-security-group-ingress \
+  --group-id "$SG_ID" --protocol tcp --port 6443 --cidr "${MY_IP}/32" \
+  --region "$REGION" 2>/dev/null || true
+log "SSH and k3s API (6443) access restricted to $MY_IP"
 
 # ── 2. Launch EC2 with k3s ───────────────────────────────────────────
 read -r -d '' USERDATA <<'CLOUD_INIT' || true

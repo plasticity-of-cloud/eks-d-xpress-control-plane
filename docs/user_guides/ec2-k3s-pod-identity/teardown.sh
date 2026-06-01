@@ -52,22 +52,33 @@ log "Cluster: $CLUSTER_NAME  Region: $REGION"
 # ── 1. Deregister cluster + associations from EKS-DX ─────────────────
 CLI_JAR="$(dirname "$0")/../../../../eks-dx-cli/target/eks-dx-cli-*-runner.jar"
 CLI_JAR=$(ls $CLI_JAR 2>/dev/null | head -1 || true)
+CLI_NATIVE="$(dirname "$0")/../../../../eks-dx-cli/target/eks-dx"
 
-if [[ -n "$CLI_JAR" && -f "$CLI_JAR" ]]; then
+if command -v eks-dx &>/dev/null; then
+  CLI="eks-dx"
+elif [[ -f "$CLI_NATIVE" ]]; then
+  CLI="$CLI_NATIVE"
+elif [[ -n "$CLI_JAR" && -f "$CLI_JAR" ]]; then
+  CLI="java -jar $CLI_JAR"
+else
+  CLI=""
+fi
+
+if [[ -n "$CLI" ]]; then
   log "Deleting pod identity associations ..."
-  java -jar "$CLI_JAR" list pod-identity-associations \
+  $CLI list pod-identity-associations \
     --cluster-name "$CLUSTER_NAME" 2>/dev/null | \
     awk '/assoc-/{print $1}' | while read -r ASSOC_ID; do
-      java -jar "$CLI_JAR" delete pod-identity-association \
+      $CLI delete pod-identity-association \
         --cluster-name "$CLUSTER_NAME" --association-id "$ASSOC_ID" 2>/dev/null && \
         log "  Deleted association $ASSOC_ID"
     done
 
   log "Deregistering cluster $CLUSTER_NAME ..."
-  java -jar "$CLI_JAR" delete cluster --name "$CLUSTER_NAME" 2>/dev/null && \
+  $CLI delete cluster --name "$CLUSTER_NAME" 2>/dev/null && \
     log "  Cluster deregistered" || warn "  Cluster not found or already deleted"
 else
-  warn "CLI jar not found — skipping EKS-DX deregistration (do it manually)"
+  warn "eks-dx CLI not found — skipping EKS-DX deregistration (do it manually)"
 fi
 
 # ── 2. Terminate EC2 instance ─────────────────────────────────────────
