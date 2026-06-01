@@ -161,12 +161,12 @@ public class TenantProvisioningService {
             dlmService.createEtcdBackupPolicy(tenantId, clusterName);
             created.dlmPolicyCreated = true;
 
-            // 6. EC2 instance launch
+            // 6. EC2 instance launch — pass created so EIP alloc ID is tracked before association
             TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
                 tenantId, clusterName, launchTemplateId,
                 network.publicSubnetId(), network.securityGroupId(),
                 iamResult.instanceProfileName(), "eks-d-xpress-tenant-" + tenantId,
-                region, k8sVersion, assignElasticIp, diskSizeGb, arch);
+                region, k8sVersion, assignElasticIp, diskSizeGb, arch, created);
             created.instanceId = ec2Result.instanceId();
             created.eipAllocationId = ec2Result.eipAllocationId();
 
@@ -282,7 +282,7 @@ public class TenantProvisioningService {
     /**
      * Tracks resources created during provisioning for rollback on failure.
      */
-    private static class ProvisionedResources {
+    static class ProvisionedResources {
         TenantNetworkService.NetworkResult network;
         String signingKeySecret;
         String sshKeySecret;

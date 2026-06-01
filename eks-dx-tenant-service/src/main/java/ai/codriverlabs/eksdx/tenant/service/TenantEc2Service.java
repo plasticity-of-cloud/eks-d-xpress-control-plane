@@ -35,7 +35,8 @@ public class TenantEc2Service {
     public Ec2Result launchInstance(String tenantId, String clusterName, String launchTemplateId,
                                    String subnetId, String securityGroupId, String instanceProfileName,
                                    String keyName, String region, String k8sVersion,
-                                   boolean assignElasticIp, int diskSizeGb, String arch) {
+                                   boolean assignElasticIp, int diskSizeGb, String arch,
+                                   TenantProvisioningService.ProvisionedResources created) {
 
         String amiId = ssm.getParameter(GetParameterRequest.builder()
             .name("/eks-d-xpress/infra/ami/" + arch + "/" + k8sVersion)
@@ -104,6 +105,8 @@ public class TenantEc2Service {
                       Tag.builder().key("eks-d-xpress-eip-persistent").value(String.valueOf(assignElasticIp)).build())
                 .build())
             .build());
+        // Track allocation ID immediately so rollback can release it even if association fails
+        if (created != null) created.eipAllocationId = allocResp.allocationId();
         ec2.associateAddress(AssociateAddressRequest.builder()
             .instanceId(instanceId)
             .allocationId(allocResp.allocationId())
