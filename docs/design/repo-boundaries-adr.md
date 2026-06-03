@@ -1,6 +1,12 @@
 # ADR: Repository Boundaries — eks-d-xpress, eks-d-xpress-infra, eks-d-xpress-control-plane
 
-## Status: Proposed
+## Status: Accepted — Implemented (2026-06-03)
+
+### Implementation Summary
+
+- **Phase 1** ✅ `scripts/install-eks-dx-pod-identity.sh` created in `eks-d-xpress-control-plane`; `eks-d-setup/12-install-eks-dx-pod-identity.sh` updated to thin wrapper sourcing `/opt/eks-d/scripts/`
+- **Phase 2** ✅ `ami-builder/` and `eks-d-setup/` moved from `eks-d-xpress-infra` → `eks-d-xpress`; `eks-d-xpress/ami-builder/build-control-plane-ami.sh` is the canonical packer build entry point
+- **Phase 3** ✅ `eks-d-xpress-infra/build-control-plane-ami.sh` archived; `ami-builder/` and `eks-d-setup/` archived in `eks-d-xpress-infra/archived/`
 
 ## Context
 
