@@ -125,7 +125,7 @@ Infrastructure writes, Lambda reads at runtime:
 
 ```
 /eks-dx/launch-template/{arch}/{spot|ondemand}   # Launch template IDs
-/eks-dx/ami/{arch}/{k8s-version}                 # AMI IDs (region-specific)
+/eks-d-xpress/infra/ami/{arch}/{k8s-version}     # AMI IDs (region-specific)
 /eks-dx/network/vpc-id                           # VPC
 /eks-dx/network/private-subnet-ids               # Subnets
 /eks-dx/network/security-group-id                # Security group
