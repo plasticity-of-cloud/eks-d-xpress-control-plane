@@ -276,9 +276,11 @@ public class EksDXpressControlPlaneStack extends Stack {
             .actions(List.of("dynamodb:DeleteItem"))
             .resources(List.of(clustersTable.getTableArn()))
             .build());
-        // EC2: read-only on shared VPC infrastructure
+        // EC2: read-only on shared VPC infrastructure (Describe actions require Resource:"*" in IAM)
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
-            .actions(List.of("ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables"))
+            .actions(List.of(
+                "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables",
+                "ec2:DescribeSecurityGroups"))
             .resources(List.of("*"))
             .build());
         // EC2: mutating actions scoped to shared VPC
@@ -294,7 +296,7 @@ public class EksDXpressControlPlaneStack extends Stack {
                 String.format("arn:aws:ec2:%s:%s:security-group/*", Stack.of(this).getRegion(), Stack.of(this).getAccount()),
                 String.format("arn:aws:ec2:%s:%s:route-table/*", Stack.of(this).getRegion(), Stack.of(this).getAccount())))
             .build());
-        // EC2: instance lifecycle + EIP
+        // EC2: instance lifecycle + EIP allocation/association (elastic-ip ARN doesn't exist yet at AllocateAddress time)
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
                 "ec2:RunInstances", "ec2:TerminateInstances",
@@ -302,6 +304,13 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "ec2:DescribeInstances", "ec2:CreateTags",
                 "ec2:AllocateAddress", "ec2:AssociateAddress"))
             .resources(List.of("*"))
+            .build());
+        // EC2: EIP release/disassociate — scoped to EIPs tagged project=eks-d-xpress
+        tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
+            .actions(List.of("ec2:ReleaseAddress", "ec2:DisassociateAddress"))
+            .resources(List.of(String.format("arn:aws:ec2:%s:%s:elastic-ip/*",
+                Stack.of(this).getRegion(), Stack.of(this).getAccount())))
+            .conditions(Map.of("StringEquals", Map.of("aws:ResourceTag/project", "eks-d-xpress")))
             .build());
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(

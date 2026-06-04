@@ -102,7 +102,8 @@ public class TenantEc2Service {
                 .resourceType(ResourceType.ELASTIC_IP)
                 .tags(Tag.builder().key("Name").value(clusterName).build(),
                       Tag.builder().key("eks-d-xpress-tenant").value(tenantId).build(),
-                      Tag.builder().key("eks-d-xpress-eip-persistent").value(String.valueOf(assignElasticIp)).build())
+                      Tag.builder().key("eks-d-xpress-eip-persistent").value(String.valueOf(assignElasticIp)).build(),
+                      Tag.builder().key("project").value("eks-d-xpress").build())
                 .build())
             .build());
         // Track allocation ID immediately so rollback can release it even if association fails
