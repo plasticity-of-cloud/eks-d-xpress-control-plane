@@ -394,14 +394,20 @@ public class TenantProvisioningService {
         LOG.infof("Deprovisioning tenant: %s", tenantId);
         TenantItem tenant = getState(tenantId);
 
-        // 1. Terminate EC2 instance
+        // 1. Terminate EC2 instance and wait for full termination before cleaning up
         if (tenant.instanceId() != null) {
             ec2.terminateInstances(TerminateInstancesRequest.builder()
                 .instanceIds(tenant.instanceId()).build());
-            LOG.infof("Terminated instance %s", tenant.instanceId());
+            LOG.infof("Terminating instance %s — waiting for terminated state...", tenant.instanceId());
+            try {
+                ec2.waiter().waitUntilInstanceTerminated(r -> r.instanceIds(tenant.instanceId()));
+                LOG.infof("Instance %s terminated", tenant.instanceId());
+            } catch (Exception e) {
+                LOG.warnf("Wait for termination timed out for %s, proceeding anyway: %s", tenant.instanceId(), e.getMessage());
+            }
         }
 
-        // 1b. Release EIP
+        // 1b. Release EIP (safe to do after instance terminated — ENI is released)
         if (tenant.eipAllocationId() != null) {
             try {
                 ec2.releaseAddress(software.amazon.awssdk.services.ec2.model.ReleaseAddressRequest.builder()
