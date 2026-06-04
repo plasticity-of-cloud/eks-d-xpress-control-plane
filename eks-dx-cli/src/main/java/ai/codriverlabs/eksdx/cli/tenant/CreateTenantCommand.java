@@ -72,34 +72,13 @@ public class CreateTenantCommand implements Runnable {
             EksDxConfig config = new EksDxConfig();
             String region = config.getRegion();
 
-            // Use Function URL for provisioning to bypass API Gateway's 29s timeout
             String provisioningUrl = config.getProvisioningUrl();
-            if (provisioningUrl != null) {
-                String url = provisioningUrl.replaceAll("/$", "") + "/tenants";
-                apiClient.postFunctionUrl(url, MAPPER.writeValueAsString(body), region);
-            } else {
-                // Fallback to API Gateway with 504 tolerance
-                String resp = apiClient.postTolerant504("/tenants", MAPPER.writeValueAsString(body));
-                if (resp == null) {
-                    System.out.println("Request timed out — checking if provisioning started...");
-                    String tenantApiUrl = config.getTenantApiUrl();
-                    long deadline = System.currentTimeMillis() + 30_000;
-                    while (System.currentTimeMillis() < deadline) {
-                        Thread.sleep(3_000);
-                        int st = tenantApiUrl != null
-                            ? apiClient.getStatusOnUrl(tenantApiUrl, "/tenants/" + tenantId)
-                            : apiClient.getStatus("/tenants/" + tenantId);
-                        if (st == 200) break;
-                    }
-                    int finalSt = config.getTenantApiUrl() != null
-                        ? apiClient.getStatusOnUrl(config.getTenantApiUrl(), "/tenants/" + tenantId)
-                        : apiClient.getStatus("/tenants/" + tenantId);
-                    if (finalSt != 200) {
-                        System.err.println("Provisioning did not start within timeout.");
-                        System.exit(1);
-                    }
-                }
+            if (provisioningUrl == null) {
+                System.err.println("Error: provisioning URL not configured. Set EKS_DX_PROVISIONING_URL or run 'eks-dx configure'.");
+                System.exit(1);
             }
+            String provisionUrl = provisioningUrl.replaceAll("/$", "") + "/tenants";
+            apiClient.postFunctionUrl(provisionUrl, MAPPER.writeValueAsString(body), region);
 
             if (!wait) return;
             String resolvedStreamUrl = streamUrl != null ? streamUrl : config.getStreamUrl();
