@@ -12,6 +12,7 @@ import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.GetItemResponse;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.CreateKeyPairRequest;
 import software.amazon.awssdk.services.ec2.model.CreateKeyPairResponse;
@@ -176,7 +177,7 @@ public class TenantProvisioningService {
             created.instanceId = ec2Result.instanceId();
             created.eipAllocationId = ec2Result.eipAllocationId();
 
-            // 7. Write initial DynamoDB state
+            // 7. Write initial DynamoDB state immediately — EIP association happens in stream Phase 1
             String now = Instant.now().toString();
             Map<String, AttributeValue> item = new HashMap<>();
             item.put("tenantId", AttributeValue.fromS(tenantId));
@@ -188,8 +189,6 @@ public class TenantProvisioningService {
             item.put("updatedAt", AttributeValue.fromS(now));
             if (ec2Result.eipAllocationId() != null)
                 item.put("eipAllocationId", AttributeValue.fromS(ec2Result.eipAllocationId()));
-            if (ec2Result.elasticIp() != null)
-                item.put("publicIp", AttributeValue.fromS(ec2Result.elasticIp()));
             dynamoDb.putItem(PutItemRequest.builder().tableName(tenantsTable).item(item).build());
 
             return tenantId;
@@ -348,15 +347,31 @@ public class TenantProvisioningService {
 
             var inst = resp.reservations().getFirst().instances().getFirst();
             String stateName = inst.state().nameAsString();
-            String publicIp = inst.publicIpAddress();
 
             if ("terminated".equals(stateName) || "shutting-down".equals(stateName))
                 return new TenantProgress("failed", "Instance terminated unexpectedly", 0,
                     null, 0, stateName, null);
 
-            if ("running".equals(stateName) && publicIp != null && !publicIp.isBlank())
+            if ("running".equals(stateName)) {
+                // Associate EIP if not yet done (no publicIp in DynamoDB yet)
+                String publicIp = item.publicIp();
+                if ((publicIp == null || publicIp.isBlank()) && item.eipAllocationId() != null) {
+                    publicIp = ec2Service.associateEip(instanceId, item.eipAllocationId());
+                    // Persist public IP to DynamoDB
+                    dynamoDb.updateItem(software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest.builder()
+                        .tableName(tenantsTable)
+                        .key(Map.of("tenantId", AttributeValue.fromS(tenantId)))
+                        .updateExpression("SET publicIp = :ip, updatedAt = :t")
+                        .expressionAttributeValues(Map.of(
+                            ":ip", AttributeValue.fromS(publicIp),
+                            ":t", AttributeValue.fromS(Instant.now().toString())))
+                        .build());
+                } else if (publicIp == null || publicIp.isBlank()) {
+                    publicIp = inst.publicIpAddress();
+                }
                 return new TenantProgress("provisioning", "provisioning_started", 25,
                     publicIp, 0, null, null);
+            }
 
             return new TenantProgress("provisioning", "EC2 instance " + stateName + "...", 10,
                 null, 0, null, null);

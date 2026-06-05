@@ -6,8 +6,7 @@ import software.amazon.awssdk.services.ec2.Ec2Client;
 import software.amazon.awssdk.services.ec2.model.BlockDeviceMapping;
 import software.amazon.awssdk.services.ec2.model.EbsBlockDevice;
 import software.amazon.awssdk.services.ec2.model.AllocateAddressRequest;
-import software.amazon.awssdk.services.ec2.model.AssociateAddressRequest;
-import software.amazon.awssdk.services.ec2.model.IamInstanceProfileSpecification;
+import software.amazon.awssdk.services.ec2.model.AssociateAddressRequest;import software.amazon.awssdk.services.ec2.model.IamInstanceProfileSpecification;
 import software.amazon.awssdk.services.ec2.model.InstanceMetadataOptionsRequest;
 import software.amazon.awssdk.services.ec2.model.LaunchTemplateSpecification;
 import software.amazon.awssdk.services.ec2.model.ResourceType;
@@ -96,12 +95,7 @@ public class TenantEc2Service {
         String instanceId = runResp.instances().getFirst().instanceId();
         LOG.infof("Launched EC2 instance %s for tenant %s", instanceId, tenantId);
 
-        // Wait for instance to reach running state before associating EIP
-        LOG.infof("Waiting for instance %s to reach running state...", instanceId);
-        ec2.waiter().waitUntilInstanceRunning(r -> r.instanceIds(instanceId));
-        LOG.infof("Instance %s is running", instanceId);
-
-        String elasticIp = null;
+        // Pre-allocate EIP (association happens in stream Phase 1 after instance is running)
         var allocResp = ec2.allocateAddress(AllocateAddressRequest.builder()
             .domain("vpc")
             .tagSpecifications(TagSpecification.builder()
@@ -112,17 +106,21 @@ public class TenantEc2Service {
                       Tag.builder().key("project").value("eks-d-xpress").build())
                 .build())
             .build());
-        // Track allocation ID immediately so rollback can release it even if association fails
         if (created != null) created.eipAllocationId = allocResp.allocationId();
+
+        return new Ec2Result(instanceId, null, allocResp.allocationId());
+    }
+
+    /** Associates the pre-allocated EIP once the instance is running. Called from stream Phase 1. */
+    public String associateEip(String instanceId, String eipAllocationId) {
         ec2.associateAddress(AssociateAddressRequest.builder()
             .instanceId(instanceId)
-            .allocationId(allocResp.allocationId())
+            .allocationId(eipAllocationId)
             .build());
-        elasticIp = allocResp.publicIp();
-        LOG.infof("Assigned %sElastic IP %s to tenant %s",
-            assignElasticIp ? "persistent " : "", elasticIp, tenantId);
-
-        return new Ec2Result(instanceId, elasticIp, allocResp.allocationId());
+        var addrResp = ec2.describeAddresses(r -> r.allocationIds(eipAllocationId));
+        String publicIp = addrResp.addresses().getFirst().publicIp();
+        LOG.infof("Associated EIP %s to instance %s", publicIp, instanceId);
+        return publicIp;
     }
 
     private String userDataScript(String tenantId, String clusterName,
