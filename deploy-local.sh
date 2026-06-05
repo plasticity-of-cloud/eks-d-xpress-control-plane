@@ -40,6 +40,8 @@ while [[ $# -gt 0 ]]; do
       echo "  ./deploy-local.sh --skip-build             # deploy only (reuse existing zips)"
       echo "  ./deploy-local.sh --native                 # native build + deploy"
       echo "  ./deploy-local.sh --profile my-profile     # use specific AWS profile"
+      echo "  ./deploy-local.sh --context jvmTenant=true # deploy tenant-service in JVM mode"
+      echo "  ./deploy-local.sh --context nativeArch=x86 # deploy x86 native Lambda"
       echo "  ./deploy-local.sh --context env=staging -c region=us-west-2"
       exit 0
       ;;
