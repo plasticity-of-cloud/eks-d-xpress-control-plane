@@ -164,6 +164,12 @@ public class EksDXpressControlPlaneStack extends Stack {
         // -----------------------------------------------------------------------
         // Lambda: credential service  (hot path — SnapStart)
         // -----------------------------------------------------------------------
+        LogGroup credentialLogGroup = LogGroup.Builder.create(this, "CredentialFnLogGroup")
+            .logGroupName("/aws/lambda/eks-d-xpress-credential-service")
+            .retention(RetentionDays.ONE_MONTH)
+            .removalPolicy(RemovalPolicy.DESTROY)
+            .build();
+
         Function credentialFn = Function.Builder.create(this, "EksDxCredentialFunction")
             .functionName("eks-d-xpress-credential-service")
             .runtime(Runtime.JAVA_25)
@@ -174,6 +180,7 @@ public class EksDXpressControlPlaneStack extends Stack {
             .environment(Map.of(
                 "EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName(),
                 "EKS_DX_ASSOCIATIONS_TABLE", associationsTable.getTableName()))
+            .logGroup(credentialLogGroup)
             .build();
 
         // SnapStart on published versions
@@ -193,6 +200,12 @@ public class EksDXpressControlPlaneStack extends Stack {
         // -----------------------------------------------------------------------
         // Lambda: mgmt service  (cluster/association CRUD)
         // -----------------------------------------------------------------------
+        LogGroup mgmtLogGroup = LogGroup.Builder.create(this, "MgmtFnLogGroup")
+            .logGroupName("/aws/lambda/eks-d-xpress-mgmt-service")
+            .retention(RetentionDays.ONE_MONTH)
+            .removalPolicy(RemovalPolicy.DESTROY)
+            .build();
+
         Function mgmtFn = Function.Builder.create(this, "EksDxMgmtFunction")
             .functionName("eks-d-xpress-mgmt-service")
             .runtime(Runtime.JAVA_25)
@@ -203,6 +216,7 @@ public class EksDXpressControlPlaneStack extends Stack {
             .environment(Map.of(
                 "EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName(),
                 "EKS_DX_ASSOCIATIONS_TABLE", associationsTable.getTableName()))
+            .logGroup(mgmtLogGroup)
             .build();
 
         clustersTable.grantReadWriteData(mgmtFn);
@@ -232,6 +246,12 @@ public class EksDXpressControlPlaneStack extends Stack {
             .description("EKS-DX API Gateway endpoint — read by EC2 instances at boot")
             .build();
 
+        LogGroup tenantLogGroup = LogGroup.Builder.create(this, "TenantFnLogGroup")
+            .logGroupName("/aws/lambda/eks-d-xpress-tenant-service")
+            .retention(RetentionDays.ONE_MONTH)
+            .removalPolicy(RemovalPolicy.DESTROY)
+            .build();
+
         Function tenantFn = Function.Builder.create(this, "EksDxTenantFunction")
             .functionName("eks-d-xpress-tenant-service")
             .runtime(tenantRuntime)
@@ -249,6 +269,7 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "EKS_DX_LT_X86_SPOT", ltX86Spot,
                 "EKS_DX_VPC_ID", vpcId,
                 "EKS_DX_AVAILABILITY_ZONE", "auto"))
+            .logGroup(tenantLogGroup)
             .build();
 
         // Single Function URL for both SSE stream and provisioning — bypasses API Gateway's 29s timeout.

@@ -94,6 +94,19 @@ public class EksDxApiClient {
         return sendOnUrl("DELETE", baseUrl, path, null);
     }
 
+    /** DELETE that returns the status code without throwing on 4xx/5xx. */
+    public int deleteStatusOnUrl(String baseUrl, String path) {
+        try {
+            URI uri = URI.create(baseUrl.replaceAll("/$", "") + path);
+            var builder = HttpRequest.newBuilder().uri(uri).method("DELETE", HttpRequest.BodyPublishers.noBody());
+            if (signer != null) signer.sign(builder, "DELETE", uri, null, "execute-api");
+            else builder.header("Content-Type", "application/json");
+            return httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
     private String send(String method, String path, String body) {
         return sendOnUrl(method, endpoint, path, body);
     }
