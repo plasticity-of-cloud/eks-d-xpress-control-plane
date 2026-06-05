@@ -43,16 +43,18 @@ public class TenantStreamResource {
             .skip().where(p -> p == null)
             .select().first(p -> !"provisioning_started".equals(p.phase()));
 
-        // Phase 2: DynamoDB polling every 5s, max 96 ticks (8 minutes)
-        Multi<TenantProgress> dynamoPhase = Multi.createFrom().ticks().every(Duration.ofSeconds(5))
-            .select().first(96)
-            .map(tick -> provisioningService.getProgress(id))
-            .select().first(p -> {
-                if (emittedTerminal.get()) return false;
-                boolean terminal = "ready".equals(p.state()) || "failed".equals(p.state());
-                if (terminal) emittedTerminal.set(true);
-                return true;
-            });
+        // Phase 2: emit current state immediately, then poll DynamoDB every 5s, max 96 ticks (8 minutes)
+        Multi<TenantProgress> dynamoPhase = Multi.createBy().concatenating().streams(
+            Multi.createFrom().item(() -> provisioningService.getProgress(id)),
+            Multi.createFrom().ticks().every(Duration.ofSeconds(5))
+                .select().first(96)
+                .map(tick -> provisioningService.getProgress(id))
+        ).select().first(p -> {
+            if (emittedTerminal.get()) return false;
+            boolean terminal = "ready".equals(p.state()) || "failed".equals(p.state());
+            if (terminal) emittedTerminal.set(true);
+            return true;
+        });
 
         return Multi.createBy().concatenating().streams(ec2Phase, dynamoPhase);
     }
