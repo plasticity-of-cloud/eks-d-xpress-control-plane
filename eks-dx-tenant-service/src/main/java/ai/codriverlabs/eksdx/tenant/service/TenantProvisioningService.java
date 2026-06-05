@@ -355,22 +355,28 @@ public class TenantProvisioningService {
             if ("running".equals(stateName)) {
                 // Associate EIP if not yet done (no publicIp in DynamoDB yet)
                 String publicIp = item.publicIp();
-                if ((publicIp == null || publicIp.isBlank()) && item.eipAllocationId() != null) {
-                    publicIp = ec2Service.associateEip(instanceId, item.eipAllocationId());
-                    // Persist public IP to DynamoDB
-                    dynamoDb.updateItem(software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest.builder()
-                        .tableName(tenantsTable)
-                        .key(Map.of("tenantId", AttributeValue.fromS(tenantId)))
-                        .updateExpression("SET publicIp = :ip, updatedAt = :t")
-                        .expressionAttributeValues(Map.of(
-                            ":ip", AttributeValue.fromS(publicIp),
-                            ":t", AttributeValue.fromS(Instant.now().toString())))
-                        .build());
-                } else if (publicIp == null || publicIp.isBlank()) {
-                    publicIp = inst.publicIpAddress();
+                if (publicIp == null || publicIp.isBlank()) {
+                    if (item.eipAllocationId() != null) {
+                        publicIp = ec2Service.associateEip(instanceId, item.eipAllocationId());
+                        // Persist public IP to DynamoDB
+                        dynamoDb.updateItem(software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest.builder()
+                            .tableName(tenantsTable)
+                            .key(Map.of("tenantId", AttributeValue.fromS(tenantId)))
+                            .updateExpression("SET publicIp = :ip, updatedAt = :t")
+                            .expressionAttributeValues(Map.of(
+                                ":ip", AttributeValue.fromS(publicIp),
+                                ":t", AttributeValue.fromS(Instant.now().toString())))
+                            .build());
+                    } else {
+                        publicIp = inst.publicIpAddress(); // fallback: EC2-assigned public IP
+                    }
                 }
-                return new TenantProgress("provisioning", "provisioning_started", 25,
-                    publicIp, 0, null, null);
+                if (publicIp != null && !publicIp.isBlank())
+                    return new TenantProgress("provisioning", "provisioning_started", 25,
+                        publicIp, 0, null, null);
+                // Running but no public IP yet — keep polling
+                return new TenantProgress("provisioning", "EC2 instance running...", 10,
+                    null, 0, null, null);
             }
 
             return new TenantProgress("provisioning", "EC2 instance " + stateName + "...", 10,
