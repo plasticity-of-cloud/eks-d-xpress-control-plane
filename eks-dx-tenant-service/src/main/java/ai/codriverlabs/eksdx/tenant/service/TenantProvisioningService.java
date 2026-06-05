@@ -470,7 +470,22 @@ public class TenantProvisioningService {
             LOG.warnf("Could not delete SQS queue for %s: %s", tenantId, e.getMessage());
         }
 
-        // 6b. Delete security group (look up by tenant tag)
+        // 6b. Delete subnets (look up by tenant tag)
+        try {
+            var subnetResp = ec2.describeSubnets(software.amazon.awssdk.services.ec2.model.DescribeSubnetsRequest.builder()
+                .filters(software.amazon.awssdk.services.ec2.model.Filter.builder()
+                    .name("tag:eks-d-xpress-tenant").values(tenantId).build())
+                .build());
+            for (var subnet : subnetResp.subnets()) {
+                ec2.deleteSubnet(software.amazon.awssdk.services.ec2.model.DeleteSubnetRequest.builder()
+                    .subnetId(subnet.subnetId()).build());
+                LOG.infof("Deleted subnet %s", subnet.subnetId());
+            }
+        } catch (Exception e) {
+            LOG.warnf("Could not delete subnets for tenant %s: %s", tenantId, e.getMessage());
+        }
+
+        // 6c. Delete security group (look up by tenant tag)
         try {
             var sgResp = ec2.describeSecurityGroups(software.amazon.awssdk.services.ec2.model.DescribeSecurityGroupsRequest.builder()
                 .filters(software.amazon.awssdk.services.ec2.model.Filter.builder()
