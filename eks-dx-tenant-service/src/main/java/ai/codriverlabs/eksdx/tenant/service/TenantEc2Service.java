@@ -36,7 +36,7 @@ public class TenantEc2Service {
                                    String subnetId, String securityGroupId, String instanceProfileName,
                                    String keyName, String region, String k8sVersion,
                                    boolean assignElasticIp, int diskSizeGb, String arch,
-                                   String privateIp, String accountId,
+                                   String privateIp, String accountId, String vpcCidr,
                                    TenantProvisioningService.ProvisionedResources created) {
 
         String amiId = ssm.getParameter(GetParameterRequest.builder()
@@ -44,7 +44,7 @@ public class TenantEc2Service {
             .build()).parameter().value();
 
         String userData = Base64.getEncoder().encodeToString(userDataScript(
-            tenantId, clusterName, region, k8sVersion, privateIp, accountId, arch).getBytes());
+            tenantId, clusterName, region, k8sVersion, privateIp, accountId, arch, vpcCidr).getBytes());
 
         var runRequest = RunInstancesRequest.builder()
             .imageId(amiId)
@@ -127,7 +127,7 @@ public class TenantEc2Service {
 
     private String userDataScript(String tenantId, String clusterName,
                                   String region, String k8sVersion, String nodeIp,
-                                  String accountId, String arch) {
+                                  String accountId, String arch, String vpcCidr) {
         String nodeRoleArn = "arn:aws:iam::" + accountId + ":role/" + tenantId + "-eks-dx-" + arch;
         return """
             #!/bin/bash
@@ -145,11 +145,12 @@ public class TenantEc2Service {
             AWS_REGION="%s"
             NODE_ROLE_ARN="%s"
             CLUSTER_ENDPOINT="https://%s:6443"
+            POD_SUBNET="%s"
             EKS_DX_ENDPOINT="${EKS_DX_ENDPOINT}"
             EKS_DX_API_URL="${EKS_DX_ENDPOINT}/clusters/%s/assets"
             K8S_VERSION="%s"
             CONF
             """.formatted(region, tenantId, clusterName, nodeIp, accountId, region,
-                         nodeRoleArn, nodeIp, clusterName, k8sVersion);
+                         nodeRoleArn, nodeIp, vpcCidr, clusterName, k8sVersion);
     }
 }

@@ -36,7 +36,7 @@ public class TenantNetworkService {
 
     private final Ec2Client ec2 = Ec2Client.create();
 
-    public record NetworkResult(String publicSubnetId, String privateSubnetId, String securityGroupId, String controlPlaneIp) {}
+    public record NetworkResult(String publicSubnetId, String privateSubnetId, String securityGroupId, String controlPlaneIp, String vpcCidr) {}
 
     /**
      * Subnet IP layout (per /24 tenant subnet):
@@ -110,7 +110,7 @@ public class TenantNetworkService {
         // Static control-plane IP: <subnet-base>.5
         String controlPlaneIp = "10.0." + subnetIndex + "." + CONTROL_PLANE_HOST_OFFSET;
 
-        return new NetworkResult(publicSubnetId, privateSubnetId, sgId, controlPlaneIp);
+        return new NetworkResult(publicSubnetId, privateSubnetId, sgId, controlPlaneIp, vpcCidr);
     }
 
     private String createTenantSecurityGroup(String tenantId, String clusterName, String vpcId, String vpcCidr, String sshCidr) {
