@@ -8,6 +8,7 @@ import software.amazon.awssdk.services.ec2.model.EbsBlockDevice;
 import software.amazon.awssdk.services.ec2.model.AllocateAddressRequest;
 import software.amazon.awssdk.services.ec2.model.AssociateAddressRequest;
 import software.amazon.awssdk.services.ec2.model.IamInstanceProfileSpecification;
+import software.amazon.awssdk.services.ec2.model.InstanceMetadataOptionsRequest;
 import software.amazon.awssdk.services.ec2.model.LaunchTemplateSpecification;
 import software.amazon.awssdk.services.ec2.model.ResourceType;
 import software.amazon.awssdk.services.ec2.model.RunInstancesRequest;
@@ -47,6 +48,11 @@ public class TenantEc2Service {
 
         var runRequest = RunInstancesRequest.builder()
             .imageId(amiId)
+            .metadataOptions(InstanceMetadataOptionsRequest.builder()
+                .httpEndpoint("enabled")
+                .httpTokens("required")
+                .httpPutResponseHopLimit(2)
+                .build())
             .launchTemplate(LaunchTemplateSpecification.builder()
                 .launchTemplateId(launchTemplateId).build())
             .subnetId(subnetId)
