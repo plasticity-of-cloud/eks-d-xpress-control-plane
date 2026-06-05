@@ -325,65 +325,39 @@ public class TenantProvisioningService {
     }
 
     /**
-     * Emits EC2 boot phase progress events before DynamoDB polling begins.
-     * Polls EC2 DescribeInstances until instance is running and has a public IP.
-     * Returns a list of progress snapshots (one per poll tick) to be emitted as SSE events.
-     *
-     * Designed to be called once at stream open; caller then switches to DynamoDB polling.
+    /**
+     * Single-tick EC2 boot check — returns one progress event per call (no sleep).
+     * Returns null if instance not found yet; a terminal event with phase "provisioning_started"
+     * when instance is running with a public IP.
      */
-    public java.util.List<TenantProgress> pollEc2BootPhase(String tenantId) {
-        java.util.List<TenantProgress> events = new java.util.ArrayList<>();
+    public TenantProgress pollEc2BootTick(String tenantId) {
         try {
             TenantItem item = getState(tenantId);
             String instanceId = item.instanceId();
-            if (instanceId == null) return events;
+            if (instanceId == null) return null;
 
-            long start = System.currentTimeMillis();
+            var resp = ec2.describeInstances(r -> r.instanceIds(instanceId));
+            if (resp.reservations().isEmpty() || resp.reservations().getFirst().instances().isEmpty())
+                return null;
 
-            // Emit initial "launching" event
-            events.add(new TenantProgress("provisioning", "EC2 instance launching...", 5,
-                null, 0, null, null));
+            var inst = resp.reservations().getFirst().instances().getFirst();
+            String stateName = inst.state().nameAsString();
+            String publicIp = inst.publicIpAddress();
 
-            // Poll up to 3 minutes for instance running + public IP
-            for (int i = 0; i < 36; i++) {
-                Thread.sleep(5_000);
-                long elapsed = (System.currentTimeMillis() - start) / 1000;
+            if ("terminated".equals(stateName) || "shutting-down".equals(stateName))
+                return new TenantProgress("failed", "Instance terminated unexpectedly", 0,
+                    null, 0, stateName, null);
 
-                var resp = ec2.describeInstances(r -> r.instanceIds(instanceId));
-                if (resp.reservations().isEmpty() || resp.reservations().get(0).instances().isEmpty()) continue;
+            if ("running".equals(stateName) && publicIp != null && !publicIp.isBlank())
+                return new TenantProgress("provisioning", "provisioning_started", 25,
+                    publicIp, 0, null, null);
 
-                var inst = resp.reservations().get(0).instances().get(0);
-                String stateName = inst.state().nameAsString();
-                String publicIp = inst.publicIpAddress();
-
-                if ("terminated".equals(stateName) || "shutting-down".equals(stateName)) {
-                    events.add(new TenantProgress("failed", "Instance terminated unexpectedly", 0,
-                        null, elapsed, stateName, null));
-                    return events;
-                }
-
-                if ("running".equals(stateName) && publicIp != null && !publicIp.isBlank()) {
-                    events.add(new TenantProgress("provisioning", "Instance running, public IP: " + publicIp, 20,
-                        publicIp, elapsed, null, null));
-                    events.add(new TenantProgress("provisioning", "EKS-D-Xpress provisioning starting shortly...", 25,
-                        publicIp, elapsed, null, null));
-                    return events;
-                }
-
-                if ("running".equals(stateName)) {
-                    events.add(new TenantProgress("provisioning", "Instance running, waiting for public IP...", 15,
-                        null, elapsed, null, null));
-                } else {
-                    events.add(new TenantProgress("provisioning", "EC2 instance " + stateName + "...", 10,
-                        null, elapsed, null, null));
-                }
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            return new TenantProgress("provisioning", "EC2 instance " + stateName + "...", 10,
+                null, 0, null, null);
         } catch (Exception e) {
-            LOG.warnf("EC2 boot phase polling error for tenant %s: %s", tenantId, e.getMessage());
+            LOG.warnf("EC2 boot tick error for tenant %s: %s", tenantId, e.getMessage());
+            return null;
         }
-        return events;
     }
 
     // -------------------------------------------------------------------------
