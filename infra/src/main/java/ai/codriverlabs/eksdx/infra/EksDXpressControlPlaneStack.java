@@ -301,7 +301,7 @@ public class EksDXpressControlPlaneStack extends Stack {
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
                 "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables",
-                "ec2:DescribeSecurityGroups"))
+                "ec2:DescribeSecurityGroups", "ec2:DescribeAddresses"))
             .resources(List.of("*"))
             .build());
         // EC2: mutating actions scoped to shared VPC

@@ -39,8 +39,10 @@ public class TenantStreamResource {
         // Phase 1: EC2 boot — tick-based polling, emits events incrementally
         Multi<TenantProgress> ec2Phase = Multi.createFrom().ticks().every(Duration.ofSeconds(5))
             .select().first(36) // max 3 minutes
-            .map(tick -> provisioningService.pollEc2BootTick(id))
-            .skip().where(p -> p == null)
+            .flatMap(tick -> {
+                TenantProgress p = provisioningService.pollEc2BootTick(id);
+                return p == null ? Multi.createFrom().empty() : Multi.createFrom().item(p);
+            })
             .select().first(p -> !"provisioning_started".equals(p.phase()));
 
         // Phase 2: emit current state immediately, then poll DynamoDB every 5s, max 96 ticks (8 minutes)
