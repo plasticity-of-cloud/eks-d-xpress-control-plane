@@ -71,58 +71,25 @@ eks-dx get cluster my-k3s
 
 ---
 
-## 3. Install eks-dx-auth-proxy
+## 3. Install EKS-DX Pod Identity components
 
-The proxy runs in `kube-system` and handles TokenReview + credential forwarding.
+A single script installs all three components (auth-proxy, webhook, pod-identity-agent):
 
 ```bash
-VERSION=0.2.0-design
-
-helm install eks-dx-auth-proxy \
-  oci://ghcr.io/plasticity-of-cloud/helm/eks-dx-auth-proxy \
-  --version ${VERSION} \
-  --namespace kube-system \
-  --set app.imageConfig.registry=ghcr.io \
-  --set app.imageConfig.repository=plasticity-of-cloud/eks-dx-auth-proxy \
-  --set app.imageConfig.tag=${VERSION} \
-  --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT} \
-  --set app.envs.AWS_REGION=us-east-1
+curl -sL https://github.com/plasticity-of-cloud/eks-d-xpress/releases/latest/download/install-eks-dx-pod-identity.sh \
+  | CLUSTER_NAME=my-k3s AWS_REGION=us-east-1 EKS_DX_ENDPOINT=${ENDPOINT} bash
 ```
 
-The proxy needs AWS credentials to sign requests to API Gateway (IAM SigV4 is not used on `/assets` — but the proxy's projected SA token handles auth). If your EC2 node has an instance profile, the proxy picks up credentials automatically via the metadata service. Otherwise pass them explicitly:
+If your EC2 node has an instance profile, the proxy picks up AWS credentials automatically via the metadata service. Otherwise export them before running:
 
 ```bash
-  --set app.envs.AWS_ACCESS_KEY_ID=... \
-  --set app.envs.AWS_SECRET_ACCESS_KEY=...
-```
-
-Wait for the proxy to be ready:
-
-```bash
-kubectl rollout status deployment/eks-dx-auth-proxy -n kube-system
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
 ```
 
 ---
 
-## 4. Install eks-dx-pod-identity-webhook
-
-The webhook injects `AWS_CONTAINER_CREDENTIALS_FULL_URI` and the projected SA token into pods that have a pod identity association.
-
-```bash
-helm install eks-dx-pod-identity-webhook \
-  oci://ghcr.io/plasticity-of-cloud/helm/eks-dx-pod-identity-webhook \
-  --version ${VERSION} \
-  --namespace kube-system \
-  --set app.imageConfig.registry=ghcr.io \
-  --set app.imageConfig.repository=plasticity-of-cloud/eks-dx-pod-identity-webhook \
-  --set app.imageConfig.tag=${VERSION} \
-  --set app.envs.EKS_DX_ENDPOINT=${ENDPOINT} \
-  --set app.envs.EKS_CLUSTER_NAME=my-k3s
-```
-
----
-
-## 5. Create a pod identity association
+## 4. Create a pod identity association
 
 ```bash
 # The IAM role must trust sts:AssumeRole and be named eks-dx-pod-*
@@ -135,7 +102,7 @@ eks-dx create association \
 
 ---
 
-## 6. Test
+## 5. Test
 
 Deploy a pod using the associated service account:
 

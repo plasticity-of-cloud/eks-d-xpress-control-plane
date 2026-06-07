@@ -30,6 +30,7 @@ public class TenantResource {
     private static final Logger LOG = Logger.getLogger(TenantResource.class);
 
     @Inject TenantProvisioningService provisioningService;
+    @Inject ai.codriverlabs.eksdx.tenant.service.DryRunProvisioningService dryRunService;
 
     public static class CreateTenantRequest {
         @JsonProperty("tenantId") public String tenantId;
@@ -46,6 +47,10 @@ public class TenantResource {
         try {
             if (request == null || request.tenantId == null || request.tenantId.isBlank())
                 return error(400, "InvalidParameterException", "tenantId is required");
+            if (dryRunService.isEnabled()) {
+                LOG.infof("DRY RUN: simulating provision for tenant %s", request.tenantId);
+                return Response.accepted(Map.of("tenantId", request.tenantId)).build();
+            }
             String arch = request.arch != null ? request.arch : "arm64";
             String pricingModel = request.ec2PricingModel != null ? request.ec2PricingModel : "spot";
             String k8sVersion = request.k8sVersion != null ? request.k8sVersion : "1.35";

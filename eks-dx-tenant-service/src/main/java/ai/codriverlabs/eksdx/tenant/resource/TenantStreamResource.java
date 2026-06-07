@@ -1,6 +1,7 @@
 package ai.codriverlabs.eksdx.tenant.resource;
 
 import ai.codriverlabs.eksdx.tenant.model.TenantProgress;
+import ai.codriverlabs.eksdx.tenant.service.DryRunProvisioningService;
 import ai.codriverlabs.eksdx.tenant.service.TenantProvisioningService;
 import io.smallrye.common.annotation.Blocking;
 import io.smallrye.mutiny.Multi;
@@ -11,6 +12,7 @@ import org.jboss.resteasy.reactive.RestStreamElementType;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * SSE progress stream — served via Lambda Function URL (RESPONSE_STREAM mode).
@@ -27,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class TenantStreamResource {
 
     @Inject TenantProvisioningService provisioningService;
+    @Inject DryRunProvisioningService dryRunService;
 
     @GET
     @Path("/{id}/stream")
@@ -34,6 +37,21 @@ public class TenantStreamResource {
     @RestStreamElementType(MediaType.APPLICATION_JSON)
     @Blocking
     public Multi<TenantProgress> streamProgress(@PathParam("id") String id) {
+        if (dryRunService.isEnabled()) {
+            return streamDryRun();
+        }
+        return streamReal(id);
+    }
+
+    private Multi<TenantProgress> streamDryRun() {
+        var events = dryRunService.getSimulatedEvents();
+        AtomicInteger idx = new AtomicInteger(0);
+        return Multi.createFrom().ticks().every(Duration.ofSeconds(2))
+            .select().first(events.size())
+            .map(tick -> events.get(idx.getAndIncrement()));
+    }
+
+    private Multi<TenantProgress> streamReal(String id) {
         AtomicBoolean emittedTerminal = new AtomicBoolean(false);
 
         // Phase 1: EC2 boot — tick-based polling, emits events incrementally.

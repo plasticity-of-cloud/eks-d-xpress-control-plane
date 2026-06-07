@@ -235,6 +235,7 @@ public class EksDXpressControlPlaneStack extends Stack {
         //   (default)           → GraalVM native on arm64 (prod)
         boolean jvmMode = "true".equals(this.getNode().tryGetContext("jvmTenant"));
         boolean x86Native = "x86".equals(this.getNode().tryGetContext("nativeArch"));
+        boolean dryRun = "true".equals(this.getNode().tryGetContext("dryRun"));
         Runtime tenantRuntime = jvmMode ? Runtime.JAVA_25 : Runtime.PROVIDED_AL2023;
         Architecture tenantArch = (jvmMode || x86Native) ? Architecture.X86_64 : Architecture.ARM_64;
         // Write the API endpoint to SSM so EC2 instances can read it at boot
@@ -260,7 +261,7 @@ public class EksDXpressControlPlaneStack extends Stack {
             .code(Code.fromAsset(root + "eks-dx-tenant-service/target/function.zip"))
             .memorySize(jvmMode ? 512 : 128)
             .timeout(Duration.seconds(900))
-            .environment(Map.of(
+            .environment(new java.util.HashMap<>(Map.of(
                 "EKS_DX_TENANTS_TABLE", tenantsTable.getTableName(),
                 "EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName(),
                 "EKS_DX_LT_ARM64_ONDEMAND", ltArm64Ondemand,
@@ -268,7 +269,8 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand,
                 "EKS_DX_LT_X86_SPOT", ltX86Spot,
                 "EKS_DX_VPC_ID", vpcId,
-                "EKS_DX_AVAILABILITY_ZONE", "auto"))
+                "EKS_DX_AVAILABILITY_ZONE", "auto",
+                "EKS_DX_DRY_RUN", String.valueOf(dryRun))))
             .logGroup(tenantLogGroup)
             .build();
 
