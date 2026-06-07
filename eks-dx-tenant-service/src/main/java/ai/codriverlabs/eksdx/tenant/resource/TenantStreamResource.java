@@ -36,14 +36,19 @@ public class TenantStreamResource {
     public Multi<TenantProgress> streamProgress(@PathParam("id") String id) {
         AtomicBoolean emittedTerminal = new AtomicBoolean(false);
 
-        // Phase 1: EC2 boot — tick-based polling, emits events incrementally
+        // Phase 1: EC2 boot — tick-based polling, emits events incrementally.
+        // Terminates (and emits the final event) when phase == "provisioning_started".
+        AtomicBoolean ec2Done = new AtomicBoolean(false);
         Multi<TenantProgress> ec2Phase = Multi.createFrom().ticks().every(Duration.ofSeconds(5))
             .select().first(36) // max 3 minutes
             .flatMap(tick -> {
+                if (ec2Done.get()) return Multi.createFrom().empty();
                 TenantProgress p = provisioningService.pollEc2BootTick(id);
-                return p == null ? Multi.createFrom().empty() : Multi.createFrom().item(p);
+                if (p == null) return Multi.createFrom().empty();
+                if ("provisioning_started".equals(p.phase())) ec2Done.set(true);
+                return Multi.createFrom().item(p);
             })
-            .select().first(p -> !"provisioning_started".equals(p.phase()));
+            .select().first(36);
 
         // Phase 2: emit current state immediately, then poll DynamoDB every 5s, max 96 ticks (8 minutes)
         Multi<TenantProgress> dynamoPhase = Multi.createBy().concatenating().streams(
