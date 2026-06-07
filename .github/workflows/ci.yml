@@ -29,6 +29,8 @@ jobs:
           cache: maven
 
       - name: Build and test (all modules)
+        env:
+          AWS_REGION: us-east-1
         run: mvn -B verify -DskipITs
 
       - name: Build Lambda function.zips
@@ -71,6 +73,8 @@ jobs:
           cache: maven
 
       - name: Run DynamoDB integration tests
+        env:
+          AWS_REGION: us-east-1
         run: |
           mvn -B -pl eks-dx-model,eks-dx-mgmt-service test \
             -Dtest=DynamoDbIntegrationTest \
