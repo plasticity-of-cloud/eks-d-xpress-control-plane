@@ -37,6 +37,7 @@ import software.amazon.awscdk.services.lambda.FunctionUrl;
 import software.amazon.awscdk.services.lambda.FunctionUrlAuthType;
 import software.amazon.awscdk.services.lambda.FunctionUrlOptions;
 import software.amazon.awscdk.services.lambda.InvokeMode;
+import software.amazon.awscdk.services.lambda.LayerVersion;
 import software.amazon.awscdk.services.lambda.Runtime;
 import software.amazon.awscdk.services.logs.LogGroup;
 import software.amazon.awscdk.services.logs.RetentionDays;
@@ -253,24 +254,36 @@ public class EksDXpressControlPlaneStack extends Stack {
             .removalPolicy(RemovalPolicy.DESTROY)
             .build();
 
+        // Lambda Web Adapter layer — bridges HTTP server to Lambda streaming Runtime API
+        String webAdapterLayerArn = tenantArch == Architecture.ARM_64
+            ? "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:25"
+            : "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:25";
+        var webAdapterLayer = LayerVersion.fromLayerVersionArn(this, "LambdaWebAdapter", webAdapterLayerArn);
+
+        // With Web Adapter, always use custom runtime — adapter is the bootstrap,
+        // starts Quarkus as HTTP server (native binary or java -jar)
         Function tenantFn = Function.Builder.create(this, "EksDxTenantFunction")
             .functionName("eks-d-xpress-tenant-service")
-            .runtime(tenantRuntime)
+            .runtime(Runtime.PROVIDED_AL2023)
             .architecture(tenantArch)
-            .handler("io.quarkus.amazon.lambda.runtime.QuarkusStreamHandler::handleRequest")
+            .handler("bootstrap")
             .code(Code.fromAsset(root + "eks-dx-tenant-service/target/function.zip"))
-            .memorySize(jvmMode ? 512 : 128)
+            .layers(List.of(webAdapterLayer))
+            .memorySize(jvmMode ? 512 : 256)
             .timeout(Duration.seconds(900))
-            .environment(new java.util.HashMap<>(Map.of(
-                "EKS_DX_TENANTS_TABLE", tenantsTable.getTableName(),
-                "EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName(),
-                "EKS_DX_LT_ARM64_ONDEMAND", ltArm64Ondemand,
-                "EKS_DX_LT_ARM64_SPOT", ltArm64Spot,
-                "EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand,
-                "EKS_DX_LT_X86_SPOT", ltX86Spot,
-                "EKS_DX_VPC_ID", vpcId,
-                "EKS_DX_AVAILABILITY_ZONE", "auto",
-                "EKS_DX_DRY_RUN", String.valueOf(dryRun))))
+            .environment(java.util.Map.ofEntries(
+                Map.entry("EKS_DX_TENANTS_TABLE", tenantsTable.getTableName()),
+                Map.entry("EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName()),
+                Map.entry("EKS_DX_LT_ARM64_ONDEMAND", ltArm64Ondemand),
+                Map.entry("EKS_DX_LT_ARM64_SPOT", ltArm64Spot),
+                Map.entry("EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand),
+                Map.entry("EKS_DX_LT_X86_SPOT", ltX86Spot),
+                Map.entry("EKS_DX_VPC_ID", vpcId),
+                Map.entry("EKS_DX_AVAILABILITY_ZONE", "auto"),
+                Map.entry("EKS_DX_DRY_RUN", String.valueOf(dryRun)),
+                Map.entry("AWS_LWA_INVOKE_MODE", "response_stream"),
+                Map.entry("READINESS_CHECK_PATH", "/q/health/ready"),
+                Map.entry("PORT", "8080")))
             .logGroup(tenantLogGroup)
             .build();
 

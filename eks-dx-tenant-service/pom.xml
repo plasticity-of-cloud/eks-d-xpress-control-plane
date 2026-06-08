@@ -42,7 +42,7 @@
   <dependencies>
     <dependency>
       <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-amazon-lambda-http</artifactId>
+      <artifactId>quarkus-rest</artifactId>
     </dependency>
     <!-- Reactive REST for SSE Multi<> streaming -->
     <dependency>
@@ -143,6 +143,24 @@
           </systemPropertyVariables>
           <argLine>-javaagent:${org.mockito:mockito-core:jar}</argLine>
         </configuration>
+      </plugin>
+      <plugin>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.7.1</version>
+        <executions>
+          <execution>
+            <id>function-zip</id>
+            <phase>package</phase>
+            <goals><goal>single</goal></goals>
+            <configuration>
+              <finalName>function</finalName>
+              <appendAssemblyId>false</appendAssemblyId>
+              <descriptors>
+                <descriptor>src/assembly/function.xml</descriptor>
+              </descriptors>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>

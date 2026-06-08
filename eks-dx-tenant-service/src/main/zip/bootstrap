@@ -1,0 +1,4 @@
+#!/bin/bash
+# Bootstrap script for Lambda Web Adapter — starts Quarkus HTTP server.
+# Web Adapter (layer) handles Lambda Runtime API; this just starts the app.
+exec java -jar /var/task/eks-dx-tenant-service-runner.jar
