@@ -79,10 +79,10 @@ public class TenantProvisioningService {
     @Inject TenantEc2Service ec2Service;
     @Inject TenantDlmService dlmService;
 
-    private final Ec2Client ec2 = Ec2Client.create();
-    private final SecretsManagerClient secretsManager = SecretsManagerClient.create();
-    private final SqsClient sqs = SqsClient.create();
-    private final CloudWatchEventsClient events = CloudWatchEventsClient.create();
+    @Inject Ec2Client ec2;
+    @Inject SecretsManagerClient secretsManager;
+    @Inject SqsClient sqs;
+    @Inject CloudWatchEventsClient events;
 
     @ConfigProperty(name = "eks-d-xpress.tenants-table")
     String tenantsTable;

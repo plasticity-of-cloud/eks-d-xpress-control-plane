@@ -34,6 +34,8 @@ jobs:
 
       - name: Build and test
         run: mvn -B verify -DskipITs
+        env:
+          AWS_REGION: us-east-1
 
       - name: Build Lambda function.zips
         run: |
