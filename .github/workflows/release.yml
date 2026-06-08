@@ -150,7 +150,46 @@ jobs:
             eks-dx-mgmt-service-*.zip
             eks-dx-auth-proxy-*.tar.gz
             eks-dx-pod-identity-webhook-*.tar.gz
-            eks-dx-cdk-*.tar.gz
+
+  # CDK synth needs all Lambda zips present (including tenant native from arm64 runner)
+  package-cdk:
+    needs: [package-tenant-native]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Download tenant zip
+        uses: actions/download-artifact@v8
+        with:
+          name: release-tenant
+          path: eks-dx-tenant-service/target
+
+      - name: Rename tenant zip for CDK asset lookup
+        run: mv eks-dx-tenant-service/target/eks-dx-tenant-service-*.zip eks-dx-tenant-service/target/function.zip
+
+      - name: Build JVM Lambda zips (credential + mgmt) for CDK asset lookup
+        run: |
+          mvn -B -pl eks-dx-model,eks-dx-credential-service package -DskipTests
+          mvn -B -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
+
+      - name: Synth and package CDK template
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mvn -B -pl infra compile exec:java
+          tar czf eks-dx-cdk-${VERSION}.tar.gz -C infra cdk.out
+
+      - name: Upload CDK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-cdk
+          retention-days: 1
+          path: eks-dx-cdk-*.tar.gz
 
   # Tenant service: GraalVM native image must be built on arm64 runner
   package-tenant-native:
@@ -178,7 +217,7 @@ jobs:
           path: eks-dx-tenant-service-*.zip
 
   release:
-    needs: [build, package, package-tenant-native]
+    needs: [build, package, package-tenant-native, package-cdk]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
