@@ -127,12 +127,12 @@ jobs:
             -Dquarkus.helm.version=${VERSION} \
             -Dquarkus.container-image.build=false
 
-          helm push eks-dx-auth-proxy/target/helm/kubernetes/eks-dx-auth-proxy-${VERSION}.tar.gz oci://${REGISTRY}/helm
-          helm push eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-dx-pod-identity-webhook-${VERSION}.tar.gz oci://${REGISTRY}/helm
+          helm push eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-${VERSION}.tar.gz oci://${REGISTRY}/helm
+          helm push eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook-${VERSION}.tar.gz oci://${REGISTRY}/helm
 
           # Also keep tarballs as release assets for direct download
-          cp eks-dx-auth-proxy/target/helm/kubernetes/eks-dx-auth-proxy-${VERSION}.tar.gz .
-          cp eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-dx-pod-identity-webhook-${VERSION}.tar.gz .
+          cp eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-${VERSION}.tar.gz eks-dx-auth-proxy-${VERSION}.tar.gz
+          cp eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook-${VERSION}.tar.gz eks-dx-pod-identity-webhook-${VERSION}.tar.gz
 
       - name: Synth and package CDK template
         run: |
