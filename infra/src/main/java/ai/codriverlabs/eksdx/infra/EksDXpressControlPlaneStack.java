@@ -255,9 +255,10 @@ public class EksDXpressControlPlaneStack extends Stack {
             .build();
 
         // Lambda Web Adapter layer — bridges HTTP server to Lambda streaming Runtime API
+        String region = this.getRegion();
         String webAdapterLayerArn = tenantArch == Architecture.ARM_64
-            ? "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerArm64:25"
-            : "arn:aws:lambda:us-east-1:753240598075:layer:LambdaAdapterLayerX86:25";
+            ? "arn:aws:lambda:" + region + ":753240598075:layer:LambdaAdapterLayerArm64:25"
+            : "arn:aws:lambda:" + region + ":753240598075:layer:LambdaAdapterLayerX86:25";
         var webAdapterLayer = LayerVersion.fromLayerVersionArn(this, "LambdaWebAdapter", webAdapterLayerArn);
 
         // With Web Adapter: JVM mode uses java25 runtime + EXEC_WRAPPER,
