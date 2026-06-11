@@ -398,14 +398,18 @@ public class TenantProvisioningService {
 
         // 1. Terminate EC2 instance and wait for full termination before cleaning up
         if (tenant.instanceId() != null) {
-            ec2.terminateInstances(TerminateInstancesRequest.builder()
-                .instanceIds(tenant.instanceId()).build());
-            LOG.infof("Terminating instance %s — waiting for terminated state...", tenant.instanceId());
             try {
-                ec2.waiter().waitUntilInstanceTerminated(r -> r.instanceIds(tenant.instanceId()));
-                LOG.infof("Instance %s terminated", tenant.instanceId());
-            } catch (Exception e) {
-                LOG.warnf("Wait for termination timed out for %s, proceeding anyway: %s", tenant.instanceId(), e.getMessage());
+                ec2.terminateInstances(TerminateInstancesRequest.builder()
+                    .instanceIds(tenant.instanceId()).build());
+                LOG.infof("Terminating instance %s — waiting for terminated state...", tenant.instanceId());
+                try {
+                    ec2.waiter().waitUntilInstanceTerminated(r -> r.instanceIds(tenant.instanceId()));
+                    LOG.infof("Instance %s terminated", tenant.instanceId());
+                } catch (Exception e) {
+                    LOG.warnf("Wait for termination timed out for %s, proceeding anyway: %s", tenant.instanceId(), e.getMessage());
+                }
+            } catch (software.amazon.awssdk.services.ec2.model.Ec2Exception e) {
+                LOG.warnf("Could not terminate instance %s (may already be gone): %s", tenant.instanceId(), e.awsErrorDetails().errorCode());
             }
         }
 

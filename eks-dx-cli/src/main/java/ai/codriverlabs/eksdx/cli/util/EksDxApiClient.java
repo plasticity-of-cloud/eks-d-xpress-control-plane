@@ -98,10 +98,15 @@ public class EksDxApiClient {
     public int deleteStatusOnUrl(String baseUrl, String path) {
         try {
             URI uri = URI.create(baseUrl.replaceAll("/$", "") + path);
-            var builder = HttpRequest.newBuilder().uri(uri).method("DELETE", HttpRequest.BodyPublishers.noBody());
+            var builder = HttpRequest.newBuilder().uri(uri)
+                .method("DELETE", HttpRequest.BodyPublishers.noBody())
+                .timeout(java.time.Duration.ofSeconds(35));
             if (signer != null) signer.sign(builder, "DELETE", uri, null, "execute-api");
             else builder.header("Content-Type", "application/json");
             return httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
+        } catch (java.net.http.HttpTimeoutException e) {
+            // API Gateway times out at 29s; Lambda keeps running. Treat as accepted (503-equivalent).
+            return 503;
         } catch (Exception e) {
             return -1;
         }
