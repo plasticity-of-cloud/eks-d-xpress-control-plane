@@ -136,44 +136,131 @@ public class TenantIamService {
                   "Resource": "*"
                 },
                 {
-                  "Sid": "KarpenterRead",
+                  "Sid": "KarpenterResourceDiscovery",
                   "Effect": "Allow",
                   "Action": [
-                    "ec2:DescribeAvailabilityZones", "ec2:DescribeImages",
-                    "ec2:DescribeInstances", "ec2:DescribeInstanceTypes",
-                    "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeLaunchTemplates",
-                    "ec2:DescribeSecurityGroups", "ec2:DescribeSpotPriceHistory",
-                    "ec2:DescribeSubnets", "ec2:DescribeVolumes", "ec2:DescribeVpcs",
+                    "ec2:DescribeAvailabilityZones", "ec2:DescribeCapacityReservations",
+                    "ec2:DescribeImages", "ec2:DescribeInstances", "ec2:DescribeInstanceStatus",
+                    "ec2:DescribeInstanceTypes", "ec2:DescribeInstanceTypeOfferings",
+                    "ec2:DescribeLaunchTemplates", "ec2:DescribeLaunchTemplateVersions",
+                    "ec2:DescribePlacementGroups", "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeSpotPriceHistory", "ec2:DescribeSubnets",
+                    "ec2:DescribeVolumes", "ec2:DescribeVpcs",
                     "pricing:GetProducts", "ssm:GetParameter",
-                    "iam:ListInstanceProfiles", "iam:GetInstanceProfile",
+                    "iam:ListInstanceProfiles", "iam:GetInstanceProfile"
+                  ],
+                  "Resource": "*",
+                  "Condition": { "StringEquals": { "aws:RequestedRegion": "%s" } }
+                },
+                {
+                  "Sid": "KarpenterIAMInstanceProfile",
+                  "Effect": "Allow",
+                  "Action": [
                     "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
                     "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile",
                     "iam:TagInstanceProfile"
                   ],
-                  "Resource": "*"
+                  "Resource": "arn:aws:iam::%s:instance-profile/*",
+                  "Condition": {
+                    "StringEquals": { "aws:ResourceTag/kubernetes.io/cluster/%s": "owned" },
+                    "StringLike": { "aws:ResourceTag/karpenter.k8s.aws/ec2nodeclass": "*" }
+                  }
                 },
                 {
-                  "Sid": "KarpenterWrite",
+                  "Sid": "KarpenterInstanceAccessActions",
                   "Effect": "Allow",
-                  "Action": [
-                    "ec2:RunInstances", "ec2:CreateFleet", "ec2:CreateLaunchTemplate",
-                    "ec2:DeleteLaunchTemplate", "ec2:TerminateInstances", "ec2:CreateTags"
+                  "Action": ["ec2:RunInstances", "ec2:CreateFleet"],
+                  "Resource": [
+                    "arn:aws:ec2:%s::image/*",
+                    "arn:aws:ec2:%s::snapshot/*",
+                    "arn:aws:ec2:%s:*:security-group/*",
+                    "arn:aws:ec2:%s:*:subnet/*",
+                    "arn:aws:ec2:%s:*:capacity-reservation/*",
+                    "arn:aws:ec2:%s:*:placement-group/*"
+                  ]
+                },
+                {
+                  "Sid": "KarpenterLaunchTemplateAccess",
+                  "Effect": "Allow",
+                  "Action": ["ec2:RunInstances", "ec2:CreateFleet"],
+                  "Resource": "arn:aws:ec2:%s:*:launch-template/*",
+                  "Condition": {
+                    "StringEquals": { "aws:ResourceTag/kubernetes.io/cluster/%s": "owned" },
+                    "StringLike": { "aws:ResourceTag/karpenter.sh/nodepool": "*" }
+                  }
+                },
+                {
+                  "Sid": "KarpenterCreateWithTags",
+                  "Effect": "Allow",
+                  "Action": ["ec2:RunInstances", "ec2:CreateFleet", "ec2:CreateLaunchTemplate"],
+                  "Resource": [
+                    "arn:aws:ec2:%s:*:fleet/*",
+                    "arn:aws:ec2:%s:*:instance/*",
+                    "arn:aws:ec2:%s:*:volume/*",
+                    "arn:aws:ec2:%s:*:network-interface/*",
+                    "arn:aws:ec2:%s:*:launch-template/*",
+                    "arn:aws:ec2:%s:*:spot-instances-request/*"
                   ],
-                  "Resource": "*",
-                  "Condition": { "StringEquals": { "aws:RequestTag/kubernetes.io/cluster/%s": "owned" } }
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestTag/kubernetes.io/cluster/%s": "owned",
+                      "aws:RequestTag/eks:eks-cluster-name": "%s"
+                    },
+                    "StringLike": { "aws:RequestTag/karpenter.sh/nodepool": "*" }
+                  }
+                },
+                {
+                  "Sid": "KarpenterTagOnCreate",
+                  "Effect": "Allow",
+                  "Action": "ec2:CreateTags",
+                  "Resource": [
+                    "arn:aws:ec2:%s:*:fleet/*",
+                    "arn:aws:ec2:%s:*:instance/*",
+                    "arn:aws:ec2:%s:*:volume/*",
+                    "arn:aws:ec2:%s:*:network-interface/*",
+                    "arn:aws:ec2:%s:*:launch-template/*",
+                    "arn:aws:ec2:%s:*:spot-instances-request/*"
+                  ],
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:RequestTag/kubernetes.io/cluster/%s": "owned",
+                      "ec2:CreateAction": ["RunInstances", "CreateFleet", "CreateLaunchTemplate"]
+                    },
+                    "StringLike": { "aws:RequestTag/karpenter.sh/nodepool": "*" }
+                  }
+                },
+                {
+                  "Sid": "KarpenterTagInstances",
+                  "Effect": "Allow",
+                  "Action": "ec2:CreateTags",
+                  "Resource": "arn:aws:ec2:%s:*:instance/*",
+                  "Condition": {
+                    "StringEquals": { "aws:ResourceTag/kubernetes.io/cluster/%s": "owned" },
+                    "StringLike": { "aws:ResourceTag/karpenter.sh/nodepool": "*" },
+                    "ForAllValues:StringEquals": {
+                      "aws:TagKeys": ["eks:eks-cluster-name", "karpenter.sh/nodeclaim", "Name"]
+                    }
+                  }
                 },
                 {
                   "Sid": "KarpenterDelete",
                   "Effect": "Allow",
                   "Action": ["ec2:TerminateInstances", "ec2:DeleteLaunchTemplate"],
-                  "Resource": "*",
-                  "Condition": { "StringEquals": { "ec2:ResourceTag/kubernetes.io/cluster/%s": "owned" } }
+                  "Resource": [
+                    "arn:aws:ec2:%s:*:instance/*",
+                    "arn:aws:ec2:%s:*:launch-template/*"
+                  ],
+                  "Condition": {
+                    "StringEquals": { "aws:ResourceTag/kubernetes.io/cluster/%s": "owned" },
+                    "StringLike": { "aws:ResourceTag/karpenter.sh/nodepool": "*" }
+                  }
                 },
                 {
                   "Sid": "KarpenterPassRole",
                   "Effect": "Allow",
                   "Action": "iam:PassRole",
-                  "Resource": "arn:aws:iam::%s:role/eks-d-xpress-tenant-%s-instance-role"
+                  "Resource": "arn:aws:iam::%s:role/eks-d-xpress-tenant-%s-instance-role",
+                  "Condition": { "StringEquals": { "iam:PassedToService": "ec2.amazonaws.com" } }
                 },
                 {
                   "Sid": "KarpenterSQS",
@@ -212,8 +299,14 @@ public class TenantIamService {
                 region, accountId, tenantId,       // SecretsAccess
                 region, accountId, clusterName,    // EksDxApiInvoke
                 region, accountId, tenantId,       // TenantStateUpdate
-                clusterName,                       // KarpenterWrite
-                clusterName,                       // KarpenterDelete
+                region,                            // KarpenterResourceDiscovery
+                accountId, clusterName,            // KarpenterIAMInstanceProfile
+                region, region, region, region, region, region, // KarpenterInstanceAccessActions
+                region, clusterName,               // KarpenterLaunchTemplateAccess
+                region, region, region, region, region, region, clusterName, clusterName, // KarpenterCreateWithTags
+                region, region, region, region, region, region, clusterName, // KarpenterTagOnCreate
+                region, clusterName,               // KarpenterTagInstances
+                region, region, clusterName,       // KarpenterDelete
                 accountId, tenantId,               // KarpenterPassRole
                 region, accountId, clusterName,    // KarpenterSQS
                 clusterName                        // CloudProviderWriteTagged
