@@ -38,7 +38,6 @@
         <version>3.6.3</version>
         <configuration>
           <mainClass>ai.codriverlabs.eksdx.infra.InfraApp</mainClass>
-          <workingDirectory>${project.basedir}</workingDirectory>
         </configuration>
       </plugin>
       <plugin>
