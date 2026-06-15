@@ -75,7 +75,7 @@ jobs:
       - name: Build and push karpenter-support image
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          mvn -B -pl eks-dx-karpenter-support package -DskipTests \
+          mvn -B -pl eks-dx-karpenter-support package -DskipTests -Pnative \
             -Dquarkus.container-image.build=true \
             -Dquarkus.container-image.push=true \
             -Dquarkus.container-image.registry=ghcr.io \

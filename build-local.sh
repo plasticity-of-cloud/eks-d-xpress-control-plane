@@ -108,9 +108,15 @@ fi
 # 5b. Karpenter support (EC2NodeClass webhook + ValidationSucceeded controller)
 if should_build "karpenter"; then
   echo "--- karpenter-support"
-  mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG \
-    -Dquarkus.container-image.build=true \
-    -Dquarkus.container-image.push=false
+  if $NATIVE; then
+    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG -Pnative \
+      -Dquarkus.container-image.build=true \
+      -Dquarkus.container-image.push=false
+  else
+    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG \
+      -Dquarkus.container-image.build=true \
+      -Dquarkus.container-image.push=false
+  fi
 fi
 
 # 6. CLI
