@@ -12,8 +12,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.util.Map;
-
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -28,70 +26,84 @@ class Ec2NodeClassWebhookResourceTest {
         "my-cluster", "https://10.0.0.1:6443", "base64ca==", "10.96.0.0/12", "10.96.0.10"
     );
 
-    Ec2NodeClass ec2NodeClass;
-
     @BeforeEach
     void setUp() {
-        ec2NodeClass = new Ec2NodeClass();
-        var meta = new ObjectMeta();
-        meta.setName("default");
-        // node-variant annotation drives userData format; amiFamily is always Custom
-        meta.setAnnotations(Map.of(UserDataMergeService.NODE_VARIANT_ANNOTATION, "al2023"));
-        ec2NodeClass.setMetadata(meta);
-        var spec = new Ec2NodeClassSpec();
-        spec.setAmiFamily("Custom");
-        ec2NodeClass.setSpec(spec);
+        when(clusterIdentityService.get()).thenReturn(ID);
     }
 
     @Test
-    void mutate_injectsUserData_whenMergeReturnsContent() {
-        when(clusterIdentityService.get()).thenReturn(ID);
-        when(userDataMergeService.merge(eq("al2023"), isNull(), eq(ID))).thenReturn("MIME-Version: 1.0\n...");
+    void mutate_rewritesAmiFamilyToCustom_forAL2023() {
+        var nc = ec2NodeClass("AL2023", null);
+        when(userDataMergeService.merge(eq("AL2023"), any(), any())).thenReturn("MIME...");
 
-        var mutated = mutate(ec2NodeClass);
+        var mutated = mutate(nc);
+
+        assertEquals("Custom", mutated.getSpec().getAmiFamily());
+    }
+
+    @Test
+    void mutate_rewritesAmiFamilyToCustom_forBottlerocket() {
+        var nc = ec2NodeClass("Bottlerocket", null);
+        when(userDataMergeService.merge(eq("Bottlerocket"), any(), any())).thenReturn("[settings...]");
+
+        var mutated = mutate(nc);
+
+        assertEquals("Custom", mutated.getSpec().getAmiFamily());
+    }
+
+    @Test
+    void mutate_doesNotRewriteWhenAlreadyCustom() {
+        var nc = ec2NodeClass("Custom", "existing-userdata");
+        when(userDataMergeService.merge(eq("Custom"), any(), any())).thenReturn(null);
+
+        var mutated = mutate(nc);
+
+        assertEquals("Custom", mutated.getSpec().getAmiFamily());
+        verify(userDataMergeService).merge(eq("Custom"), any(), eq(ID));
+    }
+
+    @Test
+    void mutate_injectsUserData() {
+        var nc = ec2NodeClass("AL2023", null);
+        when(userDataMergeService.merge(eq("AL2023"), isNull(), eq(ID))).thenReturn("MIME-Version: 1.0\n...");
+
+        var mutated = mutate(nc);
 
         assertEquals("MIME-Version: 1.0\n...", mutated.getSpec().getUserData());
     }
 
     @Test
-    void mutate_noOp_whenMergeReturnsNull() {
-        when(clusterIdentityService.get()).thenReturn(ID);
+    void mutate_skipsUserDataWhenIdempotent() {
+        var nc = ec2NodeClass("AL2023", "already-managed");
         when(userDataMergeService.merge(any(), any(), any())).thenReturn(null);
 
-        var mutated = mutate(ec2NodeClass);
+        var mutated = mutate(nc);
 
-        assertNull(mutated.getSpec().getUserData());
+        assertEquals("already-managed", mutated.getSpec().getUserData());
+        // amiFamily still rewritten even if userData was idempotent
+        assertEquals("Custom", mutated.getSpec().getAmiFamily());
     }
 
     @Test
     void mutate_noOp_whenClusterIdentityUnavailable() {
         when(clusterIdentityService.get()).thenReturn(null);
+        var nc = ec2NodeClass("AL2023", null);
 
-        mutate(ec2NodeClass);
+        mutate(nc);
 
         verifyNoInteractions(userDataMergeService);
+        assertEquals("AL2023", nc.getSpec().getAmiFamily()); // unchanged
     }
 
     @Test
-    void mutate_passesNodeVariantAnnotation_toMergeService() {
-        when(clusterIdentityService.get()).thenReturn(ID);
-        when(userDataMergeService.merge(eq("al2023"), any(), any())).thenReturn("merged");
+    void mutate_passesOriginalAmiFamilyToMergeService() {
+        var nc = ec2NodeClass("Bottlerocket", null);
+        when(userDataMergeService.merge(eq("Bottlerocket"), any(), any())).thenReturn("toml");
 
-        mutate(ec2NodeClass);
+        mutate(nc);
 
-        verify(userDataMergeService).merge(eq("al2023"), any(), eq(ID));
-    }
-
-    @Test
-    void mutate_handlesBottlerocketVariant() {
-        ec2NodeClass.getMetadata().setAnnotations(
-            Map.of(UserDataMergeService.NODE_VARIANT_ANNOTATION, "bottlerocket"));
-        when(clusterIdentityService.get()).thenReturn(ID);
-        when(userDataMergeService.merge(eq("bottlerocket"), any(), any())).thenReturn("[settings.kubernetes]\n...");
-
-        var mutated = mutate(ec2NodeClass);
-
-        assertEquals("[settings.kubernetes]\n...", mutated.getSpec().getUserData());
+        // merge() receives original value, not "Custom"
+        verify(userDataMergeService).merge(eq("Bottlerocket"), any(), eq(ID));
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
@@ -101,15 +113,28 @@ class Ec2NodeClassWebhookResourceTest {
         var identity = clusterIdentityService.get();
         if (identity == null) return nc;
 
-        String nodeVariant = nc.getMetadata().getAnnotations() != null
-            ? nc.getMetadata().getAnnotations().get(UserDataMergeService.NODE_VARIANT_ANNOTATION)
-            : null;
-        String existing = nc.getSpec() != null ? nc.getSpec().getUserData() : null;
-        String merged   = userDataMergeService.merge(nodeVariant, existing, identity);
-        if (merged == null) return nc;
-
         if (nc.getSpec() == null) nc.setSpec(new Ec2NodeClassSpec());
-        nc.getSpec().setUserData(merged);
+        String originalAmiFamily = nc.getSpec().getAmiFamily();
+        String existing = nc.getSpec().getUserData();
+
+        String merged = userDataMergeService.merge(originalAmiFamily, existing, identity);
+        if (merged != null) nc.getSpec().setUserData(merged);
+
+        if (!UserDataMergeService.CUSTOM.equals(originalAmiFamily))
+            nc.getSpec().setAmiFamily(UserDataMergeService.CUSTOM);
+
+        return nc;
+    }
+
+    private Ec2NodeClass ec2NodeClass(String amiFamily, String userData) {
+        var nc = new Ec2NodeClass();
+        var meta = new ObjectMeta();
+        meta.setName("default");
+        nc.setMetadata(meta);
+        var spec = new Ec2NodeClassSpec();
+        spec.setAmiFamily(amiFamily);
+        spec.setUserData(userData);
+        nc.setSpec(spec);
         return nc;
     }
 }

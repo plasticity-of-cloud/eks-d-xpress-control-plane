@@ -23,7 +23,7 @@ class UserDataMergeServiceTest {
 
     @Test
     void br_empty_injectsBlock() {
-        String r = service.merge("bottlerocket", null, ID);
+        String r = service.merge("Bottlerocket", null, ID);
         assertNotNull(r);
         assertTrue(r.contains("[settings.kubernetes]"));
         assertTrue(r.contains("api-server = \"https://10.0.0.1:6443\""));
@@ -33,21 +33,14 @@ class UserDataMergeServiceTest {
     }
 
     @Test
-    void br_gpu_variant_injectsBlock() {
-        String r = service.merge("bottlerocket-gpu", null, ID);
-        assertNotNull(r);
-        assertTrue(r.contains("[settings.kubernetes]"));
-    }
-
-    @Test
     void br_idempotent_returnsNull() {
-        String first = service.merge("bottlerocket", null, ID);
-        assertNull(service.merge("bottlerocket", first, ID));
+        String first = service.merge("Bottlerocket", null, ID);
+        assertNull(service.merge("Bottlerocket", first, ID));
     }
 
     @Test
     void br_existingContentPreserved() {
-        String r = service.merge("bottlerocket", "[settings.network]\nhostname = \"node1\"", ID);
+        String r = service.merge("Bottlerocket", "[settings.network]\nhostname = \"node1\"", ID);
         assertNotNull(r);
         assertTrue(r.contains("[settings.network]"));
         assertTrue(r.contains("[settings.kubernetes]"));
@@ -55,17 +48,22 @@ class UserDataMergeServiceTest {
 
     @Test
     void br_existingSectionMerged() {
-        String r = service.merge("bottlerocket", "[settings.kubernetes]\nsome-key = \"val\"", ID);
+        String r = service.merge("Bottlerocket", "[settings.kubernetes]\nsome-key = \"val\"", ID);
         assertNotNull(r);
         assertTrue(r.contains("api-server"));
         assertTrue(r.contains("some-key"));
+    }
+
+    @Test
+    void br_caseInsensitive() {
+        assertNotNull(service.merge("bottlerocket", null, ID));
     }
 
     // ── AL2023 ────────────────────────────────────────────────────────────────
 
     @Test
     void al2023_empty_createsMime() {
-        String r = service.merge("al2023", null, ID);
+        String r = service.merge("AL2023", null, ID);
         assertNotNull(r);
         assertTrue(r.startsWith("MIME-Version:"));
         assertTrue(r.contains("application/node.eks.aws"));
@@ -74,21 +72,14 @@ class UserDataMergeServiceTest {
     }
 
     @Test
-    void al2023_gpu_variant() {
-        String r = service.merge("al2023-gpu", null, ID);
-        assertNotNull(r);
-        assertTrue(r.contains("application/node.eks.aws"));
-    }
-
-    @Test
     void al2023_idempotent_returnsNull() {
-        String first = service.merge("al2023", null, ID);
-        assertNull(service.merge("al2023", first, ID));
+        String first = service.merge("AL2023", null, ID);
+        assertNull(service.merge("AL2023", first, ID));
     }
 
     @Test
     void al2023_existingShellScriptWrapped() {
-        String r = service.merge("al2023", "#!/bin/bash\necho hello", ID);
+        String r = service.merge("AL2023", "#!/bin/bash\necho hello", ID);
         assertNotNull(r);
         assertTrue(r.contains("application/node.eks.aws"));
         assertTrue(r.contains("#!/bin/bash"));
@@ -97,18 +88,26 @@ class UserDataMergeServiceTest {
     @Test
     void al2023_existingMimePrepended() {
         String existing = "MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary=\"//\"\n\n--//\nContent-Type: text/x-shellscript\n\n#!/bin/bash\n\n--//--\n";
-        String r = service.merge("al2023", existing, ID);
+        String r = service.merge("AL2023", existing, ID);
         assertNotNull(r);
         assertTrue(r.contains("application/node.eks.aws"));
         assertTrue(r.contains("#!/bin/bash"));
     }
 
+    // ── Custom (already correct amiFamily) ───────────────────────────────────
+
     @Test
-    void nullVariant_treatedAsAl2023() {
-        // null node-variant annotation → default to AL2023 MIME format
-        String r = service.merge(null, null, ID);
+    void custom_treatedAsAl2023Mime() {
+        // Customer supplied Custom — default to AL2023 MIME format
+        String r = service.merge("Custom", null, ID);
         assertNotNull(r);
         assertTrue(r.contains("application/node.eks.aws"));
+    }
+
+    @Test
+    void custom_alreadyManagedMime_idempotent() {
+        String first = service.merge("Custom", null, ID);
+        assertNull(service.merge("Custom", first, ID));
     }
 
     // ── ClusterIdentityService.computeClusterDnsIp ───────────────────────────

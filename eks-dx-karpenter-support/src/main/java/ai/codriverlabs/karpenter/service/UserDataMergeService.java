@@ -8,15 +8,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Merges cluster bootstrap fields into EC2NodeClass spec.userData.
+ * Merges cluster bootstrap fields into EC2NodeClass spec.userData and rewrites
+ * {@code spec.amiFamily} to {@code Custom}.
  *
- * <p><b>IMPORTANT — amiFamily must always be {@code Custom}</b>: Karpenter ≥1.10 calls
- * {@code eks:DescribeCluster} / {@code ResolveClusterCIDR} for any non-Custom amiFamily,
- * even when {@code eksControlPlane=false}. The actual node OS is indicated by the annotation
- * {@code eks-dx.codriverlabs.ai/node-variant}, not by {@code spec.amiFamily}.
+ * <p><b>Why amiFamily must be Custom</b>: Karpenter ≥1.10 calls {@code eks:DescribeCluster} /
+ * {@code ResolveClusterCIDR} for any non-Custom amiFamily, even when
+ * {@code eksControlPlane=false}. The webhook reads the customer-supplied amiFamily to determine
+ * the userData format, then rewrites it to {@code Custom}.
  *
- * <p><b>bottlerocket*</b>: injects managed keys into {@code [settings.kubernetes]} TOML.
- * <p><b>al2023* / everything else</b>: prepends an {@code application/node.eks.aws} MIME part.
+ * <p><b>Bottlerocket</b>: injects managed keys into {@code [settings.kubernetes]} TOML.
+ * <p><b>AL2023</b>: prepends an {@code application/node.eks.aws} MIME part.
+ * <p><b>Custom</b>: already custom — use existing userData format; defaults to AL2023 MIME.
  *
  * <p>Both paths are idempotent — returns {@code null} if already managed.
  */
@@ -25,17 +27,17 @@ public class UserDataMergeService {
 
     private static final Logger LOG = Logger.getLogger(UserDataMergeService.class);
     static final String MANAGED_MARKER = "# eks-dx-managed";
-    /** Annotation on EC2NodeClass that controls userData format — NOT spec.amiFamily. */
-    public static final String NODE_VARIANT_ANNOTATION = "eks-dx.codriverlabs.ai/node-variant";
+    static final String CUSTOM = "Custom";
     private static final String MIME_BOUNDARY = "//";
 
     /**
-     * @param nodeVariant value of annotation {@value NODE_VARIANT_ANNOTATION}
-     *                    (e.g. "bottlerocket", "al2023", "al2023-gpu") — NOT spec.amiFamily
+     * Merges cluster identity into userData based on the customer-supplied {@code amiFamily}.
+     *
+     * @param amiFamily customer-supplied spec.amiFamily ("AL2023", "Bottlerocket", "Custom")
      * @return merged userData, or {@code null} if already up-to-date (caller must skip patch)
      */
-    public String merge(String nodeVariant, String existingUserData, ClusterIdentity identity) {
-        return isBottleRocket(nodeVariant)
+    public String merge(String amiFamily, String existingUserData, ClusterIdentity identity) {
+        return isBottleRocket(amiFamily)
             ? mergeBottleRocket(existingUserData, identity)
             : mergeAl2023(existingUserData, identity);
     }
@@ -67,7 +69,7 @@ public class UserDataMergeService {
             + "cluster-dns-ip = \"" + id.clusterDnsIp() + "\"";
     }
 
-    // ── AL2023 ────────────────────────────────────────────────────────────────
+    // ── AL2023 / Custom ───────────────────────────────────────────────────────
 
     private String mergeAl2023(String existing, ClusterIdentity id) {
         if (existing != null && existing.contains("application/node.eks.aws") && existing.contains(MANAGED_MARKER)) {
@@ -114,7 +116,7 @@ public class UserDataMergeService {
         return sb.toString();
     }
 
-    private boolean isBottleRocket(String nodeVariant) {
-        return nodeVariant != null && nodeVariant.toLowerCase().startsWith("bottlerocket");
+    private boolean isBottleRocket(String amiFamily) {
+        return "Bottlerocket".equalsIgnoreCase(amiFamily);
     }
 }

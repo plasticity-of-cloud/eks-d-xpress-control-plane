@@ -17,9 +17,14 @@ import org.jboss.logging.Logger;
 /**
  * Mutating admission webhook for Karpenter EC2NodeClass (CREATE and UPDATE).
  *
- * <p>Merges cluster bootstrap fields (apiServerEndpoint, certificateAuthority, serviceCidr,
- * clusterDnsIp, clusterName) into {@code spec.userData}, eliminating manual Helm value
- * management as described in KARPENTER_EC2NODECLASS_WEBHOOK.md / NODEPOOL_CONTROLLER_MIGRATION.md.
+ * <p>On admission:
+ * <ol>
+ *   <li>Reads {@code spec.amiFamily} to determine userData format (Bottlerocket → TOML, AL2023 → MIME).
+ *   <li>Merges cluster bootstrap fields into {@code spec.userData}.
+ *   <li>Rewrites {@code spec.amiFamily} to {@code "Custom"} — prevents Karpenter ≥1.10 from
+ *       calling {@code eks:DescribeCluster} / {@code ResolveClusterCIDR} when
+ *       {@code eksControlPlane=false}.
+ * </ol>
  *
  * <p>{@code failurePolicy: Ignore} — webhook outage must not block Karpenter.
  */
@@ -38,26 +43,30 @@ public class Ec2NodeClassWebhookResource {
         this.controller = new AdmissionController<>((resource, operation) -> {
             var identity = clusterIdentityService.get();
             if (identity == null) {
-                LOG.warnf("Cluster identity unavailable — skipping userData injection for EC2NodeClass %s",
+                LOG.warnf("Cluster identity unavailable — skipping mutation for EC2NodeClass %s",
                     resource.getMetadata().getName());
                 return resource;
             }
 
-            String nodeVariant = resource.getMetadata().getAnnotations() != null
-                ? resource.getMetadata().getAnnotations().get(UserDataMergeService.NODE_VARIANT_ANNOTATION)
-                : null;
-            String existing  = resource.getSpec() != null ? resource.getSpec().getUserData() : null;
+            if (resource.getSpec() == null) resource.setSpec(new Ec2NodeClassSpec());
+            String originalAmiFamily = resource.getSpec().getAmiFamily();
+            String existing          = resource.getSpec().getUserData();
 
-            String merged = userDataMergeService.merge(nodeVariant, existing, identity);
-            if (merged == null) {
-                LOG.debugf("EC2NodeClass/%s userData already up-to-date — no-op", resource.getMetadata().getName());
-                return resource;
+            // 1. Merge userData based on customer-supplied amiFamily
+            String merged = userDataMergeService.merge(originalAmiFamily, existing, identity);
+            if (merged != null) {
+                resource.getSpec().setUserData(merged);
+                LOG.infof("Injected cluster bootstrap fields into EC2NodeClass/%s (amiFamily=%s)",
+                    resource.getMetadata().getName(), originalAmiFamily);
             }
 
-            LOG.infof("Injecting cluster bootstrap fields into EC2NodeClass/%s (node-variant=%s)",
-                resource.getMetadata().getName(), nodeVariant);
-            if (resource.getSpec() == null) resource.setSpec(new Ec2NodeClassSpec());
-            resource.getSpec().setUserData(merged);
+            // 2. Rewrite amiFamily to Custom (always — prevents Karpenter >=1.10 EKS API calls)
+            if (!UserDataMergeService.CUSTOM.equals(originalAmiFamily)) {
+                resource.getSpec().setAmiFamily(UserDataMergeService.CUSTOM);
+                LOG.infof("Rewrote EC2NodeClass/%s amiFamily: %s → Custom",
+                    resource.getMetadata().getName(), originalAmiFamily);
+            }
+
             return resource;
         });
     }
