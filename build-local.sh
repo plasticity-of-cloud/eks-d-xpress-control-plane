@@ -22,7 +22,7 @@ for arg in "$@"; do
       echo "  --native       Build GraalVM native binaries for tenant-service and CLI"
       echo "  --skip-tests   Skip unit tests during build"
       echo "  --only <list>  Comma-separated modules to build (skips others)"
-      echo "                 Available: credential,mgmt,tenant,auth-proxy,webhook,cli,cdk"
+      echo "                 Available: credential,mgmt,tenant,auth-proxy,webhook,karpenter,cli,cdk"
       echo "  --help         Show this help message"
       echo ""
       echo "Examples:"
@@ -101,6 +101,14 @@ fi
 if should_build "webhook"; then
   echo "--- pod-identity-webhook"
   mvn -B -pl eks-dx-pod-identity-webhook clean package $SKIP_FLAG \
+    -Dquarkus.container-image.build=true \
+    -Dquarkus.container-image.push=false
+fi
+
+# 5b. Karpenter support (EC2NodeClass webhook + ValidationSucceeded controller)
+if should_build "karpenter"; then
+  echo "--- karpenter-support"
+  mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG \
     -Dquarkus.container-image.build=true \
     -Dquarkus.container-image.push=false
 fi

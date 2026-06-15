@@ -16,6 +16,7 @@
     <module>eks-dx-tenant-service</module>
     <module>eks-dx-auth-proxy</module>
     <module>eks-dx-pod-identity-webhook</module>
+    <module>eks-dx-karpenter-support</module>
     <module>eks-dx-cli</module>
     <module>infra</module>
   </modules>
