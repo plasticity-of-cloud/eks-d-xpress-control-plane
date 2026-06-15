@@ -11,13 +11,11 @@
   </parent>
 
   <artifactId>eks-dx-karpenter-support</artifactId>
-  <description>EKS-DX Karpenter Support — EC2NodeClass webhook (userData injection) and JOSDK reconciler (ValidationSucceeded + AMI resolution)</description>
+  <description>EKS-DX Karpenter Support — EC2NodeClass webhook (userData injection) and controller (ValidationSucceeded)</description>
 
   <properties>
     <skipITs>true</skipITs>
     <josdk-webhooks.version>3.0.3</josdk-webhooks.version>
-    <!-- https://github.com/quarkiverse/quarkus-operator-sdk/releases — verify latest compatible with quarkus 3.36+ -->
-    <quarkus-operator-sdk.version>6.9.2</quarkus-operator-sdk.version>
   </properties>
 
   <dependencyManagement>
@@ -26,13 +24,6 @@
         <groupId>${quarkus.platform.group-id}</groupId>
         <artifactId>${quarkus.platform.artifact-id}</artifactId>
         <version>${quarkus.platform.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-      <dependency>
-        <groupId>io.quarkiverse.operatorsdk</groupId>
-        <artifactId>quarkus-operator-sdk-bom</artifactId>
-        <version>${quarkus-operator-sdk.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -48,6 +39,10 @@
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-rest-jackson</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-kubernetes-client</artifactId>
     </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
@@ -67,19 +62,12 @@
       <version>1.4.0</version>
     </dependency>
 
-    <!-- JOSDK Operator SDK — reconciler + controller lifecycle -->
-    <dependency>
-      <groupId>io.quarkiverse.operatorsdk</groupId>
-      <artifactId>quarkus-operator-sdk</artifactId>
-    </dependency>
-
     <!-- JOSDK Webhooks — admission webhook handler (same version as eks-dx-pod-identity-webhook) -->
     <dependency>
       <groupId>io.javaoperatorsdk</groupId>
       <artifactId>kubernetes-webhooks-framework-core</artifactId>
       <version>${josdk-webhooks.version}</version>
       <exclusions>
-        <!-- Use the Quarkus-managed Fabric8 client from quarkus-operator-sdk -->
         <exclusion>
           <groupId>io.fabric8</groupId>
           <artifactId>kubernetes-client</artifactId>
