@@ -1,21 +1,23 @@
 package ai.codriverlabs.karpenter.service;
 
 import ai.codriverlabs.karpenter.model.ClusterIdentity;
-import io.quarkus.test.junit.QuarkusTest;
-import jakarta.inject.Inject;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-@QuarkusTest
 class UserDataMergeServiceTest {
 
-    @Inject
     UserDataMergeService service;
 
     static final ClusterIdentity ID = new ClusterIdentity(
         "my-cluster", "https://10.0.0.1:6443", "base64ca==", "10.96.0.0/12", "10.96.0.10"
     );
+
+    @BeforeEach
+    void setUp() {
+        service = new UserDataMergeService();
+    }
 
     // ── BottleRocket ──────────────────────────────────────────────────────────
 
@@ -27,18 +29,18 @@ class UserDataMergeServiceTest {
         assertTrue(r.contains("api-server = \"https://10.0.0.1:6443\""));
         assertTrue(r.contains("cluster-dns-ip = \"10.96.0.10\""));
         assertTrue(r.contains("cluster-name = \"my-cluster\""));
+        assertTrue(r.contains("cluster-certificate = \"base64ca==\""));
     }
 
     @Test
     void br_idempotent_returnsNull() {
         String first = service.merge("Bottlerocket", null, ID);
-        assertNull(service.merge("Bottlerocket", first, ID), "Re-merge of managed userData must return null");
+        assertNull(service.merge("Bottlerocket", first, ID));
     }
 
     @Test
     void br_existingContentPreserved() {
-        String existing = "[settings.network]\nhostname = \"node1\"";
-        String r = service.merge("Bottlerocket", existing, ID);
+        String r = service.merge("Bottlerocket", "[settings.network]\nhostname = \"node1\"", ID);
         assertNotNull(r);
         assertTrue(r.contains("[settings.network]"));
         assertTrue(r.contains("[settings.kubernetes]"));
@@ -46,11 +48,17 @@ class UserDataMergeServiceTest {
 
     @Test
     void br_existingSectionMerged() {
-        String existing = "[settings.kubernetes]\nsome-other-key = \"val\"";
-        String r = service.merge("Bottlerocket", existing, ID);
+        String r = service.merge("Bottlerocket", "[settings.kubernetes]\nsome-key = \"val\"", ID);
         assertNotNull(r);
         assertTrue(r.contains("api-server"));
-        assertTrue(r.contains("some-other-key"));
+        assertTrue(r.contains("some-key"));
+    }
+
+    @Test
+    void br_caseInsensitiveAmiFamily() {
+        String r = service.merge("bottlerocket", null, ID);
+        assertNotNull(r);
+        assertTrue(r.contains("[settings.kubernetes]"));
     }
 
     // ── AL2 / AL2023 ─────────────────────────────────────────────────────────
@@ -68,11 +76,11 @@ class UserDataMergeServiceTest {
     @Test
     void al2_idempotent_returnsNull() {
         String first = service.merge("AL2023", null, ID);
-        assertNull(service.merge("AL2023", first, ID), "Re-merge of managed userData must return null");
+        assertNull(service.merge("AL2023", first, ID));
     }
 
     @Test
-    void al2_existingShellScriptPreserved() {
+    void al2_existingShellScriptWrapped() {
         String r = service.merge("AL2", "#!/bin/bash\necho hello", ID);
         assertNotNull(r);
         assertTrue(r.contains("application/node.eks.aws"));
@@ -95,15 +103,22 @@ class UserDataMergeServiceTest {
         assertTrue(r.contains("application/node.eks.aws"));
     }
 
+    @Test
+    void nullAmiFamily_treatedAsAl2() {
+        String r = service.merge(null, null, ID);
+        assertNotNull(r);
+        assertTrue(r.contains("application/node.eks.aws"));
+    }
+
     // ── ClusterIdentityService.computeClusterDnsIp ───────────────────────────
 
     @Test
-    void dnsIp_standardCidr() throws Exception {
+    void dnsIp_standard() throws Exception {
         assertEquals("10.96.0.10", ClusterIdentityService.computeClusterDnsIp("10.96.0.0/12"));
     }
 
     @Test
-    void dnsIp_customCidr() throws Exception {
+    void dnsIp_slash16() throws Exception {
         assertEquals("172.20.0.10", ClusterIdentityService.computeClusterDnsIp("172.20.0.0/16"));
     }
 
