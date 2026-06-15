@@ -73,13 +73,11 @@ public class ClusterIdentityService {
     }
 
     private String resolveApiServerEndpoint() {
-        var ep = client.endpoints().inNamespace("default").withName("kubernetes").get();
-        if (ep == null || ep.getSubsets() == null || ep.getSubsets().isEmpty())
-            throw new IllegalStateException("endpoints/kubernetes not found in default namespace");
-        var subset = ep.getSubsets().get(0);
-        String ip = subset.getAddresses().get(0).getIp();
-        int port = subset.getPorts().get(0).getPort();
-        return "https://" + ip + ":" + port;
+        // client.getMasterUrl() is resolved from the in-cluster config (/var/run/secrets +
+        // KUBERNETES_SERVICE_HOST/PORT) by Fabric8 at startup — no API call or RBAC needed.
+        String url = client.getMasterUrl().toString();
+        // Strip trailing slash for consistency
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
     }
 
     private String resolveCertificateAuthority() {

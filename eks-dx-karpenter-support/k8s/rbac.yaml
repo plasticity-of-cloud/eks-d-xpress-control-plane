@@ -10,11 +10,8 @@ kind: ClusterRole
 metadata:
   name: eks-dx-karpenter-support
 rules:
-  # ClusterIdentityService: read cluster bootstrap ConfigMaps + kubernetes endpoint
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    resourceNames: ["kubernetes"]
-    verbs: ["get"]
+  # ClusterIdentityService: read cluster bootstrap ConfigMaps
+  # (apiServerEndpoint resolved via client.getMasterUrl() — no endpoints permission needed)
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: ["kube-root-ca.crt", "kubeadm-config", "eks-dx-config"]
