@@ -23,7 +23,7 @@ class Ec2NodeClassWebhookResourceTest {
     @Mock UserDataMergeService userDataMergeService;
 
     static final ClusterIdentity ID = new ClusterIdentity(
-        "my-cluster", "https://10.0.0.1:6443", "base64ca==", "10.96.0.0/12", "10.96.0.10"
+        "my-cluster", "tenant-123", "https://10.0.0.1:6443", "base64ca==", "10.96.0.0/12", "10.96.0.10"
     );
 
     @BeforeEach
@@ -106,6 +106,42 @@ class Ec2NodeClassWebhookResourceTest {
         verify(userDataMergeService).merge(eq("Bottlerocket"), any(), eq(ID));
     }
 
+    @Test
+    void mutate_injectsRequiredTags() {
+        var nc = ec2NodeClass("AL2023", null);
+        when(userDataMergeService.merge(any(), any(), any())).thenReturn("MIME...");
+
+        var mutated = mutate(nc);
+
+        var tags = mutated.getSpec().getTags();
+        assertEquals("eks-d-xpress", tags.get("Platform"));
+        assertEquals("tenant-123", tags.get("Developer"));
+        assertEquals("Karpenter", tags.get("ManagedBy"));
+    }
+
+    @Test
+    void mutate_preservesCustomerTags() {
+        var nc = ec2NodeClass("AL2023", null);
+        nc.getSpec().setTags(new java.util.HashMap<>(java.util.Map.of("MyTag", "MyValue")));
+        when(userDataMergeService.merge(any(), any(), any())).thenReturn("MIME...");
+
+        var mutated = mutate(nc);
+
+        assertEquals("MyValue", mutated.getSpec().getTags().get("MyTag"));
+        assertEquals("eks-d-xpress", mutated.getSpec().getTags().get("Platform"));
+    }
+
+    @Test
+    void mutate_doesNotOverwriteCustomerDeveloperTag() {
+        var nc = ec2NodeClass("AL2023", null);
+        nc.getSpec().setTags(new java.util.HashMap<>(java.util.Map.of("Developer", "customer-override")));
+        when(userDataMergeService.merge(any(), any(), any())).thenReturn("MIME...");
+
+        var mutated = mutate(nc);
+
+        assertEquals("customer-override", mutated.getSpec().getTags().get("Developer"));
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
 
     /** Exercises the mutation lambda directly — same pattern as PodIdentityMutatorTest. */
@@ -115,13 +151,18 @@ class Ec2NodeClassWebhookResourceTest {
 
         if (nc.getSpec() == null) nc.setSpec(new Ec2NodeClassSpec());
         String originalAmiFamily = nc.getSpec().getAmiFamily();
-        String existing = nc.getSpec().getUserData();
 
-        String merged = userDataMergeService.merge(originalAmiFamily, existing, identity);
+        String merged = userDataMergeService.merge(originalAmiFamily, nc.getSpec().getUserData(), identity);
         if (merged != null) nc.getSpec().setUserData(merged);
 
         if (!UserDataMergeService.CUSTOM.equals(originalAmiFamily))
             nc.getSpec().setAmiFamily(UserDataMergeService.CUSTOM);
+
+        var tags = nc.getSpec().getTags();
+        if (tags == null) { tags = new java.util.HashMap<>(); nc.getSpec().setTags(tags); }
+        tags.putIfAbsent("Platform", "eks-d-xpress");
+        tags.putIfAbsent("Developer", identity.tenantId());
+        tags.putIfAbsent("ManagedBy", "Karpenter");
 
         return nc;
     }

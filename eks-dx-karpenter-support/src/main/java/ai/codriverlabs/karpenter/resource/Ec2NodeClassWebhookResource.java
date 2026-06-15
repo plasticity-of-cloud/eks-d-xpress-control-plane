@@ -14,6 +14,8 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import org.jboss.logging.Logger;
 
+import java.util.HashMap;
+
 /**
  * Mutating admission webhook for Karpenter EC2NodeClass (CREATE and UPDATE).
  *
@@ -22,8 +24,9 @@ import org.jboss.logging.Logger;
  *   <li>Reads {@code spec.amiFamily} to determine userData format (Bottlerocket → TOML, AL2023 → MIME).
  *   <li>Merges cluster bootstrap fields into {@code spec.userData}.
  *   <li>Rewrites {@code spec.amiFamily} to {@code "Custom"} — prevents Karpenter ≥1.10 from
- *       calling {@code eks:DescribeCluster} / {@code ResolveClusterCIDR} when
- *       {@code eksControlPlane=false}.
+ *       calling {@code eks:DescribeCluster} when {@code eksControlPlane=false}.
+ *   <li>Ensures required tags are present in {@code spec.tags}, preserving customer-supplied tags:
+ *       {@code Platform=eks-d-xpress}, {@code Developer=<tenantId>}, {@code ManagedBy=Karpenter}.
  * </ol>
  *
  * <p>{@code failurePolicy: Ignore} — webhook outage must not block Karpenter.
@@ -50,22 +53,28 @@ public class Ec2NodeClassWebhookResource {
 
             if (resource.getSpec() == null) resource.setSpec(new Ec2NodeClassSpec());
             String originalAmiFamily = resource.getSpec().getAmiFamily();
-            String existing          = resource.getSpec().getUserData();
 
             // 1. Merge userData based on customer-supplied amiFamily
-            String merged = userDataMergeService.merge(originalAmiFamily, existing, identity);
+            String merged = userDataMergeService.merge(originalAmiFamily, resource.getSpec().getUserData(), identity);
             if (merged != null) {
                 resource.getSpec().setUserData(merged);
                 LOG.infof("Injected cluster bootstrap fields into EC2NodeClass/%s (amiFamily=%s)",
                     resource.getMetadata().getName(), originalAmiFamily);
             }
 
-            // 2. Rewrite amiFamily to Custom (always — prevents Karpenter >=1.10 EKS API calls)
+            // 2. Rewrite amiFamily to Custom — prevents Karpenter >=1.10 EKS API calls
             if (!UserDataMergeService.CUSTOM.equals(originalAmiFamily)) {
                 resource.getSpec().setAmiFamily(UserDataMergeService.CUSTOM);
                 LOG.infof("Rewrote EC2NodeClass/%s amiFamily: %s → Custom",
                     resource.getMetadata().getName(), originalAmiFamily);
             }
+
+            // 3. Ensure required tags — merge over customer tags, do not overwrite
+            var tags = resource.getSpec().getTags();
+            if (tags == null) { tags = new HashMap<>(); resource.getSpec().setTags(tags); }
+            tags.putIfAbsent("Platform", "eks-d-xpress");
+            tags.putIfAbsent("Developer", identity.tenantId());
+            tags.putIfAbsent("ManagedBy", "Karpenter");
 
             return resource;
         });

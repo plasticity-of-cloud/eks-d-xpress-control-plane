@@ -61,12 +61,14 @@ public class ClusterIdentityService {
     }
 
     private ClusterIdentity resolve() throws Exception {
+        String serviceCidr = resolveServiceCidr();
         return new ClusterIdentity(
             resolveClusterName(),
+            resolveTenantId(),
             resolveApiServerEndpoint(),
             resolveCertificateAuthority(),
-            resolveServiceCidr(),
-            computeClusterDnsIp(resolveServiceCidr())
+            serviceCidr,
+            computeClusterDnsIp(serviceCidr)
         );
     }
 
@@ -107,6 +109,13 @@ public class ClusterIdentityService {
         if (cm != null && cm.getData().containsKey("cluster-name")) return cm.getData().get("cluster-name");
         LOG.warn("eks-dx-config missing cluster-name key — using 'default'");
         return "default";
+    }
+
+    private String resolveTenantId() {
+        var cm = client.configMaps().inNamespace("kube-system").withName("eks-dx-config").get();
+        if (cm != null && cm.getData().containsKey("tenant-id")) return cm.getData().get("tenant-id");
+        LOG.warn("eks-dx-config missing tenant-id key");
+        return "";
     }
 
     /**
