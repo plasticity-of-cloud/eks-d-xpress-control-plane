@@ -17,7 +17,7 @@
     <skipITs>true</skipITs>
     <josdk-webhooks.version>3.0.3</josdk-webhooks.version>
     <!-- https://github.com/quarkiverse/quarkus-operator-sdk/releases — verify latest compatible with quarkus 3.36+ -->
-    <quarkus-operator-sdk.version>6.9.2</quarkus-operator-sdk.version>
+    <quarkus-operator-sdk.version>7.7.5</quarkus-operator-sdk.version>
   </properties>
 
   <dependencyManagement>
