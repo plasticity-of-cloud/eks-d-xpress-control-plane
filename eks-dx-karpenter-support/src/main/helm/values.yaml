@@ -3,3 +3,11 @@ app:
     registry: ghcr.io
     repository: codriverlabs/eks-dx-karpenter-support
     tag: latest
+
+clusterIdentity:
+  clusterName: ""
+  tenantId: ""
+  natGatewayEnabled: "false"
+  publicSubnetId: ""
+  privateSubnetId: ""
+  securityGroupId: ""
