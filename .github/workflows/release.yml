@@ -202,7 +202,9 @@ jobs:
           path: eks-dx-tenant-service/target
 
       - name: Rename tenant zip for CDK asset lookup
-        run: mv eks-dx-tenant-service/target/eks-dx-tenant-service-*.zip eks-dx-tenant-service/target/function.zip
+        run: |
+          ls eks-dx-tenant-service/target/
+          mv eks-dx-tenant-service/target/eks-dx-tenant-service-*.zip eks-dx-tenant-service/target/function.zip
 
       - name: Build JVM Lambda zips (credential + mgmt) for CDK asset lookup
         run: |
@@ -212,7 +214,11 @@ jobs:
       - name: Synth and package CDK template
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          mvn -B -pl infra compile exec:java
+          # exec:java swallows JVM exceptions — check cdk.out exists to catch silent failures
+          mvn -B -pl infra compile exec:java \
+            -Dexec.cleanupDaemonThreads=false \
+            -Dexec.mainClass=ai.codriverlabs.eksdx.infra.InfraApp
+          test -d infra/cdk.out || { echo "CDK synth failed — infra/cdk.out not created"; exit 1; }
           tar czf eks-dx-cdk-${VERSION}.tar.gz -C infra cdk.out
 
       - name: Upload CDK artifact
