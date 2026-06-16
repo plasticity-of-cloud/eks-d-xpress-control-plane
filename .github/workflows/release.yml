@@ -211,14 +211,13 @@ jobs:
           echo "Staged Lambda zips:"
           ls -lh eks-dx-*/target/function.zip
 
+      - name: Install CDK CLI
+        run: npm install -g aws-cdk --quiet
+
       - name: Synth CDK template
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          mvn -B -pl eks-dx-model,infra compile
-          # Run synth via exec:exec (propagates exit codes unlike exec:java)
-          cd infra && java -cp "target/classes:$(mvn -B -q dependency:build-classpath -Dmdep.outputFile=/dev/stdout 2>/dev/null)" \
-            ai.codriverlabs.eksdx.infra.InfraApp
-          test -d cdk.out || { echo "CDK synth failed — cdk.out not created"; exit 1; }
+          cd infra && cdk synth
           cd ..
           tar czf eks-dx-cdk-${VERSION}.tar.gz -C infra cdk.out
 
