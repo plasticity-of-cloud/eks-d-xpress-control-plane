@@ -152,8 +152,8 @@ jobs:
             eks-dx-pod-identity-webhook-*.tar.gz
             eks-dx-karpenter-support-*.tar.gz
 
-  # ── merge-manifests ───────────────────────────────────────────────────────
-  merge-manifests:
+  # ── multiarch-manifest-build ─────────────────────────────────────────────
+  multiarch-manifest-build:
     needs: [build]
     runs-on: ubuntu-24.04
     steps:
@@ -230,7 +230,7 @@ jobs:
 
   # ── release ───────────────────────────────────────────────────────────────
   release:
-    needs: [build, merge-manifests, package, package-cdk]
+    needs: [build, multiarch-manifest-build, package, package-cdk]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v8
