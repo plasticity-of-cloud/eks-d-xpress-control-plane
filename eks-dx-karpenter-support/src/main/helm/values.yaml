@@ -1,7 +1,7 @@
 app:
   imageConfig:
     registry: ghcr.io
-    repository: codriverlabs/eks-dx-karpenter-support
+    repository: plasticity-of-cloud/eks-dx-karpenter-support
     tag: latest
 
 clusterIdentity:
