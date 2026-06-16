@@ -7,6 +7,7 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class Ec2NodeClassSpec {
 
+    private String instanceProfile;
     private String amiFamily;
     private String userData;
     private Boolean associatePublicIPAddress;
@@ -14,6 +15,9 @@ public class Ec2NodeClassSpec {
     private List<Map<String, Object>> subnetSelectorTerms;
     private List<Map<String, Object>> securityGroupSelectorTerms;
     private Map<String, String> tags;
+
+    public String getInstanceProfile() { return instanceProfile; }
+    public void setInstanceProfile(String v) { this.instanceProfile = v; }
 
     public String getAmiFamily() { return amiFamily; }
     public void setAmiFamily(String v) { this.amiFamily = v; }

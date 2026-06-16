@@ -71,6 +71,12 @@ public class Ec2NodeClassWebhookResource {
                     resource.getMetadata().getName(), originalAmiFamily);
             }
 
+            // 3. Set instanceProfile from tenant naming convention (no discovery needed)
+            if (resource.getSpec().getInstanceProfile() == null || resource.getSpec().getInstanceProfile().isBlank()) {
+                resource.getSpec().setInstanceProfile(
+                    "eks-d-xpress-tenant-" + identity.tenantId() + "-instance-role");
+            }
+
             // 3. Set associatePublicIPAddress based on NAT gateway availability
             // nat=true → private egress via NAT, no public IP needed → false
             // nat=false → direct internet access required → true
