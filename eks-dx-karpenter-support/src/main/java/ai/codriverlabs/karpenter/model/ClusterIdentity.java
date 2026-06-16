@@ -11,5 +11,6 @@ public record ClusterIdentity(
     String certificateAuthority,  // base64-encoded PEM
     String serviceCidr,
     String clusterDnsIp,
-    boolean natGatewayEnabled     // from eks-dx-config configmap (written by install script from SSM)
+    boolean natGatewayEnabled,    // from eks-dx-config (written by install script from SSM)
+    String karpenterSubnetId      // public when natGateway=false, private when natGateway=true
 ) {}

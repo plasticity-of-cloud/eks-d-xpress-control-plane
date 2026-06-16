@@ -55,9 +55,14 @@ public class ClusterIdentityService {
     }
 
     private ClusterIdentity resolve() throws Exception {
-        // Read eks-dx-config once for all keys
         ConfigMap eksDxConfig = client.configMaps().inNamespace("kube-system").withName("eks-dx-config").get();
         String serviceCidr = resolveServiceCidr(eksDxConfig);
+        boolean natEnabled = "true".equalsIgnoreCase(get(eksDxConfig, "nat-gateway-enabled", "false"));
+        // Use private subnet when NAT is available (nodes don't need public IPs)
+        // Use public subnet when NAT is absent (nodes need direct internet access)
+        String subnetId = natEnabled
+            ? get(eksDxConfig, "private-subnet-id", null)
+            : get(eksDxConfig, "public-subnet-id", null);
         return new ClusterIdentity(
             get(eksDxConfig, "cluster-name", "default"),
             get(eksDxConfig, "tenant-id", ""),
@@ -65,7 +70,8 @@ public class ClusterIdentityService {
             resolveCertificateAuthority(),
             serviceCidr,
             computeClusterDnsIp(serviceCidr),
-            "true".equalsIgnoreCase(get(eksDxConfig, "nat-gateway-enabled", "false"))
+            natEnabled,
+            subnetId
         );
     }
 

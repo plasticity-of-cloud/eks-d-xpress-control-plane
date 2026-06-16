@@ -15,6 +15,8 @@ import jakarta.ws.rs.core.MediaType;
 import org.jboss.logging.Logger;
 
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Mutating admission webhook for Karpenter EC2NodeClass (CREATE and UPDATE).
@@ -76,7 +78,15 @@ public class Ec2NodeClassWebhookResource {
                 resource.getSpec().setAssociatePublicIPAddress(!identity.natGatewayEnabled());
             }
 
-            // 4. Ensure required tags — merge over customer tags, do not overwrite
+            // 4. Set subnetSelectorTerms if subnet is known and not already set by customer
+            if (identity.karpenterSubnetId() != null
+                    && (resource.getSpec().getSubnetSelectorTerms() == null
+                        || resource.getSpec().getSubnetSelectorTerms().isEmpty())) {
+                resource.getSpec().setSubnetSelectorTerms(
+                    List.of(Map.of("id", identity.karpenterSubnetId())));
+            }
+
+            // 5. Ensure required tags — merge over customer tags, do not overwrite
             var tags = resource.getSpec().getTags();
             if (tags == null) { tags = new HashMap<>(); resource.getSpec().setTags(tags); }
             tags.putIfAbsent("Platform", "eks-d-xpress");
