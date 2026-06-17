@@ -27,7 +27,7 @@ import java.util.List;
  *   Public:  10.0.{index}.0/24
  *   Private: 10.0.{100+index}.0/24
  *
- * Index is auto-calculated from existing developer subnets (SubnetIndex tag).
+ * Index is auto-calculated from existing tenant subnets (SubnetIndex tag).
  */
 @ApplicationScoped
 public class TenantNetworkService {
@@ -41,7 +41,7 @@ public class TenantNetworkService {
     /**
      * Subnet IP layout (per /24 tenant subnet):
      *   .0-.3  — AWS reserved (network, router, DNS, future)
-     *   .4     — reserved for developer workstation / CI runner
+     *   .4     — reserved for tenant workstation / CI runner
      *   .5     — control-plane node (static, used as --node-ip and controlPlaneEndpoint)
      *   .6+    — DHCP pool (VPC CNI secondary IPs, future worker nodes)
      */
@@ -175,7 +175,7 @@ public class TenantNetworkService {
             .filters(
                 Filter.builder().name("vpc-id").values(vpcId).build(),
                 Filter.builder().name("tag:SubnetType").values("Public").build(),
-                Filter.builder().name("tag:Developer").values("*").build())
+                Filter.builder().name("tag:eks-d-xpress-tenant").values("*").build())
             .build()).subnets();
 
         int maxIndex = 0;
