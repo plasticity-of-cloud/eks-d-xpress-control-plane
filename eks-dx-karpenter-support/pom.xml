@@ -28,7 +28,7 @@
         <scope>import</scope>
       </dependency>
       <dependency>
-        <groupId>io.quarkiverse.amazonservices</groupId>
+        <groupId>${quarkus.platform.group-id}</groupId>
         <artifactId>quarkus-amazon-services-bom</artifactId>
         <version>${quarkus.platform.version}</version>
         <type>pom</type>
@@ -75,7 +75,7 @@
     </dependency>
     <dependency>
       <groupId>software.amazon.awssdk</groupId>
-      <artifactId>url-connection-http-client</artifactId>
+      <artifactId>url-connection-client</artifactId>
     </dependency>
 
     <!-- JOSDK Webhooks — admission webhook handler (same version as eks-dx-pod-identity-webhook) -->
