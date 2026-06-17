@@ -128,6 +128,13 @@ if should_build "karpenter"; then
       -Dquarkus.container-image.tag=${IMAGE_TAG} \
       -Dquarkus.helm.version=${IMAGE_TAG}
   fi
+  # Patch image tag in generated values.yaml and repack
+  CHART_TGZ=$(ls eks-dx-karpenter-support/target/helm/kubernetes/eks-dx-karpenter-support-*.tar.gz | head -1)
+  CHART_TMP=$(mktemp -d)
+  tar -xzf "$CHART_TGZ" -C "$CHART_TMP"
+  sed -i "s/tag: latest/tag: ${IMAGE_TAG}/" "$CHART_TMP/eks-dx-karpenter-support/values.yaml"
+  tar -czf "$CHART_TGZ" -C "$CHART_TMP" eks-dx-karpenter-support
+  rm -rf "$CHART_TMP"
 fi
 
 # 6. CLI
