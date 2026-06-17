@@ -155,11 +155,15 @@ if should_build "karpenter"; then
     mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG $(image_flags) \
       -Dquarkus.helm.version=${IMAGE_TAG}
   fi
-  # Patch image tag in generated values.yaml and repack
+  # Patch image tag and registry in generated values.yaml and repack
   CHART_TGZ=$(ls eks-dx-karpenter-support/target/helm/kubernetes/eks-dx-karpenter-support-*.tar.gz | head -1)
   CHART_TMP=$(mktemp -d)
   tar -xzf "$CHART_TGZ" -C "$CHART_TMP"
-  sed -i "s/tag: latest/tag: ${IMAGE_TAG}/" "$CHART_TMP/eks-dx-karpenter-support/values.yaml"
+  VALUES="$CHART_TMP/eks-dx-karpenter-support/values.yaml"
+  sed -i "s/tag: latest/tag: ${IMAGE_TAG}/" "$VALUES"
+  if [[ -n "$REGISTRY" ]]; then
+    sed -i "s|registry: .*|registry: ${REGISTRY}|" "$VALUES"
+  fi
   tar -czf "$CHART_TGZ" -C "$CHART_TMP" eks-dx-karpenter-support
   rm -rf "$CHART_TMP"
 fi
