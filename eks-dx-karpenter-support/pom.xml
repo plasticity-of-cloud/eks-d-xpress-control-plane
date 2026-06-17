@@ -27,6 +27,13 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <dependency>
+        <groupId>io.quarkiverse.amazonservices</groupId>
+        <artifactId>quarkus-amazon-services-bom</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -60,6 +67,15 @@
       <groupId>io.quarkiverse.helm</groupId>
       <artifactId>quarkus-helm</artifactId>
       <version>1.4.0</version>
+    </dependency>
+    <!-- AWS SSM — for EKS optimized AMI alias resolution -->
+    <dependency>
+      <groupId>io.quarkiverse.amazonservices</groupId>
+      <artifactId>quarkus-amazon-ssm</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>url-connection-http-client</artifactId>
     </dependency>
 
     <!-- JOSDK Webhooks — admission webhook handler (same version as eks-dx-pod-identity-webhook) -->

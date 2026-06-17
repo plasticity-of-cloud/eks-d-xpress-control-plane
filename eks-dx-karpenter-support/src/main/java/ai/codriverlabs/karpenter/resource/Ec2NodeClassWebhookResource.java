@@ -44,7 +44,8 @@ public class Ec2NodeClassWebhookResource {
 
     @Inject
     public Ec2NodeClassWebhookResource(ClusterIdentityService clusterIdentityService,
-                                       UserDataMergeService userDataMergeService) {
+                                       UserDataMergeService userDataMergeService,
+                                       AmiAliasResolverService amiAliasResolverService) {
         this.controller = new AdmissionController<>((resource, operation) -> {
             var identity = clusterIdentityService.get();
             if (identity == null) {
@@ -55,6 +56,30 @@ public class Ec2NodeClassWebhookResource {
 
             if (resource.getSpec() == null) resource.setSpec(new Ec2NodeClassSpec());
             String originalAmiFamily = resource.getSpec().getAmiFamily();
+
+            // 1. Resolve AMI aliases in amiSelectorTerms → concrete AMI IDs
+            var amiTerms = resource.getSpec().getAmiSelectorTerms();
+            if (amiTerms != null) {
+                // TODO: source arch from ClusterIdentity once nodeArch field is added
+                String arch = "arm64";
+                var resolved = new java.util.ArrayList<Map<String, Object>>();
+                for (var term : amiTerms) {
+                    Object aliasVal = term.get("alias");
+                    if (aliasVal != null) {
+                        String amiId = amiAliasResolverService.resolve(aliasVal.toString(), arch);
+                        if (amiId != null) {
+                            resolved.add(Map.of("id", amiId));
+                            LOG.infof("EC2NodeClass/%s: resolved alias '%s' → %s",
+                                resource.getMetadata().getName(), aliasVal, amiId);
+                        } else {
+                            resolved.add(term); // keep original if resolution failed
+                        }
+                    } else {
+                        resolved.add(term);
+                    }
+                }
+                resource.getSpec().setAmiSelectorTerms(resolved);
+            }
 
             // 1. Merge userData based on customer-supplied amiFamily
             String merged = userDataMergeService.merge(originalAmiFamily, resource.getSpec().getUserData(), identity);
