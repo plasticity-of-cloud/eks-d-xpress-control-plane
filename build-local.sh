@@ -6,12 +6,16 @@
 #   ./build-local.sh --native     # GraalVM native for tenant + CLI
 #   ./build-local.sh --skip-tests # skip unit tests
 #   ./build-local.sh --only tenant-service,cli   # build only specific modules
+#   ./build-local.sh --push       # push container images after build
+#   ./build-local.sh --registry my.registry.io   # private registry for images
 #
 set -euo pipefail
 
 NATIVE=false
 SKIP_TESTS=false
 ONLY=""
+PUSH=false
+REGISTRY=""
 
 for arg in "$@"; do
   case $arg in
@@ -19,11 +23,13 @@ for arg in "$@"; do
       echo "Usage: ./build-local.sh [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --native       Build GraalVM native binaries for tenant-service and CLI"
-      echo "  --skip-tests   Skip unit tests during build"
-      echo "  --only <list>  Comma-separated modules to build (skips others)"
-      echo "                 Available: credential,mgmt,tenant,auth-proxy,webhook,karpenter,cli,cdk"
-      echo "  --help         Show this help message"
+      echo "  --native            Build GraalVM native binaries for tenant-service and CLI"
+      echo "  --skip-tests        Skip unit tests during build"
+      echo "  --only <list>       Comma-separated modules to build (skips others)"
+      echo "                      Available: credential,mgmt,tenant,auth-proxy,webhook,karpenter,cli,cdk"
+      echo "  --push              Push container images to registry after build"
+      echo "  --registry <url>    Private registry hostname (e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com)"
+      echo "  --help              Show this help message"
       echo ""
       echo "Examples:"
       echo "  ./build-local.sh                           # all modules, JVM"
@@ -31,25 +37,32 @@ for arg in "$@"; do
       echo "  ./build-local.sh --only tenant             # tenant-service only"
       echo "  ./build-local.sh --only tenant,cli --native"
       echo "  ./build-local.sh --only cdk                # CDK synth only"
+      echo "  ./build-local.sh --only auth-proxy,webhook --push --registry my.registry.io"
       exit 0
       ;;
     --native)     NATIVE=true ;;
     --skip-tests) SKIP_TESTS=true ;;
+    --push)       PUSH=true ;;
     --only)       ;; # value captured below
+    --registry)   ;; # value captured below
     *)
-      # capture value after --only
+      # capture value after --only / --registry
       if [[ "${PREV_ARG:-}" == "--only" ]]; then
         ONLY="$arg"
+      elif [[ "${PREV_ARG:-}" == "--registry" ]]; then
+        REGISTRY="$arg"
       fi
       ;;
   esac
   PREV_ARG="$arg"
 done
 
-# Handle --only=value syntax
+# Handle --only=value and --registry=value syntax
 for arg in "$@"; do
   if [[ "$arg" == --only=* ]]; then
     ONLY="${arg#--only=}"
+  elif [[ "$arg" == --registry=* ]]; then
+    REGISTRY="${arg#--registry=}"
   fi
 done
 
@@ -60,7 +73,22 @@ should_build() {
 SKIP_FLAG=""
 $SKIP_TESTS && SKIP_FLAG="-DskipTests"
 
-echo "==> Building eks-dx-control-plane (native=${NATIVE}, skipTests=${SKIP_TESTS}, only=${ONLY:-all})"
+# Build Quarkus container-image flags
+image_flags() {
+  local flags="-Dquarkus.container-image.build=true -Dquarkus.container-image.push=${PUSH} -Dquarkus.container-image.tag=${IMAGE_TAG}"
+  [[ -n "$REGISTRY" ]] && flags+=" -Dquarkus.container-image.registry=${REGISTRY}"
+  echo "$flags"
+}
+
+echo "==> Building eks-dx-control-plane (native=${NATIVE}, skipTests=${SKIP_TESTS}, only=${ONLY:-all}, push=${PUSH}, registry=${REGISTRY:-default})"
+
+# ECR login if pushing to ECR
+if $PUSH && [[ "$REGISTRY" =~ \.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com ]]; then
+  ECR_REGION="${BASH_REMATCH[1]}"
+  echo "==> Authenticating with ECR (${ECR_REGION})"
+  aws ecr get-login-password --region "${ECR_REGION}" \
+    | docker login --username AWS --password-stdin "${REGISTRY}"
+fi
 
 # Resolve version from git tag (strip leading 'v' and any -N-gSHA suffix)
 IMAGE_TAG=$(git describe --tags 2>/dev/null | sed 's/^v//;s/-[0-9]*-g[0-9a-f]*$//' || echo "latest")
@@ -96,19 +124,13 @@ fi
 # 4. Auth proxy
 if should_build "auth-proxy"; then
   echo "--- auth-proxy"
-  mvn -B -pl eks-dx-auth-proxy clean package $SKIP_FLAG \
-    -Dquarkus.container-image.build=true \
-    -Dquarkus.container-image.push=false \
-    -Dquarkus.container-image.tag=${IMAGE_TAG}
+  mvn -B -pl eks-dx-auth-proxy clean package $SKIP_FLAG $(image_flags)
 fi
 
 # 5. Pod identity webhook
 if should_build "webhook"; then
   echo "--- pod-identity-webhook"
-  mvn -B -pl eks-dx-pod-identity-webhook clean package $SKIP_FLAG \
-    -Dquarkus.container-image.build=true \
-    -Dquarkus.container-image.push=false \
-    -Dquarkus.container-image.tag=${IMAGE_TAG} \
+  mvn -B -pl eks-dx-pod-identity-webhook clean package $SKIP_FLAG $(image_flags) \
     -Dquarkus.helm.version=${IMAGE_TAG}
 fi
 
@@ -116,16 +138,10 @@ fi
 if should_build "karpenter"; then
   echo "--- karpenter-support"
   if $NATIVE; then
-    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG -Pnative \
-      -Dquarkus.container-image.build=true \
-      -Dquarkus.container-image.push=false \
-      -Dquarkus.container-image.tag=${IMAGE_TAG} \
+    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG -Pnative $(image_flags) \
       -Dquarkus.helm.version=${IMAGE_TAG}
   else
-    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG \
-      -Dquarkus.container-image.build=true \
-      -Dquarkus.container-image.push=false \
-      -Dquarkus.container-image.tag=${IMAGE_TAG} \
+    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG $(image_flags) \
       -Dquarkus.helm.version=${IMAGE_TAG}
   fi
   # Patch image tag in generated values.yaml and repack
