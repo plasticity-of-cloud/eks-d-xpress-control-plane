@@ -4,6 +4,7 @@ import ai.codriverlabs.karpenter.model.Ec2NodeClass;
 import ai.codriverlabs.karpenter.model.Ec2NodeClassSpec;
 import ai.codriverlabs.karpenter.service.AmiAliasResolverService;
 import ai.codriverlabs.karpenter.service.ClusterIdentityService;
+import ai.codriverlabs.karpenter.service.NodePoolArchService;
 import ai.codriverlabs.karpenter.service.UserDataMergeService;
 import io.fabric8.kubernetes.api.model.admission.v1.AdmissionReview;
 import io.javaoperatorsdk.webhook.admission.AdmissionController;
@@ -46,7 +47,8 @@ public class Ec2NodeClassWebhookResource {
     @Inject
     public Ec2NodeClassWebhookResource(ClusterIdentityService clusterIdentityService,
                                        UserDataMergeService userDataMergeService,
-                                       AmiAliasResolverService amiAliasResolverService) {
+                                       AmiAliasResolverService amiAliasResolverService,
+                                       NodePoolArchService nodePoolArchService) {
         this.controller = new AdmissionController<>((resource, operation) -> {
             var identity = clusterIdentityService.get();
             if (identity == null) {
@@ -58,21 +60,21 @@ public class Ec2NodeClassWebhookResource {
             if (resource.getSpec() == null) resource.setSpec(new Ec2NodeClassSpec());
             String originalAmiFamily = resource.getSpec().getAmiFamily();
 
-            // 1. Resolve AMI aliases in amiSelectorTerms → concrete AMI IDs for all arches
+            // 1. Resolve AMI aliases in amiSelectorTerms → concrete AMI IDs for relevant arches
             var amiTerms = resource.getSpec().getAmiSelectorTerms();
             if (amiTerms != null) {
+                List<String> arches = nodePoolArchService.archesFor(resource.getMetadata().getName());
                 var resolved = new java.util.ArrayList<Map<String, Object>>();
                 for (var term : amiTerms) {
                     Object aliasVal = term.get("alias");
                     if (aliasVal != null) {
-                        List<Map<String, Object>> amiIds = amiAliasResolverService.resolveAll(aliasVal.toString());
-                        if (!amiIds.isEmpty()) {
-                            resolved.addAll(amiIds);
-                            LOG.infof("EC2NodeClass/%s: resolved alias '%s' → %d AMI(s)",
-                                resource.getMetadata().getName(), aliasVal, amiIds.size());
-                        } else {
-                            resolved.add(term); // keep original if resolution failed
+                        for (String arch : arches) {
+                            String amiId = amiAliasResolverService.resolve(aliasVal.toString(), arch);
+                            if (amiId != null) resolved.add(Map.of("id", amiId));
                         }
+                        if (resolved.isEmpty()) resolved.add(term); // keep original if all resolutions failed
+                        LOG.infof("EC2NodeClass/%s: resolved alias '%s' (arches=%s) → %d AMI(s)",
+                            resource.getMetadata().getName(), aliasVal, arches, resolved.size());
                     } else {
                         resolved.add(term);
                     }
