@@ -2,6 +2,7 @@ package ai.codriverlabs.karpenter.resource;
 
 import ai.codriverlabs.karpenter.model.Ec2NodeClass;
 import ai.codriverlabs.karpenter.model.Ec2NodeClassSpec;
+import ai.codriverlabs.karpenter.service.AmiAliasResolverService;
 import ai.codriverlabs.karpenter.service.ClusterIdentityService;
 import ai.codriverlabs.karpenter.service.UserDataMergeService;
 import io.fabric8.kubernetes.api.model.admission.v1.AdmissionReview;
@@ -57,20 +58,18 @@ public class Ec2NodeClassWebhookResource {
             if (resource.getSpec() == null) resource.setSpec(new Ec2NodeClassSpec());
             String originalAmiFamily = resource.getSpec().getAmiFamily();
 
-            // 1. Resolve AMI aliases in amiSelectorTerms → concrete AMI IDs
+            // 1. Resolve AMI aliases in amiSelectorTerms → concrete AMI IDs for all arches
             var amiTerms = resource.getSpec().getAmiSelectorTerms();
             if (amiTerms != null) {
-                // TODO: source arch from ClusterIdentity once nodeArch field is added
-                String arch = "arm64";
                 var resolved = new java.util.ArrayList<Map<String, Object>>();
                 for (var term : amiTerms) {
                     Object aliasVal = term.get("alias");
                     if (aliasVal != null) {
-                        String amiId = amiAliasResolverService.resolve(aliasVal.toString(), arch);
-                        if (amiId != null) {
-                            resolved.add(Map.of("id", amiId));
-                            LOG.infof("EC2NodeClass/%s: resolved alias '%s' → %s",
-                                resource.getMetadata().getName(), aliasVal, amiId);
+                        List<Map<String, Object>> amiIds = amiAliasResolverService.resolveAll(aliasVal.toString());
+                        if (!amiIds.isEmpty()) {
+                            resolved.addAll(amiIds);
+                            LOG.infof("EC2NodeClass/%s: resolved alias '%s' → %d AMI(s)",
+                                resource.getMetadata().getName(), aliasVal, amiIds.size());
                         } else {
                             resolved.add(term); // keep original if resolution failed
                         }

@@ -5,6 +5,8 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.ssm.SsmClient;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -20,17 +22,31 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AmiAliasResolverService {
 
     private static final Logger LOG = Logger.getLogger(AmiAliasResolverService.class);
+    private static final List<String> ARCHES = List.of("arm64", "x86_64");
 
-    // alias+arch → ami-id
     private final Map<String, String> cache = new ConcurrentHashMap<>();
 
     @Inject SsmClient ssm;
 
     /**
-     * Resolves an alias string (e.g. "al2023@v1.35") to an AMI ID for the given arch.
+     * Resolves an alias (e.g. "al2023@v1.35") to AMI IDs for both arm64 and x86_64.
+     * Returns a list of {"id": "ami-xxx"} maps suitable for direct use in amiSelectorTerms.
+     * Karpenter will then pick the one matching the selected instance type's architecture.
+     */
+    public List<Map<String, Object>> resolveAll(String alias) {
+        var result = new ArrayList<Map<String, Object>>();
+        for (String arch : ARCHES) {
+            String amiId = resolve(alias, arch);
+            if (amiId != null) result.add(Map.of("id", amiId));
+        }
+        return result;
+    }
+
+    /**
+     * Resolves an alias to a single AMI ID for the given arch.
      *
      * @param alias e.g. "al2023@v1.35" or "al2023@latest"
-     * @param arch  e.g. "arm64" or "x86_64"
+     * @param arch  "arm64" or "x86_64"
      * @return AMI ID, or null if alias format is unrecognised or SSM lookup fails
      */
     public String resolve(String alias, String arch) {
@@ -50,15 +66,13 @@ public class AmiAliasResolverService {
             return null;
         }
 
-        String ssmArch = "arm64".equals(arch) ? "arm64" : "x86_64";
-        String cacheKey = alias + "|" + ssmArch;
-
+        String cacheKey = alias + "|" + arch;
         return cache.computeIfAbsent(cacheKey, k -> {
             String path = "/aws/service/eks/optimized-ami/%s/%s/%s/standard/recommended/image_id"
-                .formatted(version, ssmFamily, ssmArch);
+                .formatted(version, ssmFamily, arch);
             try {
                 String amiId = ssm.getParameter(r -> r.name(path)).parameter().value();
-                LOG.infof("Resolved AMI alias '%s' (%s) → %s", alias, ssmArch, amiId);
+                LOG.infof("Resolved AMI alias '%s' (%s) → %s", alias, arch, amiId);
                 return amiId;
             } catch (Exception e) {
                 LOG.errorf("Failed to resolve AMI alias '%s' via SSM path %s: %s", alias, path, e.getMessage());
