@@ -110,18 +110,14 @@ public class Ec2NodeClassWebhookResource {
                 resource.getSpec().setAssociatePublicIPAddress(!identity.natGatewayEnabled());
             }
 
-            // 4. Set subnetSelectorTerms if subnet is known and not already set by customer
-            if (identity.karpenterSubnetId() != null
-                    && (resource.getSpec().getSubnetSelectorTerms() == null
-                        || resource.getSpec().getSubnetSelectorTerms().isEmpty())) {
+            // 4. Always enforce subnetSelectorTerms from cluster identity (tenant cannot override)
+            if (identity.karpenterSubnetId() != null) {
                 resource.getSpec().setSubnetSelectorTerms(
                     List.of(Map.of("id", identity.karpenterSubnetId())));
             }
 
-            // 5. Set securityGroupSelectorTerms if known and not already set by customer
-            if (identity.securityGroupId() != null
-                    && (resource.getSpec().getSecurityGroupSelectorTerms() == null
-                        || resource.getSpec().getSecurityGroupSelectorTerms().isEmpty())) {
+            // 5. Always enforce securityGroupSelectorTerms from cluster identity (tenant cannot override)
+            if (identity.securityGroupId() != null) {
                 resource.getSpec().setSecurityGroupSelectorTerms(
                     List.of(Map.of("id", identity.securityGroupId())));
             }
