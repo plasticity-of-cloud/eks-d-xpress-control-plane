@@ -218,8 +218,8 @@ erDiagram
     }
 
     ASSOCIATIONS {
-        string PK PK "CLUSTER#{clusterName}"
-        string SK SK "namespace#serviceAccount"
+        string partitionKey PK "CLUSTER#{clusterName}"
+        string sortKey SK "namespace#serviceAccount"
         string associationId "assoc-{uuid}"
         string clusterName "Cluster name"
         string namespace "K8s namespace"

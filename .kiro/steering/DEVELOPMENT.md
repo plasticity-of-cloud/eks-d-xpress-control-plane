@@ -31,7 +31,21 @@ Build only specific modules (parent POM + model always built for dependency reso
 ./build-local.sh --only auth-proxy,webhook      # container images only
 ```
 
-Available module selectors: `credential`, `mgmt`, `tenant`, `auth-proxy`, `webhook`, `cli`, `cdk`
+Available module selectors: `credential`, `mgmt`, `tenant`, `auth-proxy`, `webhook`, `cli`, `cdk`, `karpenter`
+
+### Building and Pushing the Karpenter Webhook Image
+
+Read the AWS account ID and region from the current context, then pass them to the build command.
+Redirect output to a file (build generates a lot of output) and check failures only on non-zero exit:
+
+```bash
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export AWS_REGION=$(aws configure get region)
+./build-local.sh --only karpenter --push --registry $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com > /tmp/karpenter-build.log 2>&1
+if [ $? -ne 0 ]; then
+    grep -E "ERROR|FAILED|BUILD FAILURE" /tmp/karpenter-build.log
+fi
+```
 
 ### CPU Architecture & Native Builds
 

@@ -29,11 +29,13 @@ public class AwsCredentialService {
         sessionTags.forEach((k, v) -> {
             if (v != null && !v.isEmpty()) tags.add(Tag.builder().key(k).value(v).build());
         });
+        List<String> transitiveTagKeys = tags.stream().map(Tag::key).toList();
         AssumeRoleResponse response = stsClient.assumeRole(AssumeRoleRequest.builder()
             .roleArn(roleArn)
             .roleSessionName(sessionName)
             .durationSeconds((int) sessionDuration.toSeconds())
             .tags(tags)
+            .transitiveTagKeys(transitiveTagKeys)
             .build());
         LOG.infof("Assumed role %s with %d session tags", roleArn, tags.size());
         return response.credentials();
