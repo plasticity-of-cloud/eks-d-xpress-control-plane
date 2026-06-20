@@ -58,7 +58,7 @@ All `pom.xml` files (root + 5 modules):
 | `eks-dx.endpoint` default | `https://eks-dx.codriverlabs.ai` | `https://eks-dx.codriverlabs.ai` |
 | `quarkus.log.category` | `"cloud.plasticity"` | `"ai.codriverlabs"` |
 | `quarkus.container-image.group` | `codriverlabs` | `codriverlabs` |
-| `quarkus.container-image.registry` | `864899852480.dkr.ecr...` | unchanged (ECR stays) |
+| `quarkus.container-image.registry` | `${AWS_ACCOUNT_ID}.dkr.ecr...` | unchanged (ECR stays) |
 | `quarkus.kubernetes.env.vars.EKS_DX_ENDPOINT` | `https://eks-dx.codriverlabs.ai` | `https://eks-dx.codriverlabs.ai` |
 
 ### Runtime constants (code changes)
@@ -118,4 +118,4 @@ Global find-and-replace across `docs/`, `README.md`, `AGENTS.md`:
 ## Notes
 
 - The **webhook audience** (`eks-dx.codriverlabs.ai`) is a runtime value embedded in deployed tokens. Any existing clusters must re-register and re-deploy the webhook after migration.
-- ECR registry (`864899852480.dkr.ecr.us-east-1.amazonaws.com`) is unchanged — only the image group/repository path changes.
+- ECR registry (`${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com`) is unchanged — only the image group/repository path changes.
