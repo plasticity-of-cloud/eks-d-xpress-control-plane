@@ -53,22 +53,30 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           for MODULE in eks-dx-auth-proxy eks-dx-pod-identity-webhook; do
-            mvn -B -pl ${MODULE} package -DskipTests \
+            for attempt in 1 2 3; do
+              mvn -B -pl ${MODULE} package -DskipTests \
+                -Dquarkus.container-image.build=true \
+                -Dquarkus.container-image.push=true \
+                -Dquarkus.container-image.registry=ghcr.io \
+                -Dquarkus.container-image.group=${{ github.repository_owner }} \
+                -Dquarkus.container-image.tag=${VERSION}-${{ matrix.arch }} \
+                -Dquarkus.jib.platforms=${{ matrix.jib-platform }} && break
+              echo "Attempt $attempt failed, retrying..."
+              sleep 15
+            done
+          done
+          # karpenter-support: native image
+          for attempt in 1 2 3; do
+            mvn -B -pl eks-dx-karpenter-support package -DskipTests -Pnative \
               -Dquarkus.container-image.build=true \
               -Dquarkus.container-image.push=true \
               -Dquarkus.container-image.registry=ghcr.io \
               -Dquarkus.container-image.group=${{ github.repository_owner }} \
               -Dquarkus.container-image.tag=${VERSION}-${{ matrix.arch }} \
-              -Dquarkus.jib.platforms=${{ matrix.jib-platform }}
+              -Dquarkus.jib.platforms=${{ matrix.jib-platform }} && break
+            echo "Attempt $attempt failed, retrying..."
+            sleep 15
           done
-          # karpenter-support: native image
-          mvn -B -pl eks-dx-karpenter-support package -DskipTests -Pnative \
-            -Dquarkus.container-image.build=true \
-            -Dquarkus.container-image.push=true \
-            -Dquarkus.container-image.registry=ghcr.io \
-            -Dquarkus.container-image.group=${{ github.repository_owner }} \
-            -Dquarkus.container-image.tag=${VERSION}-${{ matrix.arch }} \
-            -Dquarkus.jib.platforms=${{ matrix.jib-platform }}
 
       - name: Build CLI native binary
         run: |
