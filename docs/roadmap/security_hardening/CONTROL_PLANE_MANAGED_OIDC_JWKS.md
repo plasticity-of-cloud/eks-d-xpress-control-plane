@@ -177,6 +177,39 @@ chmod 600 /etc/kubernetes/pki/ca.key
 
 kubeadm does not overwrite existing `ca.key`/`ca.crt` files — same behaviour as with `sa.key`/`sa.pub`.
 
+## CDK Stack Configuration
+
+The CDK stack will expose a context flag controlling CA management mode. Default is centrally-managed.
+
+### `clusterCaMode` context flag
+
+| Value | Behaviour |
+|-------|-----------|
+| `centrally-managed` (default) | Control plane generates CA key pair, stores in Secrets Manager, pre-registers JWKS in DynamoDB before EC2 launch. First-boot script fetches and writes `/etc/kubernetes/pki/ca.key` + `ca.crt`. |
+| `self-managed` | kubeadm generates the CA on the instance. CLI registers the cluster post-boot by reading JWKS from the live API. Suitable for customer-managed fleets (k3s, microk8s) where the control plane cannot inject user-data. |
+
+```bash
+# Deploy with centrally-managed CA (default — kubeadm / EKS-D tenants)
+cdk deploy
+
+# Deploy with self-managed CA (k3s fleet or customer-managed clusters)
+cdk deploy --context clusterCaMode=self-managed
+```
+
+### Use case mapping
+
+| Customer scenario | Recommended mode |
+|-------------------|-----------------|
+| EKS-D tenants provisioned by eks-dx-tenant-service | `centrally-managed` |
+| k3s / microk8s fleet on EC2, customer manages kubeadm | `self-managed` |
+| Hybrid (some tenant, some customer-managed) | Deploy two stacks with different context values |
+
+### What changes in the stack
+
+In `centrally-managed` mode the stack provisions an additional KMS asymmetric key (`eks-dx/ca-signing-key`) used to sign the self-signed CA certs, and grants `eks-dx-tenant-service` Lambda `kms:Sign` on that key. In `self-managed` mode that KMS key and the associated IAM grant are omitted.
+
+The Secrets Manager paths (`eks-dx/tenant/<id>/ca-key`, `eks-dx/tenant/<id>/ca-crt`) and the SM resource policy on the tenant instance role are the same in both modes — the difference is only in who writes those secrets (tenant-service vs. the CLI post-boot in self-managed).
+
 ## References
 
 - [kubeadm Certificate Management — Custom Certificates](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/#custom-certificates)
