@@ -100,9 +100,14 @@ public class TenantIamService {
                   "Effect": "Allow",
                   "Action": "execute-api:Invoke",
                   "Resource": [
+                    "arn:aws:execute-api:%s:%s:*/*/GET/clusters",
                     "arn:aws:execute-api:%s:%s:*/*/POST/clusters",
+                    "arn:aws:execute-api:%s:%s:*/*/GET/clusters/%s",
                     "arn:aws:execute-api:%s:%s:*/*/POST/clusters/%s",
-                    "arn:aws:execute-api:%s:%s:*/*/POST/clusters/%s/pod-identity-associations"
+                    "arn:aws:execute-api:%s:%s:*/*/DELETE/clusters/%s",
+                    "arn:aws:execute-api:%s:%s:*/*/GET/clusters/%s/pod-identity-associations",
+                    "arn:aws:execute-api:%s:%s:*/*/POST/clusters/%s/pod-identity-associations",
+                    "arn:aws:execute-api:%s:%s:*/*/DELETE/clusters/%s/pod-identity-associations/*"
                   ]
                 },
                 {
@@ -301,9 +306,14 @@ public class TenantIamService {
             }
             """.formatted(
                 region, accountId, tenantId,       // SecretsAccess
+                region, accountId,                 // EksDxApiInvoke GET /clusters
                 region, accountId,                 // EksDxApiInvoke POST /clusters
+                region, accountId, clusterName,    // EksDxApiInvoke GET /clusters/{name}
                 region, accountId, clusterName,    // EksDxApiInvoke POST /clusters/{name}
+                region, accountId, clusterName,    // EksDxApiInvoke DELETE /clusters/{name}
+                region, accountId, clusterName,    // EksDxApiInvoke GET /clusters/{name}/pod-identity-associations
                 region, accountId, clusterName,    // EksDxApiInvoke POST /clusters/{name}/pod-identity-associations
+                region, accountId, clusterName,    // EksDxApiInvoke DELETE /clusters/{name}/pod-identity-associations/*
                 region, accountId, tenantId,       // TenantStateUpdate
                 region,                            // KarpenterResourceDiscovery
                 accountId, clusterName,            // KarpenterIAMInstanceProfile
