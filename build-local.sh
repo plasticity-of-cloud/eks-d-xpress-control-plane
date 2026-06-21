@@ -147,7 +147,7 @@ fi
 # 5b. Karpenter support (EC2NodeClass webhook + ValidationSucceeded controller)
 if should_build "karpenter"; then
   echo "--- karpenter-support"
-  ensure_ecr_repo "plasticity-of-cloud/eks-dx-karpenter-support"
+  ensure_ecr_repo "plasticity-of-cloud/eks-d-xpress-karpenter-support"
   if $NATIVE; then
     mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG -Pnative $(image_flags) \
       -Dquarkus.helm.version=${IMAGE_TAG}
@@ -156,15 +156,15 @@ if should_build "karpenter"; then
       -Dquarkus.helm.version=${IMAGE_TAG}
   fi
   # Patch image tag and registry in generated values.yaml and repack
-  CHART_TGZ=$(ls eks-dx-karpenter-support/target/helm/kubernetes/eks-dx-karpenter-support-*.tar.gz | head -1)
+  CHART_TGZ=$(ls eks-dx-karpenter-support/target/helm/kubernetes/eks-d-xpress-karpenter-support-*.tar.gz | head -1)
   CHART_TMP=$(mktemp -d)
   tar -xzf "$CHART_TGZ" -C "$CHART_TMP"
-  VALUES="$CHART_TMP/eks-dx-karpenter-support/values.yaml"
+  VALUES="$CHART_TMP/eks-d-xpress-karpenter-support/values.yaml"
   sed -i "s/tag: latest/tag: ${IMAGE_TAG}/" "$VALUES"
   if [[ -n "$REGISTRY" ]]; then
     sed -i "s|registry: .*|registry: ${REGISTRY}|" "$VALUES"
   fi
-  tar -czf "$CHART_TGZ" -C "$CHART_TMP" eks-dx-karpenter-support
+  tar -czf "$CHART_TGZ" -C "$CHART_TMP" eks-d-xpress-karpenter-support
   rm -rf "$CHART_TMP"
 fi
 

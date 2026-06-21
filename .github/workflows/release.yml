@@ -134,11 +134,11 @@ jobs:
 
           helm push eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-${VERSION}.tar.gz oci://${REGISTRY}/helm
           helm push eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook-${VERSION}.tar.gz oci://${REGISTRY}/helm
-          helm push eks-dx-karpenter-support/target/helm/kubernetes/eks-dx-karpenter-support-${VERSION}.tar.gz oci://${REGISTRY}/helm
+          helm push eks-dx-karpenter-support/target/helm/kubernetes/eks-d-xpress-karpenter-support-${VERSION}.tar.gz oci://${REGISTRY}/helm
 
-          cp eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-${VERSION}.tar.gz eks-dx-auth-proxy-${VERSION}.tar.gz
-          cp eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook-${VERSION}.tar.gz eks-dx-pod-identity-webhook-${VERSION}.tar.gz
-          cp eks-dx-karpenter-support/target/helm/kubernetes/eks-dx-karpenter-support-${VERSION}.tar.gz eks-dx-karpenter-support-${VERSION}.tar.gz
+          cp eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-${VERSION}.tar.gz eks-d-xpress-auth-proxy-${VERSION}.tar.gz
+          cp eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook-${VERSION}.tar.gz eks-d-xpress-pod-identity-webhook-${VERSION}.tar.gz
+          cp eks-dx-karpenter-support/target/helm/kubernetes/eks-d-xpress-karpenter-support-${VERSION}.tar.gz eks-d-xpress-karpenter-support-${VERSION}.tar.gz
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v7
@@ -148,9 +148,9 @@ jobs:
           path: |
             eks-dx-credential-service-*.zip
             eks-dx-mgmt-service-*.zip
-            eks-dx-auth-proxy-*.tar.gz
-            eks-dx-pod-identity-webhook-*.tar.gz
-            eks-dx-karpenter-support-*.tar.gz
+            eks-d-xpress-auth-proxy-*.tar.gz
+            eks-d-xpress-pod-identity-webhook-*.tar.gz
+            eks-d-xpress-karpenter-support-*.tar.gz
 
   # ── multiarch-manifest-build ─────────────────────────────────────────────
   multiarch-manifest-build:
@@ -168,7 +168,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           REPO=ghcr.io/${{ github.repository_owner }}
-          for IMAGE in eks-d-xpress-auth-proxy eks-d-xpress-pod-identity-webhook eks-dx-karpenter-support; do
+          for IMAGE in eks-d-xpress-auth-proxy eks-d-xpress-pod-identity-webhook eks-d-xpress-karpenter-support; do
             docker buildx imagetools create -t ${REPO}/${IMAGE}:${VERSION} \
               ${REPO}/${IMAGE}:${VERSION}-amd64 \
               ${REPO}/${IMAGE}:${VERSION}-arm64

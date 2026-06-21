@@ -1,7 +1,7 @@
 app:
   imageConfig:
     registry: ghcr.io
-    repository: plasticity-of-cloud/eks-dx-karpenter-support
+    repository: plasticity-of-cloud/eks-d-xpress-karpenter-support
     tag: latest
 
 clusterIdentity:
