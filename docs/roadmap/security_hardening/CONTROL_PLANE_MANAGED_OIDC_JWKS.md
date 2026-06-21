@@ -54,7 +54,7 @@ CreateTenant (eks-dx-control-plane)
   │
   ├── 1. Generate RSA-2048 key pair (sa.key, sa.pub)
   ├── 2. Derive JWKS from sa.pub
-  ├── 3. Store sa.key → Secrets Manager (eks-dx/tenant/<id>/sa-signing-key)
+  ├── 3. Store sa.key → Secrets Manager (eks-d-xpress/tenant/<id>/sa-signing-key)
   ├── 4. Pre-register cluster in DynamoDB:
   │       PK=CLUSTER#<tenantId>
   │       jwks=<derived JWKS>
@@ -96,12 +96,12 @@ Kubernetes supports multiple keys in the JWKS simultaneously, so tokens signed w
 
 **Key generation** — `TenantIamService` or a new `TenantCryptoService` generates the key pair using the Java `KeyPairGenerator` (RSA-2048). The JWKS derivation reuses the existing `jose4j` dependency already in the credential-service.
 
-**Secrets Manager path** — `eks-dx/tenant/<tenantId>/sa-signing-key` (consistent with the existing SSH key path `eks-dx/tenant/<id>/ssh-key`).
+**Secrets Manager path** — `eks-d-xpress/tenant/<tenantId>/sa-signing-key` (consistent with the existing SSH key path `eks-d-xpress/tenant/<id>/ssh-key`).
 
 **user-data change** — The first-boot script (documented in `docs/design/first-boot-script.md`) needs a step to:
 ```bash
 aws secretsmanager get-secret-value \
-  --secret-id "eks-dx/tenant/${TENANT_ID}/sa-signing-key" \
+  --secret-id "eks-d-xpress/tenant/${TENANT_ID}/sa-signing-key" \
   --query SecretString --output text > /etc/kubernetes/pki/sa.key
 
 # Derive public key from private
@@ -121,7 +121,7 @@ apiServer:
     value: "https://eks-dx.codriverlabs.ai/clusters/${TENANT_ID}"
 ```
 
-**IAM** — `TenantIamService` already grants `secretsmanager:GetSecretValue` scoped to `eks-dx/tenant/*`. The EC2 instance profile needs no changes.
+**IAM** — `TenantIamService` already grants `secretsmanager:GetSecretValue` scoped to `eks-d-xpress/tenant/*`. The EC2 instance profile needs no changes.
 
 **DynamoDB cluster record** — `TenantProvisioningService.createCluster()` (new step, before EC2 launch) should call `mgmt-service POST /clusters` with `jwks` and `issuer` populated. On rollback, `deleteCluster()` removes the pre-registered entry.
 
@@ -142,7 +142,7 @@ EKS generates a self-signed CA per cluster entirely within AWS's internal contro
 
 ### Our approach: KMS-backed shared signing key + per-tenant self-signed CA
 
-Generate the CA key pair in `TenantProvisioningService` before EC2 launch, sign the CA cert using a shared KMS asymmetric key (RSA-2048, non-exportable), store the CA key material in Secrets Manager at `eks-dx/tenant/<id>/ca`. The first-boot script writes it to `/etc/kubernetes/pki/ca.key` + `ca.crt` before `kubeadm init`.
+Generate the CA key pair in `TenantProvisioningService` before EC2 launch, sign the CA cert using a shared KMS asymmetric key (RSA-2048, non-exportable), store the CA key material in Secrets Manager at `eks-d-xpress/tenant/<id>/ca`. The first-boot script writes it to `/etc/kubernetes/pki/ca.key` + `ca.crt` before `kubeadm init`.
 
 **Cost at scale (2,000 tenants/day):**
 
@@ -165,11 +165,11 @@ The $1/month shared KMS signing key with Bouncy Castle issuance gives you HSM-ba
 ```bash
 # First-boot, before kubeadm init
 aws secretsmanager get-secret-value \
-  --secret-id "eks-dx/tenant/${TENANT_ID}/ca-key" \
+  --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-key" \
   --query SecretString --output text > /etc/kubernetes/pki/ca.key
 
 aws secretsmanager get-secret-value \
-  --secret-id "eks-dx/tenant/${TENANT_ID}/ca-crt" \
+  --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-crt" \
   --query SecretString --output text > /etc/kubernetes/pki/ca.crt
 
 chmod 600 /etc/kubernetes/pki/ca.key
@@ -206,9 +206,9 @@ cdk deploy --context clusterCaMode=self-managed
 
 ### What changes in the stack
 
-In `centrally-managed` mode the stack provisions an additional KMS asymmetric key (`eks-dx/ca-signing-key`) used to sign the self-signed CA certs, and grants `eks-dx-tenant-service` Lambda `kms:Sign` on that key. In `self-managed` mode that KMS key and the associated IAM grant are omitted.
+In `centrally-managed` mode the stack provisions an additional KMS asymmetric key (`eks-d-xpress/control-plane/ca-signing-key`) used to sign the self-signed CA certs, and grants `eks-dx-tenant-service` Lambda `kms:Sign` on that key. In `self-managed` mode that KMS key and the associated IAM grant are omitted.
 
-The Secrets Manager paths (`eks-dx/tenant/<id>/ca-key`, `eks-dx/tenant/<id>/ca-crt`) and the SM resource policy on the tenant instance role are the same in both modes — the difference is only in who writes those secrets (tenant-service vs. the CLI post-boot in self-managed).
+The Secrets Manager paths (`eks-d-xpress/tenant/<id>/ca-key`, `eks-d-xpress/tenant/<id>/ca-crt`) and the SM resource policy on the tenant instance role are the same in both modes — the difference is only in who writes those secrets (tenant-service vs. the CLI post-boot in self-managed).
 
 ## References
 
