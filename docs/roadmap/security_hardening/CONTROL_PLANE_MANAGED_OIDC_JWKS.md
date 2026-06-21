@@ -132,6 +132,51 @@ apiServer:
 - `eks-dx-credential-service` — no changes; already reads JWKS from DynamoDB
 - First-boot user-data script — add Secrets Manager fetch before `kubeadm init`
 
+## CA Key Custody Strategy
+
+The roadmap doc above covers the SA signing key. The same pattern applies to the cluster CA (`ca.key` / `ca.crt`), which kubeadm also generates on the instance today.
+
+### How EKS handles it
+
+EKS generates a self-signed CA per cluster entirely within AWS's internal control plane. The private key is stored in an AWS-internal HSM-backed secrets service and never exposed. EKS does **not** use ACM Private CA for cluster CAs — at 100 clusters that would be $5,000/month in CA fees alone. The CA is self-signed, per-cluster, and the private key never touches the customer's account.
+
+### Our approach: KMS-backed shared signing key + per-tenant self-signed CA
+
+Generate the CA key pair in `TenantProvisioningService` before EC2 launch, sign the CA cert using a shared KMS asymmetric key (RSA-2048, non-exportable), store the CA key material in Secrets Manager at `eks-dx/tenant/<id>/ca`. The first-boot script writes it to `/etc/kubernetes/pki/ca.key` + `ca.crt` before `kubeadm init`.
+
+**Cost at scale (2,000 tenants/day):**
+
+| Option | Monthly cost |
+|--------|-------------|
+| ACM PCA — per-tenant CA | 2,000 × $50 = **$100,000/month** |
+| ACM PCA — shared CA, per-cert billing | $50 + 59,000 × $0.75 = **$44,250/month** |
+| KMS asymmetric key (shared, 1 key) | **$1/month** + negligible signing ops |
+| Self-generated, stored in SM only | **$0** extra (SM encryption is KMS under the hood) |
+
+The $1/month shared KMS signing key with Bouncy Castle issuance gives you HSM-backed key custody and full CloudTrail audit (`kms:Sign` logged per issuance) — which is what enterprise customers actually care about. ACM PCA is the right answer only if the customer's compliance framework explicitly requires it (e.g., FedRAMP/DoD), in which case they should bring their own CA into their own AWS account.
+
+### Enterprise positioning
+
+- **Default**: KMS-backed shared signing key + per-tenant self-signed CA stored in Secrets Manager. Auditable via CloudTrail, HSM-backed, near-zero cost.
+- **Enterprise add-on**: ACM PCA, deployed in the customer's own account. Customer bears the PCA cost. We integrate via `aws-privateca-issuer`.
+
+### Implementation (same pattern as SA key)
+
+```bash
+# First-boot, before kubeadm init
+aws secretsmanager get-secret-value \
+  --secret-id "eks-dx/tenant/${TENANT_ID}/ca-key" \
+  --query SecretString --output text > /etc/kubernetes/pki/ca.key
+
+aws secretsmanager get-secret-value \
+  --secret-id "eks-dx/tenant/${TENANT_ID}/ca-crt" \
+  --query SecretString --output text > /etc/kubernetes/pki/ca.crt
+
+chmod 600 /etc/kubernetes/pki/ca.key
+```
+
+kubeadm does not overwrite existing `ca.key`/`ca.crt` files — same behaviour as with `sa.key`/`sa.pub`.
+
 ## References
 
 - [kubeadm Certificate Management — Custom Certificates](https://kubernetes.io/docs/tasks/administer-cluster/kubeadm/kubeadm-certs/#custom-certificates)
