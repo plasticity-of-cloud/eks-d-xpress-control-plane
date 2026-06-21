@@ -57,7 +57,7 @@
     <!-- Container image -->
     <dependency>
       <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-container-image-jib</artifactId>
+      <artifactId>quarkus-container-image-docker</artifactId>
     </dependency>
 
     <!-- Kubernetes manifest + Helm chart generation -->
