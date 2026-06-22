@@ -1,5 +1,5 @@
 app:
   imageConfig:
     registry: ghcr.io
-    repository: codriverlabs/eks-dx-auth-proxy
+    repository: codriverlabs/eks-d-xpress-auth-proxy
     tag: latest

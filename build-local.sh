@@ -133,7 +133,16 @@ fi
 if should_build "auth-proxy"; then
   echo "--- auth-proxy"
   ensure_ecr_repo "codriverlabs/eks-d-xpress-auth-proxy"
-  mvn -B -pl eks-dx-auth-proxy clean package $SKIP_FLAG $(image_flags)
+  mvn -B -pl eks-dx-auth-proxy clean package $SKIP_FLAG $(image_flags) \
+    -Dquarkus.helm.version=${IMAGE_TAG}
+  CHART_TGZ=$(ls eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-*.tar.gz eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-*.tgz 2>/dev/null | head -1)
+  CHART_TMP=$(mktemp -d)
+  tar -xzf "$CHART_TGZ" -C "$CHART_TMP"
+  VALUES="$CHART_TMP/eks-d-xpress-auth-proxy/values.yaml"
+  sed -i "s/tag: latest/tag: ${IMAGE_TAG}/" "$VALUES"
+  [[ -n "$REGISTRY" ]] && sed -i "s|registry: .*|registry: ${REGISTRY}|" "$VALUES"
+  tar -czf "$CHART_TGZ" -C "$CHART_TMP" eks-d-xpress-auth-proxy
+  rm -rf "$CHART_TMP"
 fi
 
 # 5. Pod identity webhook
@@ -142,6 +151,14 @@ if should_build "webhook"; then
   ensure_ecr_repo "codriverlabs/eks-d-xpress-pod-identity-webhook"
   mvn -B -pl eks-dx-pod-identity-webhook clean package $SKIP_FLAG $(image_flags) \
     -Dquarkus.helm.version=${IMAGE_TAG}
+  CHART_TGZ=$(ls eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook-*.tar.gz eks-dx-pod-identity-webhook/target/helm/kubernetes/eks-d-xpress-pod-identity-webhook-*.tgz 2>/dev/null | head -1)
+  CHART_TMP=$(mktemp -d)
+  tar -xzf "$CHART_TGZ" -C "$CHART_TMP"
+  VALUES="$CHART_TMP/eks-d-xpress-pod-identity-webhook/values.yaml"
+  sed -i "s/tag: latest/tag: ${IMAGE_TAG}/" "$VALUES"
+  [[ -n "$REGISTRY" ]] && sed -i "s|registry: .*|registry: ${REGISTRY}|" "$VALUES"
+  tar -czf "$CHART_TGZ" -C "$CHART_TMP" eks-d-xpress-pod-identity-webhook
+  rm -rf "$CHART_TMP"
 fi
 
 # 5b. Karpenter support (EC2NodeClass webhook + ValidationSucceeded controller)
