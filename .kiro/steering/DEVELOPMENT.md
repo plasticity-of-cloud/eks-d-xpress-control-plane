@@ -202,3 +202,39 @@ aws logs tail /aws/lambda/eks-d-xpress-mgmt-service --follow --region us-east-1
 | `create_tenant.sh` exits immediately with no output | Stream Lambda returns 500 — check logs for `MismatchedInputException` on `ApiGatewayAuthorizerContext.iam` | Ensure `quarkus.lambda-http.enable-security=false` is set in tenant-service `application.properties` |
 | Tenant EC2 instance has no public IP | `--eip` not passed and EIP allocation failed | EIP is now always allocated; redeploy tenant-service if using old build |
 | Boot script stalls silently after "EKS-D Cluster Setup" | Instance had no internet at boot (no EIP) — first `aws` CLI call timed out | Fixed by always allocating EIP; re-run setup script manually if needed |
+
+## Deploying eks-dx-karpenter-support to a Tenant Cluster
+
+After making changes, build and push the image + chart:
+
+```bash
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export AWS_REGION=$(aws configure get region)
+./build-local.sh --only karpenter --push --registry $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com > /tmp/karpenter-build.log 2>&1
+if [ $? -ne 0 ]; then
+    grep -E "ERROR|FAILED|BUILD FAILURE" /tmp/karpenter-build.log
+fi
+```
+
+Then deploy to a running tenant cluster in three steps:
+
+**1. Transfer the chart tarball to the tenant instance:**
+```bash
+scp -i ~/.eks-d-xpress/tenants/us-east-1/<tenant-id>.pem \
+  eks-dx-karpenter-support/target/helm/kubernetes/eks-d-xpress-karpenter-support-<version>.tar.gz \
+  ec2-user@<tenant-ip>:/opt/eks-d-setup/charts/
+```
+
+**2. Uninstall the existing release:**
+```bash
+ssh -i ~/.eks-d-xpress/tenants/us-east-1/<tenant-id>.pem ec2-user@<tenant-ip> \
+  "helm uninstall eks-dx-karpenter-support -n kube-system"
+```
+
+**3. Reinstall using the setup script (sources cluster.env automatically):**
+```bash
+ssh -i ~/.eks-d-xpress/tenants/us-east-1/<tenant-id>.pem ec2-user@<tenant-ip> \
+  "sudo /opt/eks-d-setup/18-install-eks-dx-karpenter-support.sh"
+```
+
+The script reads env vars from `/opt/eks-d/version.env` and `/opt/eks-d/cluster.env`, picks up the chart from `/opt/eks-d-setup/charts/`, and runs `helm upgrade --install` with the correct cluster identity values.
