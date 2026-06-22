@@ -174,19 +174,13 @@ jobs:
           done
 
   # ── package-cdk ───────────────────────────────────────────────────────────
-  # CDK synth uses the arm64 tenant zip (production Lambda arch) from the build job.
-  # JVM Lambda zips are taken from the package job artifacts.
+  # Bundles the full CDK project with pre-built Lambda zips so consumers can
+  # run `cdk deploy` with custom context flags without rebuilding Lambda code.
   package-cdk:
     needs: [build, build-jvm-based-lambdas]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-          cache: maven
 
       - name: Download arm64 build artifacts (contains tenant zip)
         uses: actions/download-artifact@v8
@@ -200,25 +194,53 @@ jobs:
           name: release-packages
           path: /tmp/release-packages
 
-      - name: Stage Lambda zips for CDK asset lookup
+      - name: Bundle CDK project with pre-built assets
         run: |
           VERSION=${GITHUB_REF_NAME#v}
-          mkdir -p eks-dx-tenant-service/target eks-dx-credential-service/target eks-dx-mgmt-service/target
-          cp /tmp/release-arm64/eks-dx-tenant-service-${VERSION}-arm64.zip eks-dx-tenant-service/target/function.zip
-          cp /tmp/release-packages/eks-dx-credential-service-${VERSION}.zip eks-dx-credential-service/target/function.zip
-          cp /tmp/release-packages/eks-dx-mgmt-service-${VERSION}.zip eks-dx-mgmt-service/target/function.zip
-          echo "Staged Lambda zips:"
-          ls -lh eks-dx-*/target/function.zip
+          BUNDLE="eks-dx-cdk-${VERSION}"
+          mkdir -p "${BUNDLE}/assets"
 
-      - name: Install CDK CLI
-        run: npm install -g aws-cdk --quiet
+          # CDK source
+          cp -r infra "${BUNDLE}/infra"
 
-      - name: Synth CDK template
-        run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          cd infra && cdk synth
-          cd ..
-          tar czf eks-dx-cdk-${VERSION}.tar.gz -C infra cdk.out
+          # Pre-built Lambda zips
+          cp /tmp/release-arm64/eks-dx-tenant-service-${VERSION}-arm64.zip "${BUNDLE}/assets/tenant-service.zip"
+          cp /tmp/release-packages/eks-dx-credential-service-${VERSION}.zip "${BUNDLE}/assets/credential-service.zip"
+          cp /tmp/release-packages/eks-dx-mgmt-service-${VERSION}.zip "${BUNDLE}/assets/mgmt-service.zip"
+
+          # Deploy instructions
+          cat > "${BUNDLE}/README.md" <<'EOF'
+          # EKS-DX Control Plane — CDK Deployment
+
+          ## Prerequisites
+          - Java 25, Maven 3.9+
+          - AWS CDK CLI (`npm install -g aws-cdk`)
+          - AWS credentials with appropriate permissions
+
+          ## Deploy
+
+          ```bash
+          cd infra
+          cdk deploy EksDXpressControlPlaneStack \
+            --context assetsDir=../assets
+          ```
+
+          ## Context Flags
+
+          | Flag | Value | Effect |
+          |------|-------|--------|
+          | `assetsDir` | path | Directory containing pre-built Lambda zips (default: `../assets`) |
+          | `nativeArch` | `x86` | Deploy tenant-service as x86_64 native binary |
+          | `jvmTenant` | `true` | Deploy tenant-service as JVM (Java 25 runtime) |
+          | (neither) | — | Deploy as arm64 native binary (production default) |
+
+          ## Customizing
+
+          Modify `infra/src/` CDK stack code, then re-run `cdk deploy`.
+          No need to rebuild Lambda code — pre-built zips are in `assets/`.
+          EOF
+
+          tar czf "eks-dx-cdk-${VERSION}.tar.gz" "${BUNDLE}"
 
       - name: Upload CDK artifact
         uses: actions/upload-artifact@v7
