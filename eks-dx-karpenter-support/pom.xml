@@ -57,7 +57,7 @@
     </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-container-image-jib</artifactId>
+      <artifactId>quarkus-container-image-docker</artifactId>
     </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
@@ -157,6 +157,12 @@
   <profiles>
     <profile>
       <id>jib</id>
+      <dependencies>
+        <dependency>
+          <groupId>io.quarkus</groupId>
+          <artifactId>quarkus-container-image-jib</artifactId>
+        </dependency>
+      </dependencies>
       <properties>
         <quarkus.container-image.builder>jib</quarkus.container-image.builder>
         <quarkus.jib.platforms>linux/arm64</quarkus.jib.platforms>
