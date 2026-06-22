@@ -61,6 +61,10 @@
     </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
+      <artifactId>quarkus-container-image-jib</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.quarkus</groupId>
       <artifactId>quarkus-kubernetes</artifactId>
     </dependency>
     <dependency>
@@ -155,6 +159,13 @@
   </build>
 
   <profiles>
+    <profile>
+      <id>jib</id>
+      <properties>
+        <quarkus.container-image.builder>jib</quarkus.container-image.builder>
+        <quarkus.jib.platforms>linux/arm64</quarkus.jib.platforms>
+      </properties>
+    </profile>
     <profile>
       <id>native</id>
       <activation>

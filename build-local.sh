@@ -152,7 +152,7 @@ if should_build "karpenter"; then
     mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG -Pnative $(image_flags) \
       -Dquarkus.helm.version=${IMAGE_TAG}
   else
-    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG $(image_flags) \
+    mvn -B -pl eks-dx-karpenter-support clean package $SKIP_FLAG -Pjib $(image_flags) \
       -Dquarkus.helm.version=${IMAGE_TAG}
   fi
   # Patch image tag and registry in generated values.yaml and repack
