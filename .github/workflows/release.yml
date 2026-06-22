@@ -125,7 +125,10 @@ jobs:
           for MODULE in eks-dx-auth-proxy eks-dx-pod-identity-webhook eks-dx-karpenter-support; do
             mvn -B -pl ${MODULE} package -DskipTests \
               -Dquarkus.helm.version=${VERSION} \
-              -Dquarkus.container-image.build=false
+              -Dquarkus.container-image.build=false \
+              -Dquarkus.container-image.registry=ghcr.io \
+              -Dquarkus.container-image.group=${{ github.repository_owner }} \
+              -Dquarkus.container-image.tag=${VERSION}
           done
 
           helm push eks-dx-auth-proxy/target/helm/kubernetes/eks-d-xpress-auth-proxy-${VERSION}.tar.gz oci://${REGISTRY}/helm
