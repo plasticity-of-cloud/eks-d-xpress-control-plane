@@ -1,5 +1,1 @@
-app:
-  imageConfig:
-    registry: ghcr.io
-    repository: codriverlabs/eks-d-xpress-pod-identity-webhook
-    tag: latest
+{}
