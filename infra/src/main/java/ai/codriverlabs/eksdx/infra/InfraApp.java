@@ -8,6 +8,14 @@ public class InfraApp {
     public static void main(String[] args) {
         App app = new App();
 
+        // --context development=true via CDK CLI, or -Ddevelopment=true via mvn exec:java
+        boolean development = "true".equals(System.getProperty("development"))
+            || "true".equals(app.getNode().tryGetContext("development"));
+        if (development) {
+            // Override context so the stack sees it
+            app.getNode().setContext("development", "true");
+        }
+
         String account = (String) app.getNode().tryGetContext("account");
         String region = (String) app.getNode().tryGetContext("region");
 

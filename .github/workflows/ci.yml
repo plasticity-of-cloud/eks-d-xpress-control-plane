@@ -40,7 +40,7 @@ jobs:
           mvn -B -pl eks-dx-model,eks-dx-tenant-service package -DskipTests
 
       - name: Synth CDK stack
-        run: mvn -B -pl infra compile exec:java -Dexec.args="--context development=true"
+        run: mvn -B -pl infra compile exec:java -Ddevelopment=true
 
       - name: Build container images (JVM, no push)
         run: |
