@@ -128,15 +128,15 @@ This means you can only create/list/delete associations on clusters you own.
 A single SSM parameter controls the maximum tenants per caller:
 
 ```
-/eks-dx/quota/max-tenants-per-caller = 5
+/eks-d-xpress/control-plane/quota/max-tenants-per-caller = 5
 ```
 
 ### CDK
 
 ```java
 StringParameter.Builder.create(this, "MaxTenantsPerCaller")
-    .parameterName("/eks-dx/quota/max-tenants-per-caller")
-    .stringValue("5")
+    .parameterName("/eks-d-xpress/control-plane/quota/max-tenants-per-caller")
+    .stringValue("1")
     .description("Maximum tenants a single IAM identity can provision")
     .build();
 ```
@@ -144,7 +144,7 @@ StringParameter.Builder.create(this, "MaxTenantsPerCaller")
 ### Enforcement (tenant-service)
 
 ```java
-@ConfigProperty(name = "eks-dx.quota.max-tenants-per-caller", defaultValue = "5")
+@ConfigProperty(name = "eks-dx.quota.max-tenants-per-caller", defaultValue = "1")
 int maxTenantsPerCaller;
 
 void enforceQuota(String callerArn) {
@@ -166,7 +166,7 @@ For GA, quota is global (same limit for everyone). Post-GA, per-caller overrides
 | Scenario | HTTP | Code | Message |
 |----------|------|------|---------|
 | Tenant/cluster not owned by caller | 404 | `NotFoundException` | "Tenant not found" / "Cluster not found" |
-| Quota exceeded | 429 | `QuotaExceededException` | "Quota exceeded: maximum N tenants per caller" |
+| Quota exceeded | 429 | `QuotaExceededException` | "Quota exceeded: maximum N tenant(s) per caller" |
 | Association on non-owned cluster | 404 | `NotFoundException` | "Cluster not found" |
 
 Note: 404 (not 403) to avoid leaking resource existence to non-owners.
@@ -176,11 +176,11 @@ Note: 404 (not 403) to avoid leaking resource existence to non-owners.
 - [ ] **Shared**: `CallerIdentityExtractor` utility — extracts + normalizes caller ARN from request context
 - [ ] **tenant-service**: Store `ownerArn` on create; filter list/describe/delete by owner
 - [ ] **tenant-service**: Add `owner-index` GSI to eks-dx-tenants table (CDK)
-- [ ] **tenant-service**: Quota enforcement (`/eks-dx/quota/max-tenants-per-caller`)
+- [ ] **tenant-service**: Quota enforcement (`/eks-d-xpress/control-plane/quota/max-tenants-per-caller`)
 - [ ] **mgmt-service**: Store `ownerArn` on cluster registration; filter by owner
 - [ ] **mgmt-service**: Add `owner-index` GSI to eks-dx-clusters table (CDK)
 - [ ] **mgmt-service**: Scope association CRUD to owned clusters only
-- [ ] **CDK**: Add SSM parameter `/eks-dx/quota/max-tenants-per-caller`
+- [ ] **CDK**: Add SSM parameter `/eks-d-xpress/control-plane/quota/max-tenants-per-caller`
 - [ ] **CDK**: Add GSIs on both DynamoDB tables
 
 ## Relationship to Full Role Hierarchy (Post-GA)
