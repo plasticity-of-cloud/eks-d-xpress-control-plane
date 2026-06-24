@@ -171,7 +171,7 @@ fi
 # 7. CDK
 if should_build "cdk"; then
   echo "--- cdk validate"
-  mvn -B -pl infra clean compile exec:java
+  mvn -B -pl infra clean compile exec:java -Ddevelopment=true
 fi
 
 echo ""

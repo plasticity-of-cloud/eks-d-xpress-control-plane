@@ -91,14 +91,24 @@ export AWS_SECRET_ACCESS_KEY=...
 
 ## 4. Create a pod identity association
 
+First, prepare your IAM role (see [IAM Role Setup](../customer/iam/IAM_ROLE_SETUP.md) for full details):
+
 ```bash
-# The IAM role must trust sts:AssumeRole and be named eks-dx-pod-*
-eks-dx create association \
-  --cluster my-k3s \
+# Tag the role so EKS-DX can manage the trust policy automatically
+aws iam tag-role --role-name my-role --tags Key=eks-dx-managed,Value=true
+```
+
+Then create the association:
+
+```bash
+eks-dx create pod-identity-association \
+  --cluster-name my-k3s \
   --namespace my-app \
   --service-account my-sa \
-  --role-arn arn:aws:iam::123456789012:role/eks-dx-pod-my-role
+  --role-arn arn:aws:iam::123456789012:role/my-role
 ```
+
+EKS-DX automatically configures the role's trust policy with the correct scoped statement (cluster + namespace + service account). No role naming constraints apply.
 
 ---
 

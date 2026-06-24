@@ -80,17 +80,24 @@ export KUBECONFIG=acme-staging.kubeconfig
 
 ## 3. Create pod identity associations
 
+First, prepare your IAM role (see [IAM Role Setup](../customer/iam/IAM_ROLE_SETUP.md) for full details):
+
 ```bash
-eks-dx create association \
-  --cluster acme-staging \
-  --namespace my-app \
-  --service-account my-sa \
-  --role-arn arn:aws:iam::123456789012:role/eks-dx-pod-my-role
+# Tag the role so EKS-DX can manage the trust policy automatically
+aws iam tag-role --role-name my-role --tags Key=eks-dx-managed,Value=true
 ```
 
-The IAM role must:
-- Be named `eks-dx-pod-*`
-- Trust `sts:AssumeRole` (from `pods.eks.amazonaws.com` or the eks-dx Lambda execution role)
+Then create the association:
+
+```bash
+eks-dx create pod-identity-association \
+  --cluster-name acme-staging \
+  --namespace my-app \
+  --service-account my-sa \
+  --role-arn arn:aws:iam::123456789012:role/my-role
+```
+
+EKS-DX automatically configures the role's trust policy. No role naming constraints apply.
 
 ---
 

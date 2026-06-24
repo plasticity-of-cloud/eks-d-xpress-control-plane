@@ -114,31 +114,31 @@ eks-dx describe cluster --name my-k3s
 
 ### 4. Create Pod Identity Associations
 
+For detailed IAM role setup instructions, see [IAM Role Setup](../../../docs/customer/iam/IAM_ROLE_SETUP.md).
+
 ```bash
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 # Create a target IAM role
 aws iam create-role \
-  --role-name eks-dx-pod-my-app \
-  --assume-role-policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Principal": {"AWS": "arn:aws:iam::'$ACCOUNT_ID':root"},
-      "Action": ["sts:AssumeRole", "sts:TagSession"]
-    }]
-  }'
+  --role-name my-app-role \
+  --assume-role-policy-document '{"Version":"2012-10-17","Statement":[]}'
+
+# Tag it so EKS-DX manages the trust policy automatically
+aws iam tag-role \
+  --role-name my-app-role \
+  --tags Key=eks-dx-managed,Value=true
 
 aws iam attach-role-policy \
-  --role-name eks-dx-pod-my-app \
+  --role-name my-app-role \
   --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
 
-# Register the association
+# Register the association (trust policy is configured automatically)
 eks-dx create pod-identity-association \
   --cluster-name my-k3s \
   --namespace default \
   --service-account my-app \
-  --role-arn arn:aws:iam::${ACCOUNT_ID}:role/eks-dx-pod-my-app
+  --role-arn arn:aws:iam::${ACCOUNT_ID}:role/my-app-role
 ```
 
 ### 5. Deploy In-Cluster Components

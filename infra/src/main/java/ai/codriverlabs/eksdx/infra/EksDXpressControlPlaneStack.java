@@ -29,6 +29,8 @@ import software.amazon.awscdk.services.dynamodb.BillingMode;
 import software.amazon.awscdk.services.dynamodb.PointInTimeRecoverySpecification;
 import software.amazon.awscdk.services.dynamodb.Table;
 import software.amazon.awscdk.services.iam.PolicyStatement;
+import software.amazon.awscdk.services.iam.Role;
+import software.amazon.awscdk.services.iam.ServicePrincipal;
 import software.amazon.awscdk.services.lambda.Architecture;
 import software.amazon.awscdk.services.lambda.CfnFunction;
 import software.amazon.awscdk.services.lambda.Code;
@@ -182,6 +184,12 @@ public class EksDXpressControlPlaneStack extends Stack {
             .removalPolicy(RemovalPolicy.DESTROY)
             .build();
 
+        // Fixed-name broker role — trust anchor for Pod Identity-compatible trust policies
+        Role credentialBrokerRole = Role.Builder.create(this, "EksDXCredentialBrokerRole")
+            .roleName("EksDXCredentialBroker")
+            .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
+            .build();
+
         Function credentialFn = Function.Builder.create(this, "EksDxCredentialFunction")
             .functionName("eks-d-xpress-credential-service")
             .runtime(Runtime.JAVA_25)
@@ -189,9 +197,11 @@ public class EksDXpressControlPlaneStack extends Stack {
             .code(Code.fromAsset(credentialZip))
             .memorySize(512)
             .timeout(Duration.seconds(30))
+            .role(credentialBrokerRole)
             .environment(Map.of(
                 "EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName(),
-                "EKS_DX_ASSOCIATIONS_TABLE", associationsTable.getTableName()))
+                "EKS_DX_ASSOCIATIONS_TABLE", associationsTable.getTableName(),
+                "AWS_ACCOUNT_ID", Aws.ACCOUNT_ID))
             .logGroup(credentialLogGroup)
             .build();
 
@@ -204,9 +214,16 @@ public class EksDXpressControlPlaneStack extends Stack {
             .actions(List.of("dynamodb:GetItem"))
             .resources(List.of(clustersTable.getTableArn(), associationsTable.getTableArn()))
             .build());
+        // Pod Identity-compatible broker: AssumeRole + TagSession + SetSourceIdentity
+        // No role-name prefix constraint — scoping is via session tag conditions on target trust policies
         credentialFn.addToRolePolicy(PolicyStatement.Builder.create()
-            .actions(List.of("sts:AssumeRole", "sts:TagSession"))
-            .resources(List.of("arn:aws:iam::*:role/eks-dx-pod-*"))
+            .actions(List.of("sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"))
+            .resources(List.of("*"))
+            .build());
+        // CloudWatch Logs (required since we provide explicit role)
+        credentialFn.addToRolePolicy(PolicyStatement.Builder.create()
+            .actions(List.of("logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"))
+            .resources(List.of("*"))
             .build());
 
         // -----------------------------------------------------------------------
@@ -227,15 +244,23 @@ public class EksDXpressControlPlaneStack extends Stack {
             .timeout(Duration.seconds(30))
             .environment(Map.of(
                 "EKS_DX_CLUSTERS_TABLE", clustersTable.getTableName(),
-                "EKS_DX_ASSOCIATIONS_TABLE", associationsTable.getTableName()))
+                "EKS_DX_ASSOCIATIONS_TABLE", associationsTable.getTableName(),
+                "AWS_ACCOUNT_ID", Aws.ACCOUNT_ID))
             .logGroup(mgmtLogGroup)
             .build();
 
         clustersTable.grantReadWriteData(mgmtFn);
         associationsTable.grantReadWriteData(mgmtFn);
         mgmtFn.addToRolePolicy(PolicyStatement.Builder.create()
-            .actions(List.of("iam:GetRole"))
+            .actions(List.of("iam:GetRole", "iam:ListRoleTags"))
             .resources(List.of("arn:aws:iam::*:role/*"))
+            .build());
+        // Trust policy management — scoped to roles tagged eks-dx-managed=true
+        mgmtFn.addToRolePolicy(PolicyStatement.Builder.create()
+            .actions(List.of("iam:UpdateAssumeRolePolicy"))
+            .resources(List.of(String.format("arn:aws:iam::%s:role/*", Aws.ACCOUNT_ID)))
+            .conditions(Map.of(
+                "StringEquals", Map.of("iam:ResourceTag/eks-dx-managed", "true")))
             .build());
 
         // -----------------------------------------------------------------------
