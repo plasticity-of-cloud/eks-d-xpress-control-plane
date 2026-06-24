@@ -284,6 +284,13 @@ public class EksDXpressControlPlaneStack extends Stack {
             .description("EKS-DX API Gateway endpoint — read by EC2 instances at boot")
             .build();
 
+        // Quota: max tenants per caller identity (ownership isolation)
+        var maxTenantsPerCaller = StringParameter.Builder.create(this, "MaxTenantsPerCallerParam")
+            .parameterName("/eks-d-xpress/control-plane/quota/max-tenants-per-caller")
+            .stringValue("1")
+            .description("Maximum tenants a single IAM identity can provision")
+            .build();
+
         LogGroup tenantLogGroup = LogGroup.Builder.create(this, "TenantFnLogGroup")
             .logGroupName("/aws/lambda/eks-d-xpress-tenant-service")
             .retention(RetentionDays.ONE_MONTH)
@@ -318,6 +325,7 @@ public class EksDXpressControlPlaneStack extends Stack {
                 Map.entry("EKS_DX_VPC_ID", vpcId),
                 Map.entry("EKS_DX_AVAILABILITY_ZONE", "auto"),
                 Map.entry("EKS_DX_DRY_RUN", String.valueOf(dryRun)),
+                Map.entry("EKS_DX_MAX_TENANTS_PER_CALLER", maxTenantsPerCaller.getStringValue()),
                 Map.entry("AWS_LWA_INVOKE_MODE", "response_stream"),
                 Map.entry("AWS_LAMBDA_EXEC_WRAPPER", "/opt/bootstrap"),
                 Map.entry("READINESS_CHECK_PATH", "/q/health/ready"),

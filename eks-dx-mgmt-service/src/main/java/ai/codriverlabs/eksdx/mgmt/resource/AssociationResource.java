@@ -1,9 +1,12 @@
 package ai.codriverlabs.eksdx.mgmt.resource;
 
 import ai.codriverlabs.eksdx.mgmt.service.DynamoDbAssociationService;
+import ai.codriverlabs.eksdx.mgmt.service.DynamoDbClusterService;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
@@ -19,6 +22,7 @@ public class AssociationResource {
     private static final Logger LOG = Logger.getLogger(AssociationResource.class);
 
     @Inject DynamoDbAssociationService associationService;
+    @Inject DynamoDbClusterService clusterService;
 
     public static class CreateAssociationRequest {
         @JsonProperty("namespace") public String namespace;
@@ -28,8 +32,11 @@ public class AssociationResource {
 
     @POST
     public Response createAssociation(@PathParam("clusterName") String clusterName,
-                                       CreateAssociationRequest request) {
+                                       CreateAssociationRequest request,
+                                       @Context ContainerRequestContext ctx) {
         try {
+            if (!verifyClusterOwnership(clusterName, ctx))
+                return error(404, "NotFoundException", "Cluster not found: " + clusterName);
             if (request == null) return error(400, "InvalidParameterException", "Request body is required");
             Map<String, String> result = associationService.createAssociation(
                 clusterName, request.namespace, request.serviceAccount, request.roleArn);
@@ -47,8 +54,11 @@ public class AssociationResource {
     @GET
     public Response listAssociations(@PathParam("clusterName") String clusterName,
                                       @QueryParam("namespace") String namespace,
-                                      @QueryParam("serviceAccount") String serviceAccount) {
+                                      @QueryParam("serviceAccount") String serviceAccount,
+                                      @Context ContainerRequestContext ctx) {
         try {
+            if (!verifyClusterOwnership(clusterName, ctx))
+                return error(404, "NotFoundException", "Cluster not found: " + clusterName);
             List<Map<String, String>> result = associationService.listAssociations(
                 clusterName, namespace, serviceAccount);
             return Response.ok(Map.of("associations", result)).build();
@@ -61,8 +71,11 @@ public class AssociationResource {
     @GET
     @Path("/{associationId}")
     public Response describeAssociation(@PathParam("clusterName") String clusterName,
-                                         @PathParam("associationId") String associationId) {
+                                         @PathParam("associationId") String associationId,
+                                         @Context ContainerRequestContext ctx) {
         try {
+            if (!verifyClusterOwnership(clusterName, ctx))
+                return error(404, "NotFoundException", "Cluster not found: " + clusterName);
             Map<String, String> result = associationService.describeAssociation(clusterName, associationId);
             if (result == null) return error(404, "NotFoundException", "Association not found: " + associationId);
             return Response.ok(result).build();
@@ -75,8 +88,11 @@ public class AssociationResource {
     @DELETE
     @Path("/{associationId}")
     public Response deleteAssociation(@PathParam("clusterName") String clusterName,
-                                       @PathParam("associationId") String associationId) {
+                                       @PathParam("associationId") String associationId,
+                                       @Context ContainerRequestContext ctx) {
         try {
+            if (!verifyClusterOwnership(clusterName, ctx))
+                return error(404, "NotFoundException", "Cluster not found: " + clusterName);
             associationService.deleteAssociation(clusterName, associationId);
             return Response.noContent().build();
         } catch (IllegalArgumentException e) {
@@ -84,6 +100,18 @@ public class AssociationResource {
         } catch (Exception e) {
             LOG.errorf("Delete association error: %s", e.getMessage());
             return error(500, "InternalServerException", "Internal server error");
+        }
+    }
+
+    /** Returns true if caller owns the cluster (or ownership is not enforced). */
+    private boolean verifyClusterOwnership(String clusterName, ContainerRequestContext ctx) {
+        String callerArn = (String) ctx.getProperty("callerArn");
+        if (callerArn == null) return true; // no identity → skip (e.g., webhook calls)
+        try {
+            String ownerArn = clusterService.getOwnerArn(clusterName);
+            return ownerArn == null || callerArn.equals(ownerArn);
+        } catch (IllegalArgumentException e) {
+            return false; // cluster doesn't exist
         }
     }
 
