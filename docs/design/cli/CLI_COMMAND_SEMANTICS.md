@@ -172,8 +172,39 @@ public class EksDxCommand {}
 | Migration Guide | `docs/customer/cli/MIGRATION_v2.2.md` | Old → new command mapping for existing users |
 | Man pages | Generated from picocli `--help` | Built into native binary |
 
-## Open Questions
+## Open Questions — Resolved
 
-1. Should `describe-tenant` exist separately from `describe-cluster`? A tenant IS a cluster + infrastructure. Could unify under `describe-cluster --include-infra`.
-2. Should `register-cluster` accept `--auto-discover` as default behavior (read OIDC from kube-apiserver) with `--issuer`/`--jwks-file` as explicit overrides? (Currently the default.)
-3. Should `list-clusters` show both registered external clusters and tenants in one list? Or separate `list-tenants`?
+### 1. `describe-tenant` vs `describe-cluster` — Keep separate
+
+They answer different questions:
+- `describe-cluster` → logical view: issuer, JWKS fingerprint, association count, registered-at
+- `describe-tenant` → physical view: instance-id, state, public IP, IAM role, subnet, k8s version
+
+External clusters (k3s, microk8s) have no tenant. Tenants always have both views. No unification needed.
+
+### 2. `register-cluster` auto-discover — Default behavior
+
+Auto-discover from kube-apiserver is the default (reads `~/.kube/config`). Explicit `--issuer` + `--jwks-file` flags override when the cluster isn't reachable from the CLI (VPN, CI/CD, bastion). No additional flag needed — if `--issuer` is omitted, it discovers; if provided, it uses the explicit value.
+
+### 3. `list-clusters` — Unified with type column (Option B)
+
+`list-clusters` shows ALL registered clusters (external + tenant-backed) with a `type` column:
+
+```
+$ eks-dx list-clusters
+  NAME            TYPE       STATUS   ASSOCIATIONS   REGISTERED
+  my-k3s          external   active   3              2026-06-20
+  acme-staging    tenant     running  7              2026-06-24
+  dev-cluster     tenant     stopped  1              2026-06-22
+```
+
+`list-tenants` is a convenience filter showing only tenant-type clusters with additional infra columns:
+
+```
+$ eks-dx list-tenants
+  NAME            STATE    IP            INSTANCE        ARCH    K8S
+  acme-staging    running  54.12.34.56   i-0abc123...    arm64   1.32
+  dev-cluster     stopped  -             i-0def456...    x86_64  1.31
+```
+
+Same data source (DynamoDB), different projection. A tenant always appears in both lists.
