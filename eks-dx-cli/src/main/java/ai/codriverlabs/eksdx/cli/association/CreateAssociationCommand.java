@@ -37,6 +37,20 @@ public class CreateAssociationCommand implements Runnable {
 
             System.out.printf("✓ Association created: %s/%s → %s%n", namespace, serviceAccount, roleArn);
             System.out.printf("  Association ID: %s%n", associationId);
+
+            // Trust policy status
+            String trustStatus = node.has("trustPolicyStatus") ? node.get("trustPolicyStatus").asText() : null;
+            if ("APPLIED".equals(trustStatus) || "ALREADY_PRESENT".equals(trustStatus)) {
+                System.out.printf("✓ Trust policy %s on role%n",
+                    "APPLIED".equals(trustStatus) ? "updated" : "already configured");
+            } else if ("MANUAL_ACTION_REQUIRED".equals(trustStatus)) {
+                System.err.println("⚠ Trust policy NOT updated (role missing tag \"eks-dx-managed=true\")");
+                System.err.println();
+                System.err.println("  Add this statement to the role's trust policy:");
+                if (node.has("requiredTrustPolicyStatement"))
+                    System.err.println("  " + node.get("requiredTrustPolicyStatement").asText()
+                        .replace("\n", "\n  "));
+            }
         } catch (Exception e) {
             System.err.printf("Failed to create association: %s%n", e.getMessage());
             System.exit(1);

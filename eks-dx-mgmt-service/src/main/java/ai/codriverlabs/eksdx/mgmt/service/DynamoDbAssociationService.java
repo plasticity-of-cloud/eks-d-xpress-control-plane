@@ -25,6 +25,7 @@ public class DynamoDbAssociationService {
 
     @Inject DynamoDbClient dynamoDb;
     @Inject IamClient iamClient;
+    @Inject TrustPolicyService trustPolicyService;
 
     @ConfigProperty(name = "eks-d-xpress.associations-table")
     String tableName;
@@ -63,9 +64,18 @@ public class DynamoDbAssociationService {
         dynamoDb.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
         LOG.infof("Created association %s: %s/%s -> %s", associationId, namespace, serviceAccount, roleArn);
 
-        return Map.of("associationId", associationId, "clusterName", clusterName,
+        // Manage trust policy on target role
+        TrustPolicyService.TrustPolicyResult trustResult =
+            trustPolicyService.addTrustStatement(roleArn, clusterName, namespace, serviceAccount);
+
+        Map<String, String> result = new HashMap<>(Map.of(
+            "associationId", associationId, "clusterName", clusterName,
             "namespace", namespace, "serviceAccount", serviceAccount,
-            "roleArn", roleArn, "createdAt", now);
+            "roleArn", roleArn, "createdAt", now,
+            "trustPolicyStatus", trustResult.status()));
+        if (trustResult.statement() != null)
+            result.put("requiredTrustPolicyStatement", trustResult.statement());
+        return result;
     }
 
     public List<Map<String, String>> listAssociations(String clusterName,
@@ -107,6 +117,11 @@ public class DynamoDbAssociationService {
     public void deleteAssociation(String clusterName, String associationId) {
         Map<String, String> assoc = describeAssociation(clusterName, associationId);
         if (assoc == null) throw new IllegalArgumentException("Association not found: " + associationId);
+
+        // Remove trust policy statement from target role
+        trustPolicyService.removeTrustStatement(
+            assoc.get("roleArn"), clusterName, assoc.get("namespace"), assoc.get("serviceAccount"));
+
         dynamoDb.deleteItem(DeleteItemRequest.builder()
             .tableName(tableName)
             .key(Map.of(
@@ -136,6 +151,8 @@ public class DynamoDbAssociationService {
         return result;
     }
 
+    private static final String BROKER_ROLE_NAME = "EksDXCredentialBroker";
+
     void validateRoleExists(String roleArn) {
         String roleName = roleArn.contains("/") ? roleArn.substring(roleArn.lastIndexOf("/") + 1) : roleArn;
         GetRoleResponse response;
@@ -150,5 +167,8 @@ public class DynamoDbAssociationService {
         String decoded = java.net.URLDecoder.decode(trustPolicy, java.nio.charset.StandardCharsets.UTF_8);
         if (!decoded.contains("sts:AssumeRole") && !decoded.contains("sts:*"))
             throw new IllegalArgumentException("Role trust policy does not allow sts:AssumeRole: " + roleArn);
+        // Broker principal check — warn only; trust policy will be applied after validation
+        if (!decoded.contains(BROKER_ROLE_NAME))
+            LOG.infof("Role %s trust policy does not yet reference %s — will be added if role is tagged eks-dx-managed=true", roleArn, BROKER_ROLE_NAME);
     }
 }

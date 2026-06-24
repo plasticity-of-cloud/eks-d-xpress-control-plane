@@ -103,8 +103,8 @@ public class EksAuthResource {
             String associationId = assocResp.item().containsKey("associationId")
                 ? assocResp.item().get("associationId").s() : "";
 
-            String sessionName = claims.namespace() + "-" + claims.serviceAccount();
-            Credentials creds = credentialService.assumeRole(roleArn, sessionName, clusterName, claims.sessionTags());
+            Credentials creds = credentialService.assumeRole(roleArn, clusterName,
+                claims.namespace(), claims.serviceAccount(), claims.podName(), claims.podUid());
 
             AgentResponse resp = new AgentResponse();
             resp.credentials = new CredentialsDto();
@@ -114,7 +114,7 @@ public class EksAuthResource {
             resp.credentials.expiration = creds.expiration().getEpochSecond();
             resp.assumedRoleUser = new AssumedRoleUserDto();
             resp.assumedRoleUser.arn = roleArn;
-            resp.assumedRoleUser.assumeRoleId = sessionName;
+            resp.assumedRoleUser.assumeRoleId = "eks-dx." + clusterName + "." + claims.namespace() + "." + claims.serviceAccount();
             resp.podIdentityAssociation = new AssociationDto();
             resp.podIdentityAssociation.associationArn = roleArn;
             resp.podIdentityAssociation.associationId = associationId;
