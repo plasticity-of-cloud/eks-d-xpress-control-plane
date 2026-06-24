@@ -1,4 +1,4 @@
-package ai.codriverlabs.eksdx.cli.flat;
+package ai.codriverlabs.eksdx.cli;
 
 import ai.codriverlabs.eksdx.cli.tenant.CreateTenantCommand;
 import picocli.CommandLine.Command;

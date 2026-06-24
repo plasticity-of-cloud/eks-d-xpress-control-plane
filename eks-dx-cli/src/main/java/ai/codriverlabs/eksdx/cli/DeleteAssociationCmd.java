@@ -1,4 +1,4 @@
-package ai.codriverlabs.eksdx.cli.flat;
+package ai.codriverlabs.eksdx.cli;
 
 import ai.codriverlabs.eksdx.cli.association.DeleteAssociationCommand;
 import picocli.CommandLine.Command;
