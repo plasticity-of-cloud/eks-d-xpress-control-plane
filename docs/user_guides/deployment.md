@@ -218,7 +218,7 @@ EKS-D-Xpress clusters are provisioned via `eks-dx create-tenant`, which:
 1. Launches an EC2 instance with kubeadm
 2. Pre-registers the SA signing key in Secrets Manager
 3. Runs `kubeadm init` with `--service-account-issuer https://<public-ip>`
-4. Auto-registers the cluster with eks-dx-lambda on first boot
+4. Auto-registers the cluster with mgmt-service on first boot
 
 No manual `eks-dx register-cluster` step is needed — the EC2 instance self-registers. After the tenant reaches `state: ready`:
 

@@ -130,7 +130,7 @@ The MCP server talks to the existing API Gateway endpoints using SigV4 signing �
 
 - MCP tools should require explicit confirmation for destructive operations (`delete_tenant`, `delete_cluster`) unless the agent is running in an automated pipeline mode
 - Tenant quotas per API caller should be enforced (e.g., max 3 concurrent tenants) to prevent runaway agents from accumulating resources
-- The existing role naming constraint (`eks-dx-pod-*`) and STS scoping remain the security boundary — agents cannot escalate beyond what their target IAM roles allow
+- Session tag conditions on trust policies remain the security boundary — agents cannot escalate beyond what their target IAM roles allow
 
 ## Related Documents
 
