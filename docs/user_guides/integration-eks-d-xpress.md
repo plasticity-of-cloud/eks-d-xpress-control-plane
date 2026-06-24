@@ -6,7 +6,7 @@ This guide covers what happens automatically and what you need to do after the c
 
 ## Prerequisites
 
-- AWS account with CDK stack deployed (see [DEPLOYMENT.md](DEPLOYMENT.md))
+- AWS account with CDK stack deployed (see [deployment.md](deployment.md))
 - Terraform infra applied (VPC, subnets, Launch Template, AMI — see `infra/`)
 - `eks-dx` CLI installed
 - `ENDPOINT` env var set to your API Gateway URL
@@ -80,7 +80,7 @@ export KUBECONFIG=acme-staging.kubeconfig
 
 ## 3. Create pod identity associations
 
-First, prepare your IAM role (see [IAM Role Setup](iam/IAM_ROLE_SETUP.md) for full details):
+First, prepare your IAM role (see [IAM Role Setup](iam/iam-role-setup.md) for full details):
 
 ```bash
 # Tag the role so EKS-DX can manage the trust policy automatically
