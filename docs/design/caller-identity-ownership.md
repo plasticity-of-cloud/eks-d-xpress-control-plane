@@ -193,3 +193,104 @@ This document implements the **minimum viable authorization** for GA. The full r
 - Administrator full-visibility bypass
 
 Ownership isolation is the foundation that the role hierarchy builds on — `ownerArn` and the GSI remain the same.
+
+## IAM Identity Center Integration (CDK-Managed)
+
+### What CDK provisions
+
+The control-plane CDK stack creates the Identity Center group, permission set, and assignment automatically. The only prerequisite is the Identity Center instance ARN (provided as CDK context).
+
+```
+AWS::IdentityStore::Group        "EksDXpressUsers"
+AWS::SSO::PermissionSet          "EksDXpressAccess"
+    InlinePolicy: execute-api:Invoke on the EKS-DX API Gateway
+AWS::SSO::Assignment             Group → PermissionSet → deployment account
+```
+
+### CDK context parameter
+
+```bash
+cdk deploy --context ssoInstanceArn=arn:aws:sso:::instance/ssoins-1234567890abcdef
+```
+
+If `ssoInstanceArn` is not provided, the Identity Center resources are skipped (supports deployments without Identity Center, e.g., dev accounts using direct IAM users).
+
+### CDK implementation
+
+```java
+String ssoInstanceArn = (String) this.getNode().tryGetContext("ssoInstanceArn");
+
+if (ssoInstanceArn != null) {
+    // Resolve Identity Store ID from instance ARN
+    String identityStoreId = Fn.select(1, Fn.split("/", ssoInstanceArn));
+
+    // 1. Group
+    CfnGroup group = CfnGroup.Builder.create(this, "EksDXpressUsersGroup")
+        .identityStoreId(identityStoreId)
+        .displayName("EksDXpressUsers")
+        .description("Users authorized to access the EKS-DX control plane API")
+        .build();
+
+    // 2. Permission Set
+    CfnPermissionSet permissionSet = CfnPermissionSet.Builder.create(this, "EksDXpressPermissionSet")
+        .instanceArn(ssoInstanceArn)
+        .name("EksDXpressAccess")
+        .description("Grants invoke access to the EKS-DX API Gateway")
+        .inlinePolicy(Map.of(
+            "Version", "2012-10-17",
+            "Statement", List.of(Map.of(
+                "Effect", "Allow",
+                "Action", "execute-api:Invoke",
+                "Resource", String.format("arn:aws:execute-api:%s:%s:%s/*",
+                    this.getRegion(), this.getAccount(), api.getRestApiId())
+            ))))
+        .sessionDuration("PT8H")
+        .build();
+
+    // 3. Assignment (group → permission set → this account)
+    CfnAssignment.Builder.create(this, "EksDXpressGroupAssignment")
+        .instanceArn(ssoInstanceArn)
+        .permissionSetArn(permissionSet.getAttrPermissionSetArn())
+        .principalId(group.getAttrGroupId())
+        .principalType("GROUP")
+        .targetId(this.getAccount())
+        .targetType("AWS_ACCOUNT")
+        .build();
+}
+```
+
+### What the admin does (one-time per user)
+
+1. Deploy CDK stack with `--context ssoInstanceArn=...`
+2. In Identity Center console → Groups → `EksDXpressUsers` → Add members
+3. Users run `aws sso login --profile eks-dx` then use `eks-dx` CLI normally
+
+### Access flow
+
+```
+User → aws sso login → gets temporary credentials with EksDXpressAccess permission set
+  → eks-dx CLI signs request with SigV4
+    → API Gateway validates: caller has execute-api:Invoke? ✓
+      → Lambda: extract callerArn, enforce ownership + quota
+```
+
+### Users NOT in the group
+
+API Gateway returns `403 Missing Authentication Token` or `403 User is not authorized to access this resource` — the request never reaches Lambda.
+
+### Inline policy scope
+
+The permission set's inline policy is scoped to the specific API Gateway:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "execute-api:Invoke",
+    "Resource": "arn:aws:execute-api:us-east-1:123456789012:abc123def/*"
+  }]
+}
+```
+
+This means EksDXpressUsers group members can ONLY call the EKS-DX API — no other AWS actions are granted by this permission set.
