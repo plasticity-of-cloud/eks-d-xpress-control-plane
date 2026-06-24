@@ -16,6 +16,7 @@ SKIP_TESTS=false
 ONLY=""
 PUSH=false
 REGISTRY=""
+RELEASE_MODE=false
 
 for arg in "$@"; do
   case $arg in
@@ -25,6 +26,7 @@ for arg in "$@"; do
       echo "Options:"
       echo "  --native            Build GraalVM native binaries for tenant-service and CLI"
       echo "  --skip-tests        Skip unit tests during build"
+      echo "  --release           CDK synth in release mode (copies zips to assets/, produces cdk.out)"
       echo "  --only <list>       Comma-separated modules to build (skips others)"
       echo "                      Available: credential,mgmt,tenant,auth-proxy,webhook,karpenter,cli,cdk"
       echo "  --push              Push container images to registry after build"
@@ -43,6 +45,7 @@ for arg in "$@"; do
     --native)     NATIVE=true ;;
     --skip-tests) SKIP_TESTS=true ;;
     --push)       PUSH=true ;;
+    --release)    RELEASE_MODE=true ;;
     --only)       ;; # value captured below
     --registry)   ;; # value captured below
     *)
@@ -88,7 +91,7 @@ ensure_ecr_repo() {
     || aws ecr create-repository --repository-name "$repo" --region "$ECR_REGION" --image-scanning-configuration scanOnPush=true --query 'repository.repositoryName' --output text
 }
 
-echo "==> Building eks-dx-control-plane (native=${NATIVE}, skipTests=${SKIP_TESTS}, only=${ONLY:-all}, push=${PUSH}, registry=${REGISTRY:-default})"
+echo "==> Building eks-dx-control-plane (native=${NATIVE}, skipTests=${SKIP_TESTS}, only=${ONLY:-all}, push=${PUSH}, registry=${REGISTRY:-default}, release=${RELEASE_MODE})"
 
 # ECR login if pushing to ECR
 if $PUSH && [[ "$REGISTRY" =~ \.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com ]]; then
@@ -170,8 +173,17 @@ fi
 
 # 7. CDK
 if should_build "cdk"; then
-  echo "--- cdk validate"
-  mvn -B -pl infra clean compile exec:java -Ddevelopment=true
+  if [[ "${RELEASE_MODE}" == "true" ]]; then
+    echo "--- cdk synth (release mode — assets/)"
+    mkdir -p assets
+    [ -f eks-dx-credential-service/target/function.zip ] && cp eks-dx-credential-service/target/function.zip assets/credential-service.zip
+    [ -f eks-dx-mgmt-service/target/function.zip ] && cp eks-dx-mgmt-service/target/function.zip assets/mgmt-service.zip
+    [ -f eks-dx-tenant-service/target/function.zip ] && cp eks-dx-tenant-service/target/function.zip assets/tenant-service.zip
+    mvn -B -pl infra clean compile exec:java
+  else
+    echo "--- cdk validate (development mode — target/)"
+    mvn -B -pl infra clean compile exec:java -Ddevelopment=true
+  fi
 fi
 
 echo ""
