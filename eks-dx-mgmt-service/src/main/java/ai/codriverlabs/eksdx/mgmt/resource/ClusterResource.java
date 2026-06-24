@@ -4,6 +4,8 @@ import ai.codriverlabs.eksdx.mgmt.service.DynamoDbClusterService;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
+import jakarta.ws.rs.container.ContainerRequestContext;
+import jakarta.ws.rs.core.Context;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.jboss.logging.Logger;
@@ -27,10 +29,12 @@ public class ClusterResource {
     }
 
     @POST
-    public Response registerCluster(RegisterClusterRequest request) {
+    public Response registerCluster(RegisterClusterRequest request, @Context ContainerRequestContext ctx) {
         try {
             if (request == null) return error(400, "InvalidParameterException", "Request body is required");
-            Map<String, String> result = clusterService.registerCluster(request.name, request.issuer, request.jwks);
+            String callerArn = (String) ctx.getProperty("callerArn");
+            Map<String, String> result = clusterService.registerCluster(
+                request.name, request.issuer, request.jwks, callerArn);
             return Response.status(201).entity(result).build();
         } catch (IllegalArgumentException e) {
             return error(400, "InvalidParameterException", e.getMessage());
@@ -44,8 +48,12 @@ public class ClusterResource {
 
     @GET
     @Path("/{name}")
-    public Response describeCluster(@PathParam("name") String name) {
+    public Response describeCluster(@PathParam("name") String name, @Context ContainerRequestContext ctx) {
         try {
+            String callerArn = (String) ctx.getProperty("callerArn");
+            String ownerArn = clusterService.getOwnerArn(name);
+            if (callerArn != null && ownerArn != null && !callerArn.equals(ownerArn))
+                return error(404, "NotFoundException", "Cluster not found: " + name);
             return Response.ok(clusterService.describeCluster(name)).build();
         } catch (IllegalArgumentException e) {
             return error(404, "NotFoundException", e.getMessage());
@@ -56,9 +64,12 @@ public class ClusterResource {
     }
 
     @GET
-    public Response listClusters() {
+    public Response listClusters(@Context ContainerRequestContext ctx) {
         try {
-            List<Map<String, String>> result = clusterService.listClusters();
+            String callerArn = (String) ctx.getProperty("callerArn");
+            List<Map<String, String>> result = callerArn != null
+                ? clusterService.listClustersByOwner(callerArn)
+                : clusterService.listClusters();
             return Response.ok(Map.of("clusters", result)).build();
         } catch (Exception e) {
             LOG.errorf("List clusters error: %s", e.getMessage());
@@ -68,8 +79,13 @@ public class ClusterResource {
 
     @PUT
     @Path("/{name}/jwks")
-    public Response refreshJwks(@PathParam("name") String name, Map<String, Object> body) {
+    public Response refreshJwks(@PathParam("name") String name, Map<String, Object> body,
+                                 @Context ContainerRequestContext ctx) {
         try {
+            String callerArn = (String) ctx.getProperty("callerArn");
+            String ownerArn = clusterService.getOwnerArn(name);
+            if (callerArn != null && ownerArn != null && !callerArn.equals(ownerArn))
+                return error(404, "NotFoundException", "Cluster not found: " + name);
             String jwks = body != null && body.containsKey("jwks") ? body.get("jwks").toString() : null;
             clusterService.updateJwks(name, jwks);
             return Response.ok(Map.of("clusterName", name, "status", "updated")).build();
@@ -83,8 +99,12 @@ public class ClusterResource {
 
     @DELETE
     @Path("/{name}")
-    public Response deregisterCluster(@PathParam("name") String name) {
+    public Response deregisterCluster(@PathParam("name") String name, @Context ContainerRequestContext ctx) {
         try {
+            String callerArn = (String) ctx.getProperty("callerArn");
+            String ownerArn = clusterService.getOwnerArn(name);
+            if (callerArn != null && ownerArn != null && !callerArn.equals(ownerArn))
+                return error(404, "NotFoundException", "Cluster not found: " + name);
             clusterService.deregisterCluster(name);
             return Response.noContent().build();
         } catch (IllegalArgumentException e) {

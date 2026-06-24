@@ -194,74 +194,88 @@ This document implements the **minimum viable authorization** for GA. The full r
 
 Ownership isolation is the foundation that the role hierarchy builds on — `ownerArn` and the GSI remain the same.
 
-## IAM Identity Center Integration (CDK-Managed)
+## IAM Identity Center Integration (CDK-Managed, Auto-Discovered)
 
 ### What CDK provisions
 
-The control-plane CDK stack creates the Identity Center group, permission set, and assignment automatically. The only prerequisite is the Identity Center instance ARN (provided as CDK context).
+The control-plane CDK stack automatically discovers the IAM Identity Center instance at deploy time using `AwsCustomResource` (SDK call to `SSOAdmin.listInstances`). If an instance exists, it creates the group, permission set, and assignment. If no Identity Center instance exists, these resources are skipped silently.
+
+**No user input required.**
 
 ```
+AwsCustomResource → SSOAdmin.listInstances → InstanceArn + IdentityStoreId
+  ↓
 AWS::IdentityStore::Group        "EksDXpressUsers"
 AWS::SSO::PermissionSet          "EksDXpressAccess"
     InlinePolicy: execute-api:Invoke on the EKS-DX API Gateway
 AWS::SSO::Assignment             Group → PermissionSet → deployment account
 ```
 
-### CDK context parameter
-
-```bash
-cdk deploy --context ssoInstanceArn=arn:aws:sso:::instance/ssoins-1234567890abcdef
-```
-
-If `ssoInstanceArn` is not provided, the Identity Center resources are skipped (supports deployments without Identity Center, e.g., dev accounts using direct IAM users).
-
 ### CDK implementation
 
 ```java
-String ssoInstanceArn = (String) this.getNode().tryGetContext("ssoInstanceArn");
+// Auto-discover Identity Center instance (zero user input)
+var ssoLookup = AwsCustomResource.Builder.create(this, "SsoInstanceLookup")
+    .onCreate(AwsSdkCall.builder()
+        .service("SSOAdmin")
+        .action("listInstances")
+        .physicalResourceId(PhysicalResourceId.of("sso-instance-lookup"))
+        .build())
+    .policy(AwsCustomResourcePolicy.fromSdkCalls(SdkCallsPolicyOptions.builder()
+        .resources(AwsCustomResourcePolicy.ANY_RESOURCE).build()))
+    .build();
 
-if (ssoInstanceArn != null) {
-    // Resolve Identity Store ID from instance ARN
-    String identityStoreId = Fn.select(1, Fn.split("/", ssoInstanceArn));
+String ssoInstanceArn = ssoLookup.getResponseField("Instances.0.InstanceArn");
+String identityStoreId = ssoLookup.getResponseField("Instances.0.IdentityStoreId");
 
-    // 1. Group
-    CfnGroup group = CfnGroup.Builder.create(this, "EksDXpressUsersGroup")
-        .identityStoreId(identityStoreId)
-        .displayName("EksDXpressUsers")
-        .description("Users authorized to access the EKS-DX control plane API")
-        .build();
+// Only create SSO resources if an instance was found
+// (CDK condition based on the lookup result)
 
-    // 2. Permission Set
-    CfnPermissionSet permissionSet = CfnPermissionSet.Builder.create(this, "EksDXpressPermissionSet")
-        .instanceArn(ssoInstanceArn)
-        .name("EksDXpressAccess")
-        .description("Grants invoke access to the EKS-DX API Gateway")
-        .inlinePolicy(Map.of(
-            "Version", "2012-10-17",
-            "Statement", List.of(Map.of(
-                "Effect", "Allow",
-                "Action", "execute-api:Invoke",
-                "Resource", String.format("arn:aws:execute-api:%s:%s:%s/*",
-                    this.getRegion(), this.getAccount(), api.getRestApiId())
-            ))))
-        .sessionDuration("PT8H")
-        .build();
+// 1. Group
+CfnGroup group = CfnGroup.Builder.create(this, "EksDXpressUsersGroup")
+    .identityStoreId(identityStoreId)
+    .displayName("EksDXpressUsers")
+    .description("Users authorized to access the EKS-DX control plane API")
+    .build();
 
-    // 3. Assignment (group → permission set → this account)
-    CfnAssignment.Builder.create(this, "EksDXpressGroupAssignment")
-        .instanceArn(ssoInstanceArn)
-        .permissionSetArn(permissionSet.getAttrPermissionSetArn())
-        .principalId(group.getAttrGroupId())
-        .principalType("GROUP")
-        .targetId(this.getAccount())
-        .targetType("AWS_ACCOUNT")
-        .build();
-}
+// 2. Permission Set
+CfnPermissionSet permissionSet = CfnPermissionSet.Builder.create(this, "EksDXpressPermissionSet")
+    .instanceArn(ssoInstanceArn)
+    .name("EksDXpressAccess")
+    .description("Grants invoke access to the EKS-DX API Gateway")
+    .inlinePolicy(Map.of(
+        "Version", "2012-10-17",
+        "Statement", List.of(Map.of(
+            "Effect", "Allow",
+            "Action", "execute-api:Invoke",
+            "Resource", String.format("arn:aws:execute-api:%s:%s:%s/*",
+                this.getRegion(), this.getAccount(), api.getRestApiId())
+        ))))
+    .sessionDuration("PT8H")
+    .build();
+
+// 3. Assignment (group → permission set → this account)
+CfnAssignment.Builder.create(this, "EksDXpressGroupAssignment")
+    .instanceArn(ssoInstanceArn)
+    .permissionSetArn(permissionSet.getAttrPermissionSetArn())
+    .principalId(group.getAttrGroupId())
+    .principalType("GROUP")
+    .targetId(this.getAccount())
+    .targetType("AWS_ACCOUNT")
+    .build();
+```
+
+### Opt-out
+
+If you explicitly want to skip Identity Center integration (e.g., dev account without SSO):
+
+```bash
+cdk deploy --context skipSso=true
 ```
 
 ### What the admin does (one-time per user)
 
-1. Deploy CDK stack with `--context ssoInstanceArn=...`
+1. Deploy CDK stack (Identity Center group created automatically)
 2. In Identity Center console → Groups → `EksDXpressUsers` → Add members
 3. Users run `aws sso login --profile eks-dx` then use `eks-dx` CLI normally
 

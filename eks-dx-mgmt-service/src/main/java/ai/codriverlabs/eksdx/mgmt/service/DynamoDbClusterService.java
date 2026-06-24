@@ -38,7 +38,7 @@ public class DynamoDbClusterService {
         throw new IllegalArgumentException("Cluster not registered: " + clusterName);
     }
 
-    public Map<String, String> registerCluster(String clusterName, String issuer, String jwks) {
+    public Map<String, String> registerCluster(String clusterName, String issuer, String jwks, String ownerArn) {
         if (clusterName == null || clusterName.isBlank()) throw new IllegalArgumentException("clusterName is required");
         if (issuer == null || issuer.isBlank()) throw new IllegalArgumentException("issuer is required");
         if (jwks == null || jwks.isBlank()) throw new IllegalArgumentException("jwks is required");
@@ -57,9 +57,10 @@ public class DynamoDbClusterService {
         item.put("jwks", AttributeValue.fromS(jwks));
         item.put("createdAt", AttributeValue.fromS(now));
         item.put("updatedAt", AttributeValue.fromS(now));
+        if (ownerArn != null) item.put("ownerArn", AttributeValue.fromS(ownerArn));
 
         dynamoDb.putItem(PutItemRequest.builder().tableName(tableName).item(item).build());
-        LOG.infof("Registered cluster: %s", clusterName);
+        LOG.infof("Registered cluster: %s (owner: %s)", clusterName, ownerArn);
         return Map.of("clusterName", clusterName, "issuer", issuer, "createdAt", now);
     }
 
@@ -110,6 +111,29 @@ public class DynamoDbClusterService {
             .key(Map.of("clusterName", AttributeValue.fromS(clusterName)))
             .build());
         LOG.infof("Deregistered cluster: %s", clusterName);
+    }
+
+    public String getOwnerArn(String clusterName) {
+        Map<String, AttributeValue> item = getClusterItem(clusterName);
+        return item.containsKey("ownerArn") ? item.get("ownerArn").s() : null;
+    }
+
+    public List<Map<String, String>> listClustersByOwner(String ownerArn) {
+        ScanResponse response = dynamoDb.scan(ScanRequest.builder()
+            .tableName(tableName)
+            .filterExpression("ownerArn = :owner")
+            .expressionAttributeValues(Map.of(":owner", AttributeValue.fromS(ownerArn)))
+            .projectionExpression("clusterName, issuer, createdAt, ownerArn")
+            .build());
+        return response.items().stream().map(this::itemToMap).toList();
+    }
+
+    private Map<String, String> itemToMap(Map<String, AttributeValue> item) {
+        Map<String, String> result = new HashMap<>();
+        for (String key : List.of("clusterName", "issuer", "createdAt", "ownerArn")) {
+            if (item.containsKey(key)) result.put(key, item.get(key).s());
+        }
+        return result;
     }
 
     private Map<String, AttributeValue> getClusterItem(String clusterName) {
