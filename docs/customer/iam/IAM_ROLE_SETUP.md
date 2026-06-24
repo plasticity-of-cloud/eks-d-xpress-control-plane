@@ -184,7 +184,7 @@ If you're migrating from EKS or running a hybrid environment, the same role can 
       "Sid": "AllowEksDXmyclusterdefaultmyappsa",
       "Effect": "Allow",
       "Principal": { "AWS": "arn:aws:iam::YOUR_ACCOUNT:role/EksDXCredentialBroker" },
-      "Action": ["sts:AssumeRole", "sts:TagSession"],
+      "Action": ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"],
       "Condition": {
         "StringEquals": {
           "aws:RequestTag/eks-cluster-name": "my-eksd-cluster",

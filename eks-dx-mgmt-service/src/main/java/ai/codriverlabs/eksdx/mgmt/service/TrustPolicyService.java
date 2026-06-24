@@ -142,6 +142,7 @@ public class TrustPolicyService {
         ArrayNode actions = stmt.putArray("Action");
         actions.add("sts:AssumeRole");
         actions.add("sts:TagSession");
+        actions.add("sts:SetSourceIdentity");
         ObjectNode condition = stmt.putObject("Condition");
         ObjectNode stringEquals = condition.putObject("StringEquals");
         stringEquals.put("aws:RequestTag/eks-cluster-name", clusterName);

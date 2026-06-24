@@ -33,7 +33,7 @@ Each association produces one trust statement with a deterministic Sid:
   "Principal": {
     "AWS": "arn:aws:iam::<control-plane-account>:role/EksDXCredentialBroker"
   },
-  "Action": ["sts:AssumeRole", "sts:TagSession"],
+  "Action": ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"],
   "Condition": {
     "StringEquals": {
       "aws:RequestTag/eks-cluster-name": "<cluster>",
