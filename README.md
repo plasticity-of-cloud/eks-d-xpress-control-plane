@@ -125,10 +125,12 @@ Infrastructure writes, Lambda reads at runtime:
 
 ```
 /eks-dx/launch-template/{arch}/{spot|ondemand}   # Launch template IDs
-/eks-d-xpress/infra/ami/{arch}/{k8s-version}     # AMI IDs (region-specific)
+/eks-dx/ami/{arch}/{k8s-version}                 # AMI IDs (region-specific)
 /eks-dx/network/vpc-id                           # VPC
 /eks-dx/network/private-subnet-ids               # Subnets
 /eks-dx/network/security-group-id                # Security group
+/eks-d-xpress/control-plane/api/endpoint         # API Gateway URL
+/eks-d-xpress/control-plane/quota/max-tenants-per-caller  # Quota (default: 1)
 ```
 
 See `docs/design/ssm-parameter-contract.md` for full details.
@@ -161,4 +163,4 @@ See `docs/design/ssm-parameter-contract.md` for full details.
 
 ## License
 
-MIT
+Express-Compute Community License — see [LICENSE.md](LICENSE.md)
