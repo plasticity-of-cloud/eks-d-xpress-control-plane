@@ -1,5 +1,8 @@
 # EKS Pod Identity on EC2 + k3s
 
+> **Full tutorial** — walks through everything from EC2 launch to working Pod Identity.
+> For a concise reference if you already have k3s running, see [integration-k3s.md](../integration-k3s.md).
+
 Run EKS Pod Identity on a plain EC2 instance with k3s — no managed EKS cluster required. Pods get temporary AWS credentials exactly as they would on managed EKS.
 
 ## Architecture
@@ -143,31 +146,14 @@ eks-dx create-association \
 
 ### 5. Deploy In-Cluster Components
 
-cert-manager is required first for webhook TLS:
+A single script installs cert-manager, eks-dx-auth-proxy, eks-dx-pod-identity-webhook, and eks-pod-identity-agent:
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
-kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=120s
+curl -sL https://github.com/plasticity-of-cloud/eks-d-xpress/releases/latest/download/install-eks-dx-pod-identity.sh \
+  | CLUSTER_NAME=my-k3s AWS_REGION=us-east-1 EKS_DX_ENDPOINT=https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/prod bash
 ```
 
-Then run the canonical installation script (released alongside each version of eks-dx):
-
-```bash
-EKS_DX_VERSION=1.0.0   # replace with the version you deployed
-
-curl -sL "https://github.com/plasticity-of-cloud/eks-d-xpress-control-plane/releases/download/v${EKS_DX_VERSION}/install-eks-dx-pod-identity-${EKS_DX_VERSION}.sh" \
-  | CLUSTER_NAME=my-k3s \
-    AWS_REGION=us-east-1 \
-    EKS_DX_VERSION=$EKS_DX_VERSION \
-    bash
-```
-
-The script resolves `EKS_DX_ENDPOINT` from SSM (`/eks-d-xpress/control-plane/api/endpoint`) automatically.
-Pass `EKS_DX_ENDPOINT=<url>` explicitly only if your instance doesn't have SSM access.
-```
-
-The script installs `eks-dx-auth-proxy`, `eks-dx-pod-identity-webhook`, and `eks-pod-identity-agent` in one pass.
-See [`scripts/install-eks-dx-pod-identity.sh`](../../../scripts/install-eks-dx-pod-identity.sh) for the full source.
+The script resolves `EKS_DX_ENDPOINT` from SSM (`/eks-d-xpress/control-plane/api/endpoint`) automatically if your instance has SSM access. Pass it explicitly otherwise.
 
 ### 6. Test
 
@@ -190,8 +176,9 @@ Expected:
 
 | Role | Permissions | Purpose |
 |------|-------------|---------|
-| Lambda execution role | `dynamodb:GetItem` on eks-dx tables, `sts:AssumeRole` on `eks-dx-pod-*` | Managed by CDK |
-| Target roles (`eks-dx-pod-*`) | Whatever the app needs | Assumed by Lambda on behalf of pods |
+| EksDXCredentialBroker (Lambda) | `sts:AssumeRole` + `sts:TagSession` + `sts:SetSourceIdentity` | Assumes target roles on behalf of pods |
+| Mgmt-service (Lambda) | `iam:GetRole` + `iam:UpdateAssumeRolePolicy` (tag-gated) | Manages trust policies on tagged roles |
+| Target roles | Whatever the app needs | Assumed by broker; trust policy auto-managed if tagged `eks-dx-managed=true` |
 | EC2 instance | None required | k3s only — no AWS API calls from the node |
 
 ## Troubleshooting
@@ -224,9 +211,9 @@ eks-dx deregister-cluster --name my-k3s
 aws ec2 terminate-instances --instance-ids <instance-id>
 
 # Target IAM roles
-aws iam detach-role-policy --role-name eks-dx-pod-my-app \
+aws iam detach-role-policy --role-name my-app-role \
   --policy-arn arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
-aws iam delete-role --role-name eks-dx-pod-my-app
+aws iam delete-role --role-name my-app-role
 
 # Lambda backend (optional — shared across clusters)
 ./destroy-local.sh

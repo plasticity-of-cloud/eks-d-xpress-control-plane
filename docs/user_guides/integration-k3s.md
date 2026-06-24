@@ -2,6 +2,8 @@
 
 End-to-end procedure to enable EKS Pod Identity on a k3s cluster.
 
+> For a full tutorial including EC2 launch and setup from scratch, see [ec2-k3s-pod-identity/](ec2-k3s-pod-identity/).
+
 ## Prerequisites
 
 - k3s node running on EC2 (single-node or multi-node)
