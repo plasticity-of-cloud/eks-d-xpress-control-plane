@@ -80,7 +80,7 @@ export KUBECONFIG=acme-staging.kubeconfig
 
 ## 3. Create pod identity associations
 
-First, prepare your IAM role (see [IAM Role Setup](../customer/iam/IAM_ROLE_SETUP.md) for full details):
+First, prepare your IAM role (see [IAM Role Setup](iam/IAM_ROLE_SETUP.md) for full details):
 
 ```bash
 # Tag the role so EKS-DX can manage the trust policy automatically

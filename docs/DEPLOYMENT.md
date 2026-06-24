@@ -180,7 +180,7 @@ kubectl apply -f eks-dx-pod-identity-webhook/k8s/
 
 ## 5. Create a pod identity association
 
-See [IAM Role Setup](customer/iam/IAM_ROLE_SETUP.md) for full details on preparing IAM roles.
+See [IAM Role Setup](user_guides/iam/IAM_ROLE_SETUP.md) for full details on preparing IAM roles.
 
 ```bash
 # Tag the role for automatic trust policy management

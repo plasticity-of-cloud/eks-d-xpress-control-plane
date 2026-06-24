@@ -93,7 +93,7 @@ export AWS_SECRET_ACCESS_KEY=...
 
 ## 4. Create a pod identity association
 
-First, prepare your IAM role (see [IAM Role Setup](../customer/iam/IAM_ROLE_SETUP.md) for full details):
+First, prepare your IAM role (see [IAM Role Setup](iam/IAM_ROLE_SETUP.md) for full details):
 
 ```bash
 # Tag the role so EKS-DX can manage the trust policy automatically
