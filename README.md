@@ -40,7 +40,7 @@ Clusters and pod identity associations are registered via the `eks-dx` CLI. Tena
 cd infra && cdk deploy EksDXpressControlPlaneStack
 ```
 
-Requires SSM parameters written by the infrastructure stack first (see `docs/ssm-parameter-contract.md`).
+Requires SSM parameters written by the infrastructure stack first (see `docs/design/ssm-parameter-contract.md`).
 
 ### Integration Tests
 
@@ -131,7 +131,7 @@ Infrastructure writes, Lambda reads at runtime:
 /eks-dx/network/security-group-id                # Security group
 ```
 
-See `docs/ssm-parameter-contract.md` for full details.
+See `docs/design/ssm-parameter-contract.md` for full details.
 
 ### Environment Variables
 
@@ -151,7 +151,7 @@ See `docs/ssm-parameter-contract.md` for full details.
 
 | Document | Purpose |
 |----------|---------|
-| `docs/ssm-parameter-contract.md` | Interface between infra and Lambda |
+| `docs/design/ssm-parameter-contract.md` | Interface between infra and Lambda |
 | `docs/TENANT_PROVISIONING_MIGRATION.md` | Migration from Terraform to Lambda |
 | `docs/TENANT_HIBERNATE_RESUME.md` | Instance lifecycle design |
 | `archived (see eks-d-xpress-internal-docs)` | Kube-API proxy via Lambda/CloudFront |
