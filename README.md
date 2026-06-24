@@ -156,8 +156,8 @@ See `docs/design/ssm-parameter-contract.md` for full details.
 | `docs/design/tenant/provisioning.md` | Tenant provisioning orchestration |
 | `docs/design/tenant/hibernate-resume.md` | Instance lifecycle (stop/resume) |
 | `docs/design/iam/trust-policy-management.md` | Trust policy auto-management |
-| `docs/user_guides/deployment.md` | Deployment guide |
-| `docs/user_guides/integration-k3s.md` | k3s integration |
+| `docs/user-guides/deployment.md` | Deployment guide |
+| `docs/user-guides/integration-k3s.md` | k3s integration |
 
 ## License
 
