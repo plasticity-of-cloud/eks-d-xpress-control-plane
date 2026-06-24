@@ -7,7 +7,7 @@ Three layers of testing, each with different scope and infrastructure requiremen
 ```
 Unit Tests          → fast, no containers, mock AWS SDK clients
 Integration Tests   → DynamoDB Local + TestContainers, real service logic
-End-to-End Tests    → SAM Local + DynamoDB Local, full request/response cycle
+End-to-End Tests    → CDK deploy to test account, full request/response cycle
 ```
 
 ---
@@ -107,21 +107,27 @@ Or use the existing approach: `docker run -p 18000:8000` + `-Dintegration.dynamo
 
 ---
 
-## Layer 3 — End-to-End Tests (SAM Local + TestContainers)
+## Layer 3 — End-to-End Tests (CDK Deploy to Test Account)
 
-### API Gateway Emulation
+### API Gateway Testing
 
-SAM CLI provides `sam local start-api` which runs Lambda in Docker with a local HTTP server. For Quarkus tests, use `@QuarkusIntegrationTest` pointing at `http://localhost:3000`:
+Deploy the CDK stack to a test account and run integration tests against the live API Gateway endpoint:
+
+```bash
+./deploy-local.sh --context jvmTenant=true   # fast deploy for testing
+ENDPOINT=$(aws cloudformation describe-stacks --stack-name EksDXpressControlPlaneStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' --output text)
+```
 
 ```java
 @QuarkusIntegrationTest
 @TestHTTPEndpoint(value = EksAuthResource.class)
 class CredentialServiceE2ETest {
-    // Quarkus RestEasy client hits SAM local at localhost:3000
+    // Quarkus RestEasy client hits the deployed API Gateway
 }
 ```
 
-**Limitation**: SAM local does not enforce IAM SigV4 auth — all requests pass. Suitable for functional testing only.
+**Note**: Management endpoints enforce IAM SigV4 auth. Use test IAM credentials with appropriate permissions.
 
 ### Streaming / SSE Testing
 

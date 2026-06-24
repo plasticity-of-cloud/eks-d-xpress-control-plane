@@ -8,7 +8,7 @@
 Add a usage plan with throttling to limit request rates per API key or globally.
 
 ```yaml
-# SAM template addition
+# CDK stack addition
 EksDxUsagePlan:
   Type: AWS::ApiGateway::UsagePlan
   DependsOn: EksDxApiprodStage
@@ -38,7 +38,7 @@ Considerations:
 Restrict API Gateway access to known CIDR ranges using a resource policy.
 
 ```yaml
-# SAM template addition
+# CDK stack addition
 EksDxApi:
   Type: AWS::Serverless::Api
   Properties:

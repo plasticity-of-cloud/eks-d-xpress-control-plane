@@ -47,21 +47,18 @@
 ## 1. Build
 
 ### Prerequisites
-- Java 21+, Maven 3.8+
-- Docker (for container images)
-- GraalVM 21 (native CLI only)
-- AWS CLI v2, SAM CLI
+- Java 25, Maven 3.9+
+- Docker (for container images and native builds)
+- AWS CLI v2, CDK CLI (`npm install -g aws-cdk`)
+- AWS credentials with appropriate permissions
 
 ### Lambda functions (all three)
 
 ```bash
-mvn -pl eks-dx-model,eks-dx-credential-service package -DskipTests
-mvn -pl eks-dx-model,eks-dx-mgmt-service package -DskipTests
-# tenant service: GraalVM native image (provided.al2023, arm64)
-mvn -pl eks-dx-model,eks-dx-tenant-service package -DskipTests -Pnative
+./build-local.sh --only credential,mgmt,tenant --skip-tests
 
-# Or all at once (tenant native build takes ~5 min via container):
-mvn package -DskipTests -Pnative
+# Or with native tenant-service (production):
+./build-local.sh --only credential,mgmt,tenant --native --skip-tests
 ```
 
 Output: `eks-dx-{credential,mgmt,tenant}-service/target/function.zip`
@@ -95,24 +92,27 @@ sudo cp eks-dx-cli/target/eks-dx-cli-*-runner /usr/local/bin/eks-dx
 
 ---
 
-## 2. Deploy the Lambda backend (SAM)
+## 2. Deploy the Lambda backend (CDK)
 
 ```bash
-mvn package -DskipTests   # builds all three function.zips
+./deploy-local.sh
 
-sam deploy -t sam.yaml \
-  --stack-name eks-dx \
-  --region us-east-1 \
-  --capabilities CAPABILITY_IAM \
-  --resolve-s3 \
-  --no-confirm-changeset
+# Or skip build if zips already exist:
+./deploy-local.sh --skip-build
+```
+
+Or manually with CDK CLI:
+
+```bash
+cd infra && cdk deploy EksDXpressControlPlaneStack
 ```
 
 After deploy, capture the outputs:
 
 ```bash
-ENDPOINT=$(aws cloudformation describe-stacks --stack-name eks-dx \
-  --query 'Stacks[0].Outputs[?OutputKey==`Endpoint`].OutputValue' \
+ENDPOINT=$(aws cloudformation describe-stacks --stack-name EksDXpressControlPlaneStack \
+  --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+  --output text)
   --output text)
 
 STREAM_URL=$(aws cloudformation describe-stacks --stack-name eks-dx \
@@ -180,15 +180,18 @@ kubectl apply -f eks-dx-pod-identity-webhook/k8s/
 
 ## 5. Create a pod identity association
 
+See [IAM Role Setup](customer/iam/IAM_ROLE_SETUP.md) for full details on preparing IAM roles.
+
 ```bash
-eks-dx create association \
-  --cluster my-cluster \
+# Tag the role for automatic trust policy management
+aws iam tag-role --role-name my-role --tags Key=eks-dx-managed,Value=true
+
+eks-dx create pod-identity-association \
+  --cluster-name my-cluster \
   --namespace my-app \
   --service-account my-sa \
-  --role-arn arn:aws:iam::123456789012:role/eks-dx-pod-my-role
+  --role-arn arn:aws:iam::123456789012:role/my-role
 ```
-
-The IAM role must trust `sts:AssumeRole` and its name must match `eks-dx-pod-*`.
 
 ---
 
@@ -250,7 +253,7 @@ The credential-service Lambda validates this token against the cluster's JWKS in
 ```bash
 helm uninstall eks-dx-auth-proxy -n kube-system
 helm uninstall eks-dx-pod-identity-webhook -n kube-system
-sam delete --stack-name eks-dx
+cd infra && cdk destroy EksDXpressControlPlaneStack
 ```
 
 For tenant clusters:

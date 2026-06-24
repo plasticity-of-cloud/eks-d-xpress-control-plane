@@ -20,10 +20,10 @@
 ### Testing
 - [x] Unit tests for all services and resources (123 tests)
 - [x] Integration test with DynamoDB Local (16 tests)
-- [x] SAM local testing (`sam validate --lint`)
+- [x] CDK synth validation
 
 ### Deployment
-- [ ] First deploy to AWS (`sam deploy --guided`)
+- [x] CDK deploy (`cdk deploy EksDXpressControlPlaneStack`)
 - [ ] SnapStart verification (cold start benchmarks)
 
 ## eks-dx-cli (Native binary CLI)
@@ -43,8 +43,8 @@
 
 ## Infrastructure
 
-- [x] SAM template (IAM auth, custom domain, CloudWatch alarms, access logging)
-- [x] CDK stack (REST API v1, IAM auth, SnapStart, PITR, alarms)
+- [x] CDK stack (REST API v1, IAM auth, SnapStart, PITR, alarms, trust policy management)
+- [x] Pod Identity-compatible broker (EksDXCredentialBroker, 6 session tags, SourceIdentity)
 
 ## Documentation
 

@@ -133,7 +133,7 @@ public record TenantProgress(
     String publicIp, long elapsed, String error) {}
 ```
 
-### SAM template addition
+### CDK stack addition
 
 ```yaml
 TenantStreamFunction:
