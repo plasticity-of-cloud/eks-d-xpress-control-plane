@@ -239,30 +239,7 @@ jobs:
           cp -r assets "${BUNDLE}/assets"
           cp -r infra "${BUNDLE}/infra"
 
-          cat > "${BUNDLE}/README.md" <<'EOF'
-# EKS-DX Control Plane — CDK Deployment
-
-## Quick Deploy (no build required)
-
-```bash
-cd eks-d-xpress-control-plane-<version>
-cdk deploy --app cdk.out EksDXpressControlPlaneStack
-```
-
-No Java, no Maven needed — the stack is pre-synthesized.
-
-## Custom Deploy (with modifications)
-
-If you need to change CDK context flags or modify the stack:
-
-```bash
-# Requires: Java 25, Maven 3.9+, CDK CLI
-cd infra
-cdk deploy EksDXpressControlPlaneStack --context jvmTenant=true
-```
-
-Pre-built Lambda zips are in `assets/` — no need to rebuild Lambda code.
-EOF
+          printf '# EKS-DX Control Plane - CDK Deployment\n\n## Quick Deploy (no build required)\n\n    cd eks-d-xpress-control-plane-<version>\n    cdk deploy --app cdk.out EksDXpressControlPlaneStack\n\nNo Java, no Maven needed - the stack is pre-synthesized.\n\n## Custom Deploy (with modifications)\n\n    cd infra\n    cdk deploy EksDXpressControlPlaneStack --context jvmTenant=true\n\nPre-built Lambda zips are in assets/ - no need to rebuild Lambda code.\n' > "${BUNDLE}/README.md"
 
           tar czf "eks-d-xpress-control-plane-${VERSION}.tar.gz" "${BUNDLE}"
 
