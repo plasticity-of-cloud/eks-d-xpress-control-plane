@@ -11,4 +11,4 @@ else
   exit 1
 fi
 
-$CMD delete tenant $1
+$CMD delete-tenant $1

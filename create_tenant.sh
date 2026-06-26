@@ -11,4 +11,4 @@ else
   exit 1
 fi
 
-$CMD create tenant $1 --arch=arm64 --pricing=ondemand --ssh-cidr "$(curl -s https://checkip.amazonaws.com/ | tr -d '\n')/32" --wait
+$CMD create-tenant $1 --arch=arm64 --pricing=ondemand --ssh-cidr "$(curl -s https://checkip.amazonaws.com/ | tr -d '\n')/32" --wait
