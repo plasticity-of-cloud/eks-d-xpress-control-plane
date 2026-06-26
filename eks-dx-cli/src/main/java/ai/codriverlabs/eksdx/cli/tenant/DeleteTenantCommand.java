@@ -21,14 +21,18 @@ public class DeleteTenantCommand implements Runnable {
     public void run() {
         try {
             EksDxConfig config = new EksDxConfig();
-            String tenantApiUrl = config.getTenantApiUrl();
-            if (tenantApiUrl == null) {
-                System.err.println("Error: tenant API URL not configured. Set EKS_DX_TENANT_API_URL or run 'eks-dx configure'.");
+            // Use the Function URL for all tenant operations. The HTTP API returns 500
+            // because the Lambda uses response_stream mode (for SSE) which is incompatible
+            // with HTTP API proxy integration for non-streaming responses.
+            String functionUrl = config.getProvisioningUrl();
+            if (functionUrl == null) functionUrl = config.getTenantApiUrl();
+            if (functionUrl == null) {
+                System.err.println("Error: tenant API URL not configured. Set EKS_DX_PROVISIONING_URL or run 'eks-dx configure'.");
                 System.exit(1);
             }
-            // DELETE is synchronous in the Lambda but API Gateway times out at 29s and returns 503.
-            // The Lambda keeps running and completes the deletion. Treat 503/timeout as "accepted".
-            int deleteStatus = apiClient.deleteStatusOnUrl(tenantApiUrl, "/tenants/" + tenantId);
+            String service = functionUrl.contains(".lambda-url.") ? "lambda" : "execute-api";
+
+            int deleteStatus = apiClient.deleteStatusOnUrl(functionUrl, "/tenants/" + tenantId, service);
             if (deleteStatus != 204 && deleteStatus != 202 && deleteStatus != 503 && deleteStatus != 404) {
                 System.err.printf("Unexpected status %d deleting tenant%n", deleteStatus);
                 System.exit(1);
@@ -45,7 +49,7 @@ public class DeleteTenantCommand implements Runnable {
             long deadline = System.currentTimeMillis() + 300_000;
             while (System.currentTimeMillis() < deadline) {
                 Thread.sleep(5_000);
-                int status = apiClient.getStatusOnUrl(tenantApiUrl, "/tenants/" + tenantId);
+                int status = apiClient.getStatusOnUrl(functionUrl, "/tenants/" + tenantId, service);
                 if (status == 404) {
                     System.out.printf("✓ Tenant \"%s\" deprovisioned%n", tenantId);
                     return;

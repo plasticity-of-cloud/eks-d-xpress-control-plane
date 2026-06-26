@@ -71,10 +71,16 @@ public class EksDxApiClient {
 
     /** Returns the HTTP status code for a given base URL without throwing on 4xx/5xx. */
     public int getStatusOnUrl(String baseUrl, String path) {
+        return getStatusOnUrl(baseUrl, path, "execute-api");
+    }
+
+    /** Returns the HTTP status code, signing with the specified service name. */
+    public int getStatusOnUrl(String baseUrl, String path, String service) {
         try {
             URI uri = URI.create(baseUrl.replaceAll("/$", "") + path);
-            var builder = HttpRequest.newBuilder().uri(uri).GET();
-            if (signer != null) signer.sign(builder, "GET", uri, null, "execute-api");
+            var builder = HttpRequest.newBuilder().uri(uri).GET()
+                .timeout(java.time.Duration.ofSeconds(10));
+            if (signer != null) signer.sign(builder, "GET", uri, null, service);
             else builder.header("Content-Type", "application/json");
             return httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
         } catch (Exception e) {
@@ -126,16 +132,21 @@ public class EksDxApiClient {
 
     /** DELETE that returns the status code without throwing on 4xx/5xx. */
     public int deleteStatusOnUrl(String baseUrl, String path) {
+        return deleteStatusOnUrl(baseUrl, path, "execute-api");
+    }
+
+    /** DELETE that returns the status code, signing with the specified service name. */
+    public int deleteStatusOnUrl(String baseUrl, String path, String service) {
         try {
             URI uri = URI.create(baseUrl.replaceAll("/$", "") + path);
             var builder = HttpRequest.newBuilder().uri(uri)
                 .method("DELETE", HttpRequest.BodyPublishers.noBody())
                 .timeout(java.time.Duration.ofSeconds(35));
-            if (signer != null) signer.sign(builder, "DELETE", uri, null, "execute-api");
+            if (signer != null) signer.sign(builder, "DELETE", uri, null, service);
             else builder.header("Content-Type", "application/json");
             return httpClient.send(builder.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
         } catch (java.net.http.HttpTimeoutException e) {
-            // API Gateway times out at 29s; Lambda keeps running. Treat as accepted (503-equivalent).
+            // Lambda Function URL / API Gateway may time out; Lambda keeps running.
             return 503;
         } catch (Exception e) {
             return -1;
