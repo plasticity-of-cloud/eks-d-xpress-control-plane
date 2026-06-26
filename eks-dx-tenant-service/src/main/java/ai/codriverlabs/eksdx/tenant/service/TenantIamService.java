@@ -36,7 +36,7 @@ public class TenantIamService {
     public record IamResult(String roleName, String instanceProfileName) {}
 
     public IamResult createTenantRole(String tenantId, String clusterName, String region, String accountId) {
-        String roleName = "eks-d-xpress-tenant-" + tenantId + "-instance-role";
+        String roleName = "eks-d-xpress-tenant-" + tenantId + "-" + region + "-instance-role";
 
         try {
             iam.createRole(CreateRoleRequest.builder()

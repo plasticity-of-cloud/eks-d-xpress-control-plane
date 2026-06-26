@@ -186,7 +186,7 @@ public class EksDXpressControlPlaneStack extends Stack {
 
         // Fixed-name broker role — trust anchor for Pod Identity-compatible trust policies
         Role credentialBrokerRole = Role.Builder.create(this, "EksDXCredentialBrokerRole")
-            .roleName("EksDXCredentialBroker")
+            .roleName("EksDXCredentialBroker-" + Stack.of(this).getRegion())
             .assumedBy(new ServicePrincipal("lambda.amazonaws.com"))
             .build();
 

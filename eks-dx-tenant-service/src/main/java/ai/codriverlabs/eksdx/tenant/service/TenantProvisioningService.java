@@ -169,7 +169,7 @@ public class TenantProvisioningService {
             created.eventBridgeRulePrefix = clusterName;
 
             // 5. DLM (daily etcd backup)
-            dlmService.createEtcdBackupPolicy(tenantId, clusterName);
+            dlmService.createEtcdBackupPolicy(tenantId, clusterName, region);
             created.dlmPolicyCreated = true;
 
             // 6. EC2 instance launch — pass created so EIP alloc ID is tracked before association
@@ -490,7 +490,8 @@ public class TenantProvisioningService {
         }
 
         // 5. Delete IAM role + instance profile
-        String roleName = "eks-d-xpress-tenant-" + tenantId + "-instance-role";
+        String awsRegion = System.getenv("AWS_REGION");
+        String roleName = "eks-d-xpress-tenant-" + tenantId + "-" + awsRegion + "-instance-role";
         try {
             iamService.deleteTenantRole(roleName, roleName);
             LOG.infof("Deleted IAM role + instance profile %s", roleName);
@@ -499,7 +500,7 @@ public class TenantProvisioningService {
         }
 
         // 5b. Delete DLM execution role
-        String dlmRoleName = "eks-d-xpress-tenant-" + tenantId + "-dlm";
+        String dlmRoleName = "eks-d-xpress-tenant-" + tenantId + "-" + awsRegion + "-dlm";
         try {
             iam.detachRolePolicy(software.amazon.awssdk.services.iam.model.DetachRolePolicyRequest.builder()
                 .roleName(dlmRoleName)

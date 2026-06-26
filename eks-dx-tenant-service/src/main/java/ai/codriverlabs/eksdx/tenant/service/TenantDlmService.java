@@ -32,9 +32,9 @@ public class TenantDlmService {
     @Inject IamClient iam;
     private final DlmClient dlm = DlmClient.create();
 
-    public String createEtcdBackupPolicy(String tenantId, String clusterName) {
+    public String createEtcdBackupPolicy(String tenantId, String clusterName, String region) {
         // DLM execution role
-        String roleName = "eks-d-xpress-tenant-" + tenantId + "-dlm";
+        String roleName = "eks-d-xpress-tenant-" + tenantId + "-" + region + "-dlm";
         try {
             iam.createRole(CreateRoleRequest.builder()
                 .roleName(roleName)
