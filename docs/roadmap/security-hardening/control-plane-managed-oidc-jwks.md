@@ -66,9 +66,9 @@ CreateTenant (TenantProvisioningService — Lambda)
   ├── 3. Generate SA signing key pair (RSA-2048)
   ├── 4. Derive JWKS from SA public key (jose4j)
   ├── 5. Store in Secrets Manager:
-  │       • eks-d-xpress/tenant/<id>/ca-key   (CA private key, PEM)
-  │       • eks-d-xpress/tenant/<id>/ca-crt   (CA cert, PEM, signed by KMS)
-  │       • eks-d-xpress/tenant/<id>/sa-key   (SA signing private key, PEM)
+  │       • eks-dx/t/<id>/ca-key   (CA private key, PEM)
+  │       • eks-dx/t/<id>/ca-crt   (CA cert, PEM, signed by KMS)
+  │       • eks-dx/t/<id>/sa-key   (SA signing private key, PEM)
   ├── 6. Pre-register cluster in DynamoDB:
   │       PK=CLUSTER#<tenantId>
   │       jwks=<derived JWKS>
@@ -93,30 +93,30 @@ Currently this script runs `kubeadm init` without pre-placing any PKI files — 
 
 ```bash
 # --- Fetch control-plane-managed PKI (before kubeadm init) ---
-if [ "${OIDC_MODE:-managed}" = "managed" ]; then
-  echo "Fetching PKI material from Secrets Manager..."
-  sudo mkdir -p /etc/kubernetes/pki
+echo "Fetching PKI material from Secrets Manager..."
+sudo mkdir -p /etc/kubernetes/pki
 
-  aws secretsmanager get-secret-value \
-    --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-key" \
-    --query SecretString --output text | sudo tee /etc/kubernetes/pki/ca.key > /dev/null
+aws secretsmanager get-secret-value \
+  --secret-id "eks-dx/t/${TENANT_ID}/ca-key" \
+  --query SecretString --output text | sudo tee /etc/kubernetes/pki/ca.key > /dev/null
 
-  aws secretsmanager get-secret-value \
-    --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-crt" \
-    --query SecretString --output text | sudo tee /etc/kubernetes/pki/ca.crt > /dev/null
+aws secretsmanager get-secret-value \
+  --secret-id "eks-dx/t/${TENANT_ID}/ca-crt" \
+  --query SecretString --output text | sudo tee /etc/kubernetes/pki/ca.crt > /dev/null
 
-  aws secretsmanager get-secret-value \
-    --secret-id "eks-d-xpress/tenant/${TENANT_ID}/sa-key" \
-    --query SecretString --output text | sudo tee /etc/kubernetes/pki/sa.key > /dev/null
+aws secretsmanager get-secret-value \
+  --secret-id "eks-dx/t/${TENANT_ID}/sa-key" \
+  --query SecretString --output text | sudo tee /etc/kubernetes/pki/sa.key > /dev/null
 
-  # Derive SA public key from private key
-  sudo openssl rsa -in /etc/kubernetes/pki/sa.key -pubout -out /etc/kubernetes/pki/sa.pub
+# Derive SA public key from private key
+sudo openssl rsa -in /etc/kubernetes/pki/sa.key -pubout -out /etc/kubernetes/pki/sa.pub
 
-  sudo chmod 600 /etc/kubernetes/pki/ca.key /etc/kubernetes/pki/sa.key
-  sudo chmod 644 /etc/kubernetes/pki/ca.crt /etc/kubernetes/pki/sa.pub
-  echo "✓ PKI material fetched from Secrets Manager"
-fi
+sudo chmod 600 /etc/kubernetes/pki/ca.key /etc/kubernetes/pki/sa.key
+sudo chmod 644 /etc/kubernetes/pki/ca.crt /etc/kubernetes/pki/sa.pub
+echo "✓ PKI material fetched from Secrets Manager"
 ```
+
+No `OIDC_MODE` guard is needed — this script only runs on the Golden AMI, which is always managed mode.
 
 **Add `service-account-issuer` to the kubeadm config template (in the `apiServer.extraArgs` section):**
 
@@ -128,28 +128,11 @@ apiServer:
     service-account-issuer: "https://eks-dx.codriverlabs.ai/clusters/${TENANT_ID}"
 ```
 
-When `OIDC_MODE=managed`, kubeadm will:
-- See existing `ca.key`, `ca.crt`, `sa.key`, `sa.pub` in `/etc/kubernetes/pki/` → skip generation
-- Use the configured `service-account-issuer` → tokens contain the deterministic issuer URL
+kubeadm will see existing `ca.key`, `ca.crt`, `sa.key`, `sa.pub` in `/etc/kubernetes/pki/` → skip generation, and use the configured `service-account-issuer` so tokens contain the deterministic issuer URL.
 
-When `OIDC_MODE=self-managed` (or unset in dev/manual mode), the script behaves as today — kubeadm generates its own keys.
+#### File: `cluster.env`
 
-#### File: `cluster.env` additions
-
-TenantEc2Service must write these additional variables to `/opt/eks-d/cluster.env`:
-
-```bash
-# Existing vars (already written today)
-TENANT_ID=abc123
-CLUSTER_NAME=abc123
-NODE_IP=10.0.1.50
-POD_SUBNET=10.244.0.0/16
-
-# New vars for OIDC managed mode
-OIDC_MODE=managed
-```
-
-`TENANT_ID` is already present (used by `progress.sh`, Karpenter, CloudWatch). `OIDC_MODE` is the only new addition.
+No new variables are required. `TENANT_ID` is already written by TenantEc2Service and used by `progress.sh`, Karpenter, and CloudWatch scripts. The SM paths are derived from it (`eks-dx/t/${TENANT_ID}/*`).
 
 #### Execution order (unchanged)
 
@@ -170,7 +153,7 @@ The current script uses `kubeadm.k8s.io/v1beta3`. The `service-account-issuer` e
 
 #### IAM permissions
 
-The instance profile (created by `TenantIamService`) already grants `secretsmanager:GetSecretValue` scoped to `eks-d-xpress/tenant/*`. No IAM changes are needed on the EC2 side.
+The instance profile (created by `TenantIamService`) already grants `secretsmanager:GetSecretValue` scoped to `eks-dx/t/<id>/*`. No IAM changes are needed on the EC2 side.
 
 ## Security Benefits
 
@@ -326,12 +309,12 @@ Error: Self-managed mode requires the following parameters:
 
 **Key generation** — Use Bouncy Castle (`org.bouncycastle:bcpkix-jdk18on`, already compatible with GraalVM native) for RSA key pair generation and X.509 cert construction. The CA cert is self-signed in the sense that it's a root cert, but the signature comes from the KMS key (via `kms:Sign` with `RSASSA_PKCS1_V1_5_SHA_256`).
 
-**Secrets Manager paths** — Consistent with existing SSH key path (`eks-d-xpress/tenant/<id>/ssh-key`):
-- `eks-d-xpress/tenant/<id>/ca-key`
-- `eks-d-xpress/tenant/<id>/ca-crt`
-- `eks-d-xpress/tenant/<id>/sa-key`
+**Secrets Manager paths** — Consistent with existing SSH key path (`eks-dx/t/<id>/ssh-key`):
+- `eks-dx/t/<id>/ca-key`
+- `eks-dx/t/<id>/ca-crt`
+- `eks-dx/t/<id>/sa-key`
 
-**IAM** — `TenantIamService` already grants `secretsmanager:GetSecretValue` scoped to `eks-d-xpress/tenant/*` on the instance profile. No changes needed for the EC2 side. The Lambda needs `kms:Sign` on the shared KMS key (added by CDK).
+**IAM** — `TenantIamService` already grants `secretsmanager:GetSecretValue` scoped to `eks-dx/t/<id>/*` on the instance profile. No changes needed for the EC2 side. The Lambda needs `kms:Sign` on the shared KMS key (added by CDK).
 
 **Rollback** — On provisioning failure, `ProvisionedResources.rollback()` must delete the Secrets Manager entries and the pre-registered DynamoDB cluster record.
 
