@@ -85,49 +85,92 @@ CreateTenant (TenantProvisioningService — Lambda)
 
 ### Changes required in `eks-d-xpress` project
 
-The file `eks-d-setup/07-install-eks-d.sh` must be updated to fetch PKI material from Secrets Manager before running `kubeadm init`:
+#### File: `eks-d-setup/07-install-eks-d.sh`
+
+Currently this script runs `kubeadm init` without pre-placing any PKI files — kubeadm generates everything. The script must be updated to conditionally fetch PKI from Secrets Manager when `OIDC_MODE=managed`.
+
+**Insert at the top of the script (after `source /opt/eks-d/cluster.env`):**
 
 ```bash
 # --- Fetch control-plane-managed PKI (before kubeadm init) ---
+if [ "${OIDC_MODE:-managed}" = "managed" ]; then
+  echo "Fetching PKI material from Secrets Manager..."
+  sudo mkdir -p /etc/kubernetes/pki
 
-echo "Fetching PKI material from Secrets Manager..."
+  aws secretsmanager get-secret-value \
+    --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-key" \
+    --query SecretString --output text | sudo tee /etc/kubernetes/pki/ca.key > /dev/null
 
-aws secretsmanager get-secret-value \
-  --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-key" \
-  --query SecretString --output text > /etc/kubernetes/pki/ca.key
+  aws secretsmanager get-secret-value \
+    --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-crt" \
+    --query SecretString --output text | sudo tee /etc/kubernetes/pki/ca.crt > /dev/null
 
-aws secretsmanager get-secret-value \
-  --secret-id "eks-d-xpress/tenant/${TENANT_ID}/ca-crt" \
-  --query SecretString --output text > /etc/kubernetes/pki/ca.crt
+  aws secretsmanager get-secret-value \
+    --secret-id "eks-d-xpress/tenant/${TENANT_ID}/sa-key" \
+    --query SecretString --output text | sudo tee /etc/kubernetes/pki/sa.key > /dev/null
 
-aws secretsmanager get-secret-value \
-  --secret-id "eks-d-xpress/tenant/${TENANT_ID}/sa-key" \
-  --query SecretString --output text > /etc/kubernetes/pki/sa.key
+  # Derive SA public key from private key
+  sudo openssl rsa -in /etc/kubernetes/pki/sa.key -pubout -out /etc/kubernetes/pki/sa.pub
 
-# Derive SA public key from private key
-openssl rsa -in /etc/kubernetes/pki/sa.key -pubout > /etc/kubernetes/pki/sa.pub
-
-chmod 600 /etc/kubernetes/pki/ca.key /etc/kubernetes/pki/sa.key
-chmod 644 /etc/kubernetes/pki/ca.crt /etc/kubernetes/pki/sa.pub
-
-# kubeadm init sees existing pki files, does not regenerate them
-kubeadm init --config /opt/eks-d-setup/kubeadm-config.yaml
+  sudo chmod 600 /etc/kubernetes/pki/ca.key /etc/kubernetes/pki/sa.key
+  sudo chmod 644 /etc/kubernetes/pki/ca.crt /etc/kubernetes/pki/sa.pub
+  echo "✓ PKI material fetched from Secrets Manager"
+fi
 ```
 
-### OIDC Issuer URL
-
-The kubeadm `ClusterConfiguration` must set a deterministic, control-plane-assigned issuer URL:
+**Add `service-account-issuer` to the kubeadm config template (in the `apiServer.extraArgs` section):**
 
 ```yaml
-apiVersion: kubeadm.k8s.io/v1beta4
-kind: ClusterConfiguration
 apiServer:
   extraArgs:
-  - name: service-account-issuer
-    value: "https://eks-dx.codriverlabs.ai/clusters/${TENANT_ID}"
+    authentication-token-webhook-config-file: /etc/kubernetes/aws-iam-authenticator/kubeconfig.yaml
+    enable-admission-plugins: NodeRestriction,MutatingAdmissionWebhook,ValidatingAdmissionWebhook
+    service-account-issuer: "https://eks-dx.codriverlabs.ai/clusters/${TENANT_ID}"
 ```
 
-This issuer matches what TenantProvisioningService pre-registers in DynamoDB.
+When `OIDC_MODE=managed`, kubeadm will:
+- See existing `ca.key`, `ca.crt`, `sa.key`, `sa.pub` in `/etc/kubernetes/pki/` → skip generation
+- Use the configured `service-account-issuer` → tokens contain the deterministic issuer URL
+
+When `OIDC_MODE=self-managed` (or unset in dev/manual mode), the script behaves as today — kubeadm generates its own keys.
+
+#### File: `cluster.env` additions
+
+TenantEc2Service must write these additional variables to `/opt/eks-d/cluster.env`:
+
+```bash
+# Existing vars (already written today)
+TENANT_ID=abc123
+CLUSTER_NAME=abc123
+NODE_IP=10.0.1.50
+POD_SUBNET=10.244.0.0/16
+
+# New vars for OIDC managed mode
+OIDC_MODE=managed
+```
+
+`TENANT_ID` is already present (used by `progress.sh`, Karpenter, CloudWatch). `OIDC_MODE` is the only new addition.
+
+#### Execution order (unchanged)
+
+The orchestrator `setup-eks-d.sh` step sequence remains the same:
+
+```
+Step 1: 05-prepare-etcd.sh           ← etcd volume
+Step 2: 06-install-aws-iam-authenticator.sh  ← must precede kubeadm
+Step 3: 07-install-eks-d.sh           ← PKI fetch + kubeadm init (modified)
+Step 4+: CNI, CCM, cert-manager, etc.
+```
+
+No new script file is needed. The Secrets Manager fetch is internal to `07-install-eks-d.sh`.
+
+#### kubeadm config version
+
+The current script uses `kubeadm.k8s.io/v1beta3`. The `service-account-issuer` extra arg works with v1beta3 (map-style `extraArgs`). Migration to v1beta4 (list-style) is a separate concern and not required for this feature.
+
+#### IAM permissions
+
+The instance profile (created by `TenantIamService`) already grants `secretsmanager:GetSecretValue` scoped to `eks-d-xpress/tenant/*`. No IAM changes are needed on the EC2 side.
 
 ## Security Benefits
 
