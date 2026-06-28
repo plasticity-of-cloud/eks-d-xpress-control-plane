@@ -65,26 +65,105 @@ The SSE endpoint Lambda is already running (serving the long-lived streaming res
 | Instance sends invalid state | Lambda validates state transitions before persisting |
 | Instance sends progress backward | Lambda rejects if new progress ≤ current progress |
 | Instance writes after completion | Lambda ignores messages for tenants in terminal state (`ready`, `failed`) |
-| Instance writes to other tenants | MessageGroupId = tenantId enforced; IAM condition restricts SendMessage to own tenantId |
+| Instance writes to other tenants | MessageGroupId = tenantId enforced; scoped STS token restricts SendMessage to own tenantId |
+| Long-lived credential abuse | STS token expires after 15 minutes (natural revocation); no instance profile SQS access |
+
+### Scoped STS Token (Time-Limited, Single-Tenant)
+
+The tenant-service Lambda generates a short-lived STS token before launching EC2 and stores it in Secrets Manager. The instance fetches it at boot and uses it exclusively for progress reporting.
+
+**Token generation (tenant-service Lambda, before EC2 launch):**
+
+```java
+AssumeRoleResponse sts = stsClient.assumeRole(AssumeRoleRequest.builder()
+    .roleArn("arn:aws:iam::<account>:role/eks-d-xpress-progress-sender")
+    .roleSessionName("tenant-" + tenantId)
+    .durationSeconds(900)  // 15 minutes (STS minimum)
+    .policy("""
+        {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Action": "sqs:SendMessage",
+            "Resource": "arn:aws:sqs:<region>:<account>:eks-d-xpress-progress.fifo",
+            "Condition": {
+              "StringEquals": { "sqs:MessageGroupId": "%s" }
+            }
+          }]
+        }
+        """.formatted(tenantId))
+    .build());
+
+// Store in Secrets Manager alongside PKI material
+secretsManager.createSecret(CreateSecretRequest.builder()
+    .name("eks-dx/tenant/" + tenantId + "/progress-token")
+    .secretString(toJson(sts.credentials()))
+    .build());
+```
+
+**Instance boot (progress.sh):**
+
+```bash
+# Fetch scoped STS token (valid 15 min from provisioning start)
+PROGRESS_CREDS=$(aws secretsmanager get-secret-value \
+  --secret-id "eks-dx/tenant/${TENANT_ID}/progress-token" \
+  --query SecretString --output text)
+
+export AWS_ACCESS_KEY_ID=$(echo "$PROGRESS_CREDS" | jq -r .accessKeyId)
+export AWS_SECRET_ACCESS_KEY=$(echo "$PROGRESS_CREDS" | jq -r .secretAccessKey)
+export AWS_SESSION_TOKEN=$(echo "$PROGRESS_CREDS" | jq -r .sessionToken)
+
+# All sqs:SendMessage calls use the scoped token, not the instance profile
+aws sqs send-message --queue-url "$PROGRESS_QUEUE_URL" \
+  --message-group-id "$TENANT_ID" \
+  --message-deduplication-id "${TENANT_ID}-${progress}" \
+  --message-body '{"tenantId":"...","state":"...","phase":"...","progress":N}'
+```
+
+**Security properties:**
+- Token is scoped to a single SQS queue + single MessageGroupId (tenantId)
+- Token expires 15 minutes after provisioning starts — no revocation needed
+- Instance profile has NO SQS access (only Secrets Manager read for initial fetch)
+- If boot takes >15 min, progress reporting stops (acceptable — timeout → mark failed)
+- After provisioning completes, Lambda stops consuming from that group; token expires shortly after
+
+**Why Secrets Manager (not user-data):**
+- User-data is visible in EC2 console and instance metadata — credentials would be exposed
+- Secrets Manager is encrypted, access-logged, and already fetched at boot for PKI material
+- Same instance profile permission (`secretsmanager:GetSecretValue` on `eks-dx/tenant/<id>/*`) covers both PKI and progress token
 
 ### IAM Scoping
 
-Instance profile policy (replaces DynamoDB access):
+Instance profile (minimal — no SQS, no DynamoDB):
 
 ```json
 {
-  "Effect": "Allow",
-  "Action": "sqs:SendMessage",
-  "Resource": "arn:aws:sqs:<region>:<account>:eks-d-xpress-progress.fifo",
-  "Condition": {
-    "StringEquals": {
-      "sqs:MessageGroupId": "${aws:PrincipalTag/eks-dx-tenant}"
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:<region>:<account>:secret:eks-dx/tenant/<tenantId>/*"
     }
-  }
+  ]
 }
 ```
 
-The instance can only send messages to its own message group (tenantId). It cannot read, delete, or send to other groups.
+The instance profile only needs Secrets Manager read. The SQS write capability comes entirely from the scoped STS token stored in Secrets Manager.
+
+Dedicated role for STS assumption (`eks-d-xpress-progress-sender`):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": "sqs:SendMessage",
+    "Resource": "arn:aws:sqs:<region>:<account>:eks-d-xpress-progress.fifo"
+  }]
+}
+```
+
+The session policy (passed at AssumeRole time) further restricts to the specific tenantId's MessageGroupId.
 
 ### Message Schema
 
