@@ -308,11 +308,49 @@ The mgmt-service `POST /clusters` remains available as a lower-level API (used b
 |--------|--------|
 | `eks-dx-tenant-service` | New `TenantCryptoService`: generates CA + SA key pairs, calls `kms:Sign` for CA cert, stores in Secrets Manager |
 | `eks-dx-tenant-service` | `TenantProvisioningService`: add step 1–6 before EC2 launch, rollback deletes secrets + cluster record |
-| `eks-dx-tenant-service` | `TenantResource`: new `POST /clusters` endpoint handling both `oidcMode=managed` and `oidcMode=self-managed` |
-| `eks-dx-mgmt-service` | No changes — existing `POST /clusters` remains as lower-level API for install scripts |
+| `eks-dx-tenant-service` | `TenantResource`: new `POST /clusters` (both modes) and `DELETE /clusters/{name}` (teardown or deregister based on record) |
+| `eks-dx-mgmt-service` | Remove `POST /clusters` (moved to tenant-service). Keep: `GET /clusters`, `GET /clusters/{name}`, `PUT /clusters/{name}/jwks`, association CRUD |
 | `eks-dx-credential-service` | No changes — already reads JWKS from DynamoDB |
-| `eks-dx-cli` | Unified `create-cluster` command routes both modes through tenant-service Function URL |
+| `eks-dx-cli` | Unified `create-cluster` and `delete-cluster` commands, both routed through tenant-service. Deprecate `create-tenant`, `delete-tenant`, `register-cluster`, `deregister-cluster` |
 | `infra/` (CDK) | Add KMS key + IAM grant in managed mode |
+
+### CLI Command Rename
+
+| Old command | New command | Notes |
+|-------------|-------------|-------|
+| `create-tenant` | `create-cluster --oidc-mode=managed` | Default mode |
+| `register-cluster` | `create-cluster --oidc-mode=self-managed` | Explicit mode |
+| `delete-tenant` | `delete-cluster` | Server detects managed → full teardown |
+| `deregister-cluster` | `delete-cluster` | Server detects self-managed → remove record only |
+| `stop-tenant` | `stop-cluster` | Hibernate EC2 (managed only) |
+| `resume-tenant` | `resume-cluster` | Resume EC2 (managed only) |
+
+Old commands remain as deprecated aliases during the transition period.
+
+### `delete-cluster` Server-Side Logic
+
+Tenant-service `DELETE /clusters/{name}`:
+1. Look up cluster record in DynamoDB
+2. If `managed=true` → full teardown: terminate EC2, release EIP, delete IAM role, delete subnets/SG, delete secrets, delete DLM policy, delete DynamoDB records (tenants + clusters tables)
+3. If `managed=false` (self-managed) → delete cluster record from DynamoDB only
+4. Return 204 on success
+
+This unifies what was previously two separate flows (`delete-tenant` + `deregister-cluster`) into a single operation where the server determines the teardown scope from the stored record.
+
+### mgmt-service Remaining API Surface
+
+After removing `POST /clusters`, mgmt-service exposes:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/clusters` | List clusters (owner-filtered) |
+| GET | `/clusters/{name}` | Describe cluster |
+| PUT | `/clusters/{name}/jwks` | Refresh JWKS |
+| DELETE | `/clusters/{name}` | Remove from mgmt-service side (kept for backward compat with install scripts; eventually deprecated in favor of tenant-service `DELETE /clusters/{name}`) |
+| POST | `/clusters/{name}/pod-identity-associations` | Create association |
+| GET | `/clusters/{name}/pod-identity-associations` | List associations |
+| GET | `/clusters/{name}/pod-identity-associations/{id}` | Describe association |
+| DELETE | `/clusters/{name}/pod-identity-associations/{id}` | Delete association |
 
 ### eks-d-xpress (AMI/setup project)
 
