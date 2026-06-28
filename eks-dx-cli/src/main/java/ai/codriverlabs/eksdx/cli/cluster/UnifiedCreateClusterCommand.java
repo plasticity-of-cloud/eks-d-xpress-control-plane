@@ -22,7 +22,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.util.LinkedHashMap;
 
 /**
- * Unified create-cluster command. Behaviour depends on --oidc-mode:
+ * Unified create-cluster command. Server infers mode from request:
  *
  * managed (default): Full tenant provisioning — generates PKI, launches EC2, pre-registers JWKS.
  * self-managed: Registers an externally-managed cluster with user-provided JWKS/issuer.
@@ -35,46 +35,39 @@ public class UnifiedCreateClusterCommand implements Runnable {
     @Option(names = "--name", required = true, description = "Cluster name")
     String name;
 
-    @Option(names = "--oidc-mode", defaultValue = "managed",
-        description = "OIDC mode: 'managed' (default) or 'self-managed'")
-    String oidcMode;
-
     // --- Managed mode options ---
-    @Option(names = "--arch", defaultValue = "arm64", description = "CPU architecture: arm64 or x86_64 (managed only)")
+    @Option(names = "--arch", defaultValue = "arm64", description = "CPU architecture: arm64 or x86_64")
     String arch;
 
-    @Option(names = "--pricing", defaultValue = "spot", description = "EC2 pricing: spot or ondemand (managed only)")
+    @Option(names = "--pricing", defaultValue = "spot", description = "EC2 pricing: spot or ondemand")
     String ec2PricingModel;
 
-    @Option(names = "--k8s-version", defaultValue = "1.35", description = "Kubernetes version (managed only)")
+    @Option(names = "--k8s-version", defaultValue = "1.35", description = "Kubernetes version")
     String k8sVersion;
 
-    @Option(names = "--disk-size", defaultValue = "20", description = "Root disk size in GB (managed only)")
+    @Option(names = "--disk-size", defaultValue = "20", description = "Root disk size in GB")
     int diskSizeGb;
 
-    @Option(names = "--eip", description = "Assign Elastic IP (managed only)")
+    @Option(names = "--eip", description = "Assign Elastic IP")
     boolean assignElasticIp;
 
-    @Option(names = "--ssh-cidr", description = "CIDR for SSH access (managed only)")
+    @Option(names = "--ssh-cidr", description = "CIDR for SSH access")
     String sshCidr;
 
-    @Option(names = "--wait", description = "Stream progress and wait for completion (managed only)")
+    @Option(names = "--wait", description = "Stream progress and wait for completion")
     boolean wait;
 
-    // --- Self-managed mode options ---
-    @Option(names = "--jwks-uri", description = "JWKS endpoint URL (self-managed only)")
+    // --- Self-managed mode options (presence triggers self-managed mode) ---
+    @Option(names = "--jwks-uri", description = "JWKS endpoint URL (triggers self-managed mode)")
     String jwksUri;
 
-    @Option(names = "--jwks-file", description = "Path to JWKS JSON file (self-managed only)")
+    @Option(names = "--jwks-file", description = "Path to JWKS JSON file (triggers self-managed mode)")
     String jwksFile;
 
-    @Option(names = "--issuer", description = "SA token issuer URL (self-managed only)")
+    @Option(names = "--issuer", description = "SA token issuer URL (required with --jwks-uri/--jwks-file)")
     String issuer;
 
-    @Option(names = "--ca-cert", description = "Path to cluster CA cert for audit (self-managed, optional)")
-    String caCert;
-
-    @Option(names = "--kubeconfig", description = "Path to kubeconfig for JWKS/issuer discovery (self-managed)")
+    @Option(names = "--kubeconfig", description = "Path to kubeconfig for JWKS/issuer discovery")
     String kubeconfig;
 
     // --- Common ---
@@ -88,30 +81,22 @@ public class UnifiedCreateClusterCommand implements Runnable {
 
     @Override
     public void run() {
-        if ("managed".equals(oidcMode)) {
-            validateManagedMode();
-            runManaged();
-        } else if ("self-managed".equals(oidcMode)) {
+        boolean selfManaged = (jwksUri != null || jwksFile != null || issuer != null);
+        if (selfManaged) {
             runSelfManaged();
         } else {
-            System.err.println("Error: --oidc-mode must be 'managed' or 'self-managed'");
-            System.exit(1);
+            runManaged();
         }
     }
 
     private void validateManagedMode() {
-        if (jwksUri != null || jwksFile != null || issuer != null) {
-            System.err.println("Error: --jwks-uri, --jwks-file, and --issuer cannot be specified in managed mode.");
-            System.err.println("       The control plane generates and manages PKI material for managed clusters.");
-            System.exit(1);
-        }
+        // no-op — mode is inferred, not explicit
     }
 
     private void runManaged() {
         try {
             var body = new LinkedHashMap<String, Object>();
             body.put("clusterName", name);
-            body.put("oidcMode", "managed");
             body.put("arch", arch);
             body.put("ec2PricingModel", ec2PricingModel);
             body.put("k8sVersion", k8sVersion);
@@ -190,7 +175,6 @@ public class UnifiedCreateClusterCommand implements Runnable {
 
             var body = new LinkedHashMap<String, Object>();
             body.put("clusterName", name);
-            body.put("oidcMode", "self-managed");
             body.put("jwks", resolvedJwks);
             body.put("issuer", resolvedIssuer);
 

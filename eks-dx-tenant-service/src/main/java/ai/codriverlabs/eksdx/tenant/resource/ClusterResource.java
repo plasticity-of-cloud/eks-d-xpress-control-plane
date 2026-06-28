@@ -16,8 +16,9 @@ import java.util.Map;
 
 /**
  * Unified cluster lifecycle API (both managed and self-managed).
+ * Server infers mode: if jwks+issuer are present → self-managed, otherwise → managed.
  *
- * POST   /clusters         → create cluster (oidcMode determines behavior)
+ * POST   /clusters         → create cluster
  * DELETE /clusters/{name}  → delete cluster (server determines teardown scope from record)
  */
 @Path("/clusters")
@@ -31,7 +32,6 @@ public class ClusterResource {
 
     public static class CreateClusterRequest {
         @JsonProperty("clusterName") public String clusterName;
-        @JsonProperty("oidcMode") public String oidcMode;
         // Managed mode fields
         @JsonProperty("arch") public String arch;
         @JsonProperty("ec2PricingModel") public String ec2PricingModel;
@@ -39,7 +39,7 @@ public class ClusterResource {
         @JsonProperty("assignElasticIp") public Boolean assignElasticIp;
         @JsonProperty("diskSizeGb") public Integer diskSizeGb;
         @JsonProperty("sshCidr") public String sshCidr;
-        // Self-managed mode fields
+        // Self-managed mode fields (presence triggers self-managed)
         @JsonProperty("jwks") public String jwks;
         @JsonProperty("issuer") public String issuer;
     }
@@ -57,14 +57,13 @@ public class ClusterResource {
             if (callerArn == null || callerArn.isBlank())
                 return error(403, "AccessDeniedException", "Cannot resolve caller identity");
 
-            String oidcMode = request.oidcMode != null ? request.oidcMode : "managed";
+            // Server infers mode: jwks present → self-managed, otherwise → managed
+            boolean selfManaged = (request.jwks != null && !request.jwks.isBlank());
 
-            if ("managed".equals(oidcMode)) {
-                return createManaged(request, ctx, callerArn);
-            } else if ("self-managed".equals(oidcMode)) {
+            if (selfManaged) {
                 return createSelfManaged(request, callerArn);
             } else {
-                return error(400, "InvalidParameterException", "oidcMode must be 'managed' or 'self-managed'");
+                return createManaged(request, ctx, callerArn);
             }
         } catch (IllegalArgumentException e) {
             return error(400, "InvalidParameterException", e.getMessage());
@@ -109,7 +108,7 @@ public class ClusterResource {
             Boolean.TRUE.equals(request.assignElasticIp),
             request.diskSizeGb != null ? request.diskSizeGb : 20, sshCidr);
 
-        return Response.accepted(Map.of("tenantId", id, "clusterName", request.clusterName, "oidcMode", "managed")).build();
+        return Response.accepted(Map.of("tenantId", id, "clusterName", request.clusterName, "managed", true)).build();
     }
 
     private Response createSelfManaged(CreateClusterRequest request, String callerArn) {
@@ -122,7 +121,7 @@ public class ClusterResource {
             request.clusterName, request.issuer, request.jwks, callerArn);
 
         return Response.status(201).entity(
-            Map.of("tenantId", id, "clusterName", request.clusterName, "oidcMode", "self-managed")).build();
+            Map.of("tenantId", id, "clusterName", request.clusterName, "managed", false)).build();
     }
 
     @DELETE
