@@ -95,7 +95,7 @@ public class TenantDlmService {
                     .retainRule(RetainRule.builder().count(3).build())
                     .tagsToAdd(List.of(
                         Tag.builder().key("SnapshotCreator").value("DLM").build(),
-                        Tag.builder().key("eks-dx-cluster").value(clusterName).build(),
+                        Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
                         Tag.builder().key("Platform").value("eks-dx").build()))
                     .build()))
                 .build())
@@ -111,7 +111,7 @@ public class TenantDlmService {
      */
     public void deleteEtcdBackupPolicy(String tenantId, String clusterName) {
         // 1. Delete snapshots created by this policy
-        deleteSnapshots(clusterName);
+        deleteSnapshots(tenantId);
 
         // 2. Delete the DLM policy (lookup by tag)
         try {
@@ -139,20 +139,20 @@ public class TenantDlmService {
         }
     }
 
-    private void deleteSnapshots(String clusterName) {
+    private void deleteSnapshots(String tenantId) {
         try {
             var snapshots = ec2.describeSnapshots(DescribeSnapshotsRequest.builder()
                 .ownerIds("self")
                 .filters(
-                    Filter.builder().name("tag:eks-dx-cluster").values(clusterName).build(),
+                    Filter.builder().name("tag:eks-dx-tenant").values(tenantId).build(),
                     Filter.builder().name("tag:Platform").values("eks-dx").build())
                 .build()).snapshots();
             for (Snapshot snap : snapshots) {
                 ec2.deleteSnapshot(DeleteSnapshotRequest.builder().snapshotId(snap.snapshotId()).build());
-                LOG.infof("Deleted snapshot %s for cluster %s", snap.snapshotId(), clusterName);
+                LOG.infof("Deleted snapshot %s for tenant %s", snap.snapshotId(), tenantId);
             }
         } catch (Exception e) {
-            LOG.warnf("Failed to delete snapshots for cluster %s: %s", clusterName, e.getMessage());
+            LOG.warnf("Failed to delete snapshots for tenant %s: %s", tenantId, e.getMessage());
         }
     }
 }
