@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -32,7 +33,7 @@ public class UnifiedCreateClusterCommand implements Runnable {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    @Option(names = "--name", required = true, description = "Cluster name")
+    @Parameters(index = "0", description = "Cluster name")
     String name;
 
     // --- Managed mode options ---

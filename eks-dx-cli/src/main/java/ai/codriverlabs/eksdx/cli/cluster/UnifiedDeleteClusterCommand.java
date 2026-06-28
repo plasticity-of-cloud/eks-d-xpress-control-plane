@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 
 /**
  * Unified delete-cluster command. Server determines teardown scope:
@@ -15,7 +16,7 @@ import picocli.CommandLine.Option;
 @Command(name = "delete-cluster", description = "Delete a cluster (managed: full teardown; self-managed: deregister)")
 public class UnifiedDeleteClusterCommand implements Runnable {
 
-    @Option(names = "--name", required = true, description = "Cluster name")
+    @Parameters(index = "0", description = "Cluster name")
     String name;
 
     @Option(names = "--region", description = "AWS region")
