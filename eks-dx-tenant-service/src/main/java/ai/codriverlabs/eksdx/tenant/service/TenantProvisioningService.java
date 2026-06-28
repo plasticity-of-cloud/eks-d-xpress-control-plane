@@ -707,6 +707,79 @@ public class TenantProvisioningService {
         LOG.infof("Pre-registered cluster %s with JWKS in DynamoDB", clusterName);
     }
 
+    // -------------------------------------------------------------------------
+    // Self-managed cluster registration
+    // -------------------------------------------------------------------------
+
+    /**
+     * Register a self-managed cluster (no EC2 provisioning, no PKI generation).
+     * Stores cluster record with user-provided JWKS and issuer.
+     */
+    public String registerSelfManagedCluster(String clusterName, String issuer, String jwks, String ownerArn) {
+        String tenantId = tenantIdGenerator.generate(ownerArn, Instant.now().toString());
+
+        Map<String, AttributeValue> clusterItem = new HashMap<>();
+        clusterItem.put("clusterName", AttributeValue.fromS(clusterName));
+        clusterItem.put("jwks", AttributeValue.fromS(jwks));
+        clusterItem.put("issuer", AttributeValue.fromS(issuer));
+        clusterItem.put("tenantId", AttributeValue.fromS(tenantId));
+        clusterItem.put("ownerArn", AttributeValue.fromS(ownerArn));
+        clusterItem.put("managed", AttributeValue.fromS("false"));
+        clusterItem.put("createdAt", AttributeValue.fromS(Instant.now().toString()));
+        dynamoDb.putItem(PutItemRequest.builder().tableName(clustersTable).item(clusterItem).build());
+
+        // Also write tenant record for consistency
+        writeInitialRecord(tenantId, clusterName, false, ownerArn, ownerArn, Instant.now().toString(), null, null, null);
+
+        LOG.infof("Registered self-managed cluster %s (tenant %s)", clusterName, tenantId);
+        return tenantId;
+    }
+
+    // -------------------------------------------------------------------------
+    // Delete cluster (unified: managed teardown or self-managed deregister)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Delete a cluster by name. Determines teardown scope from the stored record:
+     * - managed=true → full deprovision (EC2, IAM, network, secrets, DynamoDB)
+     * - managed=false → remove DynamoDB records only
+     */
+    public void deleteCluster(String name, String callerArn) {
+        // Look up cluster record
+        GetItemResponse clusterResp = dynamoDb.getItem(GetItemRequest.builder()
+            .tableName(clustersTable)
+            .key(Map.of("clusterName", AttributeValue.fromS(name)))
+            .build());
+        if (!clusterResp.hasItem() || clusterResp.item().isEmpty())
+            throw new IllegalArgumentException("Cluster not found: " + name);
+
+        Map<String, AttributeValue> cluster = clusterResp.item();
+        String ownerArn = cluster.containsKey("ownerArn") ? cluster.get("ownerArn").s() : null;
+        if (callerArn != null && ownerArn != null && !callerArn.equals(ownerArn))
+            throw new SecurityException("Not authorized to delete cluster: " + name);
+
+        String tenantId = cluster.containsKey("tenantId") ? cluster.get("tenantId").s() : null;
+        boolean managed = cluster.containsKey("managed") && "true".equals(cluster.get("managed").s());
+
+        if (managed && tenantId != null) {
+            // Full teardown via existing deprovision logic
+            deprovision(tenantId);
+        } else {
+            // Self-managed: just remove records
+            dynamoDb.deleteItem(DeleteItemRequest.builder()
+                .tableName(clustersTable)
+                .key(Map.of("clusterName", AttributeValue.fromS(name)))
+                .build());
+            if (tenantId != null) {
+                dynamoDb.deleteItem(DeleteItemRequest.builder()
+                    .tableName(tenantsTable)
+                    .key(Map.of("tenantId", AttributeValue.fromS(tenantId)))
+                    .build());
+            }
+            LOG.infof("Deregistered self-managed cluster %s", name);
+        }
+    }
+
     private TenantItem itemToTenant(Map<String, AttributeValue> item) {
         return new TenantItem(
             s(item, "tenantId"),

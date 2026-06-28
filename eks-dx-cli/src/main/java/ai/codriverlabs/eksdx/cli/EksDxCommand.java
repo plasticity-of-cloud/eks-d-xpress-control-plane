@@ -11,6 +11,7 @@ import picocli.CommandLine.Command;
     subcommands = {
         ConfigureCommand.class,
         CreateClusterCmd.class,
+        DeleteClusterCmd.class,
         RegisterClusterCmd.class,
         DeregisterClusterCmd.class,
         DescribeClusterCmd.class,

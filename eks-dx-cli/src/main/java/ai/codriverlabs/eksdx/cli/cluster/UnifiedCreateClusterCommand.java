@@ -111,7 +111,7 @@ public class UnifiedCreateClusterCommand implements Runnable {
         try {
             var body = new LinkedHashMap<String, Object>();
             body.put("clusterName", name);
-            body.put("managed", true);
+            body.put("oidcMode", "managed");
             body.put("arch", arch);
             body.put("ec2PricingModel", ec2PricingModel);
             body.put("k8sVersion", k8sVersion);
@@ -127,7 +127,7 @@ public class UnifiedCreateClusterCommand implements Runnable {
                 System.err.println("Error: provisioning URL not configured. Set EKS_DX_PROVISIONING_URL or run 'eks-dx configure'.");
                 System.exit(1);
             }
-            String url = provisioningUrl.replaceAll("/$", "") + "/tenants";
+            String url = provisioningUrl.replaceAll("/$", "") + "/clusters";
             String responseBody = apiClient.postFunctionUrl(url, MAPPER.writeValueAsString(body), resolvedRegion);
 
             JsonNode resp = MAPPER.readTree(responseBody);
@@ -179,16 +179,29 @@ public class UnifiedCreateClusterCommand implements Runnable {
                 return;
             }
 
-            var body = MAPPER.createObjectNode();
-            body.put("name", name);
-            body.put("issuer", resolvedIssuer);
-            body.put("jwks", resolvedJwks);
+            EksDxConfig config = new EksDxConfig();
+            String resolvedRegion = region != null ? region : config.getRegion();
 
-            apiClient.post("/clusters", body.toString());
+            String provisioningUrl = config.getProvisioningUrl();
+            if (provisioningUrl == null) {
+                System.err.println("Error: provisioning URL not configured. Set EKS_DX_PROVISIONING_URL or run 'eks-dx configure'.");
+                System.exit(1);
+            }
+
+            var body = new LinkedHashMap<String, Object>();
+            body.put("clusterName", name);
+            body.put("oidcMode", "self-managed");
+            body.put("jwks", resolvedJwks);
+            body.put("issuer", resolvedIssuer);
+
+            String url = provisioningUrl.replaceAll("/$", "") + "/clusters";
+            String responseBody = apiClient.postFunctionUrl(url, MAPPER.writeValueAsString(body), resolvedRegion);
 
             if ("text".equals(output)) {
                 System.out.printf("✓ Cluster \"%s\" registered (self-managed)%n", name);
                 System.out.printf("  Issuer: %s%n", resolvedIssuer);
+            } else {
+                System.out.println(responseBody);
             }
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
