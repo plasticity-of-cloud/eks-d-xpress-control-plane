@@ -259,6 +259,17 @@ public class EksDXpressControlPlaneStack extends Stack {
             .build());
 
         // -----------------------------------------------------------------------
+        // KMS: CA signing key (shared, used to sign per-tenant CA certificates)
+        // -----------------------------------------------------------------------
+        var caSigningKey = software.amazon.awscdk.services.kms.Key.Builder.create(this, "CaSigningKey")
+            .alias("eks-d-xpress/control-plane/ca-signing-key")
+            .description("Shared asymmetric key for signing tenant CA certificates")
+            .keySpec(software.amazon.awscdk.services.kms.KeySpec.RSA_2048)
+            .keyUsage(software.amazon.awscdk.services.kms.KeyUsage.SIGN_VERIFY)
+            .removalPolicy(RemovalPolicy.RETAIN)
+            .build();
+
+        // -----------------------------------------------------------------------
         // Lambda: tenant service  (GraalVM native, arm64, SSE via Function URL)
         // -----------------------------------------------------------------------
         // Context flags:
@@ -318,6 +329,7 @@ public class EksDXpressControlPlaneStack extends Stack {
                 Map.entry("EKS_DX_LT_X86_ONDEMAND", ltX86Ondemand),
                 Map.entry("EKS_DX_LT_X86_SPOT", ltX86Spot),
                 Map.entry("EKS_DX_VPC_ID", vpcId),
+                Map.entry("EKS_DX_KMS_CA_KEY_ID", caSigningKey.getKeyId()),
                 Map.entry("EKS_DX_AVAILABILITY_ZONE", "auto"),
                 Map.entry("EKS_DX_DRY_RUN", String.valueOf(dryRun)),
                 Map.entry("EKS_DX_MAX_TENANTS_PER_CALLER", maxTenantsPerCaller.getStringValue()),
@@ -349,10 +361,7 @@ public class EksDXpressControlPlaneStack extends Stack {
             .build();
 
         tenantsTable.grantReadWriteData(tenantFn);
-        tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
-            .actions(List.of("dynamodb:DeleteItem"))
-            .resources(List.of(clustersTable.getTableArn()))
-            .build());
+        clustersTable.grantReadWriteData(tenantFn);
         // EC2: read-only on shared VPC infrastructure (Describe actions require Resource:"*" in IAM)
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
@@ -435,8 +444,11 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "secretsmanager:CreateSecret",
                 "secretsmanager:DeleteSecret",
                 "secretsmanager:GetSecretValue"))
-            .resources(List.of("arn:aws:secretsmanager:*:*:secret:eks-d-xpress/tenant/*"))
+            .resources(List.of("arn:aws:secretsmanager:*:*:secret:eks-dx/tenant/*",
+                "arn:aws:secretsmanager:*:*:secret:eks-dx/t/*"))
             .build());
+        // KMS: sign tenant CA certificates
+        caSigningKey.grant(tenantFn, "kms:Sign");
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of("sts:GetCallerIdentity"))
             .resources(List.of("*"))
