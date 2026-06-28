@@ -224,11 +224,11 @@ aws cloudformation deploy --parameter-overrides OidcMode=self-managed
 
 ## CLI Unified `create-cluster` Command
 
-The CLI exposes a single `eks-dx create-cluster` command. Behaviour depends on `--oidc-mode`:
+The CLI exposes a single `eks-dx create-cluster` command. Both modes route through **tenant-service** (Function URL). The tenant-service owns the clusters table and handles both managed provisioning and self-managed registration.
 
 ### `--oidc-mode=managed` (default)
 
-Full tenant provisioning: generates PKI via TenantService, launches EC2 with Golden AMI, pre-registers JWKS.
+Full tenant provisioning: generates PKI via TenantCryptoService, launches EC2 with Golden AMI, pre-registers JWKS.
 
 ```bash
 eks-dx create-cluster \
@@ -247,7 +247,7 @@ Error: --jwks-uri, --ca-cert, and --issuer cannot be specified in managed mode.
 
 ### `--oidc-mode=self-managed`
 
-Registers an externally-managed cluster. No EC2 provisioning. User must provide JWKS and issuer information.
+Registers an externally-managed cluster. No EC2 provisioning, no PKI generation. User must provide JWKS and issuer information. Tenant-service stores the cluster record directly in DynamoDB.
 
 ```bash
 eks-dx create-cluster \
@@ -269,12 +269,26 @@ Error: Self-managed mode requires the following parameters:
          --ca-cert <path>                             (cluster CA certificate for audit)
 ```
 
-**Server-side enforcement**: If the CDK stack was deployed with `oidc-mode=managed`, the mgmt-service rejects `create-cluster` requests with self-managed parameters (HTTP 400):
+**Server-side enforcement**: If the CDK stack was deployed with `oidc-mode=managed`, the tenant-service rejects self-managed cluster registrations (HTTP 400):
 ```json
 {
   "error": "This control plane is deployed in managed mode. Self-managed cluster registration is not supported."
 }
 ```
+
+### Routing
+
+Both modes call the **tenant-service Function URL** (`POST /clusters`). The request body includes `oidcMode` to signal which path to take:
+
+```json
+// Managed
+{"clusterName": "my-tenant", "oidcMode": "managed", "arch": "arm64", "ec2PricingModel": "spot"}
+
+// Self-managed
+{"clusterName": "my-k3s", "oidcMode": "self-managed", "jwks": "...", "issuer": "https://..."}
+```
+
+The mgmt-service `POST /clusters` remains available as a lower-level API (used by `install-eks-dx-pod-identity.sh --oidc-mode self-managed`) but the CLI routes exclusively through tenant-service.
 
 ### Decision matrix
 
@@ -284,7 +298,7 @@ Error: Self-managed mode requires the following parameters:
 | `managed` | `--jwks-uri`, `--issuer` | ❌ Reject: cannot override managed PKI |
 | `self-managed` | `--jwks-uri`, `--issuer` | ✅ Register cluster record in DynamoDB |
 | `self-managed` | (none extra) | ❌ Error: required parameters missing |
-| `self-managed` | (server in managed mode) | ❌ Server rejects: mode mismatch |
+| `self-managed` | (server in managed-only mode) | ❌ Server rejects: mode mismatch |
 
 ## Affected Modules
 
@@ -294,9 +308,11 @@ Error: Self-managed mode requires the following parameters:
 |--------|--------|
 | `eks-dx-tenant-service` | New `TenantCryptoService`: generates CA + SA key pairs, calls `kms:Sign` for CA cert, stores in Secrets Manager |
 | `eks-dx-tenant-service` | `TenantProvisioningService`: add step 1–6 before EC2 launch, rollback deletes secrets + cluster record |
-| `eks-dx-mgmt-service` | Accept `jwks` + `issuer` on `POST /clusters` (currently populated by CLI post-boot) |
+| `eks-dx-tenant-service` | `TenantResource`: new `POST /clusters` endpoint handling both `oidcMode=managed` and `oidcMode=self-managed` |
+| `eks-dx-mgmt-service` | No changes — existing `POST /clusters` remains as lower-level API for install scripts |
 | `eks-dx-credential-service` | No changes — already reads JWKS from DynamoDB |
-| `infra/` (CDK) | Add KMS key + IAM grant in `centrally-managed` mode |
+| `eks-dx-cli` | Unified `create-cluster` command routes both modes through tenant-service Function URL |
+| `infra/` (CDK) | Add KMS key + IAM grant in managed mode |
 
 ### eks-d-xpress (AMI/setup project)
 
