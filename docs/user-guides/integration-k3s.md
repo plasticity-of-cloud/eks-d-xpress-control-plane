@@ -50,7 +50,7 @@ From your local machine (with `~/.kube/config` pointing at the k3s cluster):
 eks-dx configure --endpoint $ENDPOINT --region us-east-1
 
 # Register — auto-discovers issuer + JWKS from the kube-apiserver
-eks-dx register-cluster --name my-k3s
+eks-dx create-cluster --name my-k3s --oidc-mode self-managed
 ```
 
 Or manually if auto-discovery doesn't work (e.g. kube-apiserver not reachable from your machine):
@@ -60,7 +60,7 @@ Or manually if auto-discovery doesn't work (e.g. kube-apiserver not reachable fr
 kubectl get --raw /openid/v1/jwks > /tmp/jwks.json
 
 # From your machine
-eks-dx register-cluster --name my-k3s \
+eks-dx create-cluster --name my-k3s --oidc-mode self-managed \
   --issuer https://<PUBLIC_IP> \
   --jwks-file /tmp/jwks.json
 ```

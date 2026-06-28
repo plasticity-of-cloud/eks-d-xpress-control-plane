@@ -5,7 +5,7 @@ This guide explains how to configure IAM roles so your Kubernetes workloads can 
 ## Prerequisites
 
 - An EKS-DX control plane deployed in your account
-- A registered cluster (`eks-dx register-cluster`)
+- A registered cluster (`eks-dx create-cluster`)
 - The `eks-dx` CLI installed
 
 ## Step 1: Create an IAM Role

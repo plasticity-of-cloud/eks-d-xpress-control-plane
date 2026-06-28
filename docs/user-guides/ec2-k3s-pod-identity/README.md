@@ -109,7 +109,7 @@ export KUBECONFIG=/tmp/my-k3s-kubeconfig.yaml
 eks-dx configure --endpoint https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com/prod --region us-east-1
 
 # Register cluster (auto-reads JWKS + OIDC issuer from kubeconfig)
-eks-dx register-cluster --name my-k3s --region us-east-1
+eks-dx create-cluster --oidc-mode self-managed --name my-k3s --region us-east-1
 
 # Verify
 eks-dx describe-cluster --name my-k3s
@@ -205,7 +205,7 @@ kubectl delete -f https://github.com/cert-manager/cert-manager/releases/latest/d
 
 # Associations + cluster
 eks-dx delete-association --cluster-name my-k3s --association-id <id>
-eks-dx deregister-cluster --name my-k3s
+eks-dx delete-cluster --name my-k3s
 
 # EC2
 aws ec2 terminate-instances --instance-ids <instance-id>
