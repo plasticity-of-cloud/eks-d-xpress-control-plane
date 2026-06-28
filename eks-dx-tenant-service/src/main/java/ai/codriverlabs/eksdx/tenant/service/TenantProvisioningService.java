@@ -49,8 +49,6 @@ import software.amazon.awssdk.services.cloudwatchevents.model.PutRuleRequest;
 import software.amazon.awssdk.services.cloudwatchevents.model.PutTargetsRequest;
 import software.amazon.awssdk.services.cloudwatchevents.model.Target;
 
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.HashMap;
@@ -82,6 +80,7 @@ public class TenantProvisioningService {
     @Inject TenantIamService iamService;
     @Inject TenantEc2Service ec2Service;
     @Inject TenantDlmService dlmService;
+    @Inject TenantCryptoService cryptoService;
 
     @Inject Ec2Client ec2;
     @Inject SecretsManagerClient secretsManager;
@@ -154,13 +153,11 @@ public class TenantProvisioningService {
                 tenantId, clusterName, vpcId, az, sshCidr);
             created.network = network;
 
-            // 2. Secrets (SA signing key + SSH key pair)
-            String signingKeyPem = generateRsaPrivateKeyPem();
-            secretsManager.createSecret(CreateSecretRequest.builder()
-                .name("eks-dx/t/" + tenantId + "/signing-key")
-                .secretString(signingKeyPem).build());
-            created.signingKeySecret = "eks-dx/t/" + tenantId + "/signing-key";
+            // 2. PKI (CA + SA signing key via KMS, stored in Secrets Manager)
+            TenantCryptoService.CryptoResult crypto = cryptoService.generateAndStore(tenantId);
+            created.cryptoSecrets = crypto;
 
+            // 3. SSH key pair
             CreateKeyPairResponse keyPairResp = ec2.createKeyPair(CreateKeyPairRequest.builder()
                 .keyName("eks-dx-t-" + tenantId + "-key")
                 .tagSpecifications(software.amazon.awssdk.services.ec2.model.TagSpecification.builder()
@@ -176,23 +173,27 @@ public class TenantProvisioningService {
                 .secretString(keyPairResp.keyMaterial()).build()).arn();
             created.sshKeySecret = "eks-dx/t/" + tenantId + "/ssh-key";
 
-            // 3. IAM role + instance profile
+            // 4. Pre-register cluster in DynamoDB (JWKS + issuer known before EC2 boots)
+            preRegisterCluster(tenantId, clusterName, crypto);
+            created.clusterPreRegistered = true;
+
+            // 5. IAM role + instance profile
             TenantIamService.IamResult iamResult = iamService.createTenantRole(
                 tenantId, clusterName, region, accountId);
             created.iamRoleName = iamResult.roleName();
             created.instanceProfileName = iamResult.instanceProfileName();
 
-            // 4. SQS + EventBridge (Karpenter interruption handling)
+            // 6. SQS + EventBridge (Karpenter interruption handling)
             String queueArn = createInterruptionQueue(clusterName, region, accountId);
             created.queueUrl = queueArn;
             createEventBridgeRules(clusterName, queueArn);
             created.eventBridgeRulePrefix = clusterName;
 
-            // 5. DLM (daily etcd backup)
+            // 7. DLM (daily etcd backup)
             dlmService.createEtcdBackupPolicy(tenantId, clusterName, region);
             created.dlmPolicyCreated = true;
 
-            // 6. EC2 instance launch
+            // 8. EC2 instance launch
             TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
                 tenantId, clusterName, launchTemplateId,
                 network.publicSubnetId(), network.securityGroupId(),
@@ -203,7 +204,7 @@ public class TenantProvisioningService {
             created.instanceId = ec2Result.instanceId();
             created.eipAllocationId = ec2Result.eipAllocationId();
 
-            // 7. Write initial DynamoDB state
+            // 9. Write initial DynamoDB state
             writeInitialRecord(tenantId, clusterName, true, idcUserId, ownerArn, createdAt,
                 ec2Result.instanceId(), sshKeyArn,
                 ec2PricingModel);
@@ -315,12 +316,21 @@ public class TenantProvisioningService {
             } catch (Exception ex) { LOG.warnf("Rollback: failed to delete secret: %s", ex.getMessage()); }
         }
 
-        if (created.signingKeySecret != null) {
+        if (created.cryptoSecrets != null) {
             try {
-                secretsManager.deleteSecret(DeleteSecretRequest.builder()
-                    .secretId(created.signingKeySecret).forceDeleteWithoutRecovery(true).build());
-                LOG.infof("Rollback: deleted secret %s", created.signingKeySecret);
-            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete secret: %s", ex.getMessage()); }
+                cryptoService.deleteSecrets(tenantId);
+                LOG.infof("Rollback: deleted PKI secrets for %s", tenantId);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete PKI secrets: %s", ex.getMessage()); }
+        }
+
+        if (created.clusterPreRegistered) {
+            try {
+                dynamoDb.deleteItem(DeleteItemRequest.builder()
+                    .tableName(clustersTable)
+                    .key(Map.of("clusterName", AttributeValue.fromS(clusterName)))
+                    .build());
+                LOG.infof("Rollback: deleted pre-registered cluster %s", clusterName);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete cluster record: %s", ex.getMessage()); }
         }
 
         if (created.network != null) {
@@ -336,7 +346,7 @@ public class TenantProvisioningService {
      */
     static class ProvisionedResources {
         TenantNetworkService.NetworkResult network;
-        String signingKeySecret;
+        TenantCryptoService.CryptoResult cryptoSecrets;
         String sshKeySecret;
         String keyPairName;
         String iamRoleName;
@@ -344,6 +354,7 @@ public class TenantProvisioningService {
         String queueUrl;
         String eventBridgeRulePrefix;
         boolean dlmPolicyCreated;
+        boolean clusterPreRegistered;
         String instanceId;
         String eipAllocationId;
     }
@@ -684,18 +695,16 @@ public class TenantProvisioningService {
         };
     }
 
-    private String generateRsaPrivateKeyPem() {
-        try {
-            KeyPairGenerator gen = KeyPairGenerator.getInstance("RSA");
-            gen.initialize(2048);
-            KeyPair kp = gen.generateKeyPair();
-            byte[] encoded = kp.getPrivate().getEncoded();
-            return "-----BEGIN PRIVATE KEY-----\n"
-                + Base64.getMimeEncoder(64, new byte[]{'\n'}).encodeToString(encoded)
-                + "\n-----END PRIVATE KEY-----\n";
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to generate RSA key pair", e);
-        }
+    private void preRegisterCluster(String tenantId, String clusterName, TenantCryptoService.CryptoResult crypto) {
+        Map<String, AttributeValue> item = Map.of(
+            "clusterName", AttributeValue.fromS(clusterName),
+            "jwks", AttributeValue.fromS(crypto.jwks()),
+            "issuer", AttributeValue.fromS(crypto.issuer()),
+            "tenantId", AttributeValue.fromS(tenantId),
+            "createdAt", AttributeValue.fromS(Instant.now().toString())
+        );
+        dynamoDb.putItem(PutItemRequest.builder().tableName(clustersTable).item(item).build());
+        LOG.infof("Pre-registered cluster %s with JWKS in DynamoDB", clusterName);
     }
 
     private TenantItem itemToTenant(Map<String, AttributeValue> item) {
