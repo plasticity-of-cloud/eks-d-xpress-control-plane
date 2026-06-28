@@ -1,10 +1,13 @@
 package ai.codriverlabs.eksdx.tenant.service;
 
 import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.dlm.DlmClient;
 import software.amazon.awssdk.services.dlm.model.CreateLifecyclePolicyRequest;
 import software.amazon.awssdk.services.dlm.model.CreateRule;
+import software.amazon.awssdk.services.dlm.model.DeleteLifecyclePolicyRequest;
+import software.amazon.awssdk.services.dlm.model.GetLifecyclePoliciesRequest;
 import software.amazon.awssdk.services.dlm.model.IntervalUnitValues;
 import software.amazon.awssdk.services.dlm.model.PolicyDetails;
 import software.amazon.awssdk.services.dlm.model.ResourceTypeValues;
@@ -12,28 +15,37 @@ import software.amazon.awssdk.services.dlm.model.RetainRule;
 import software.amazon.awssdk.services.dlm.model.Schedule;
 import software.amazon.awssdk.services.dlm.model.SettablePolicyStateValues;
 import software.amazon.awssdk.services.dlm.model.Tag;
+import software.amazon.awssdk.services.ec2.Ec2Client;
+import software.amazon.awssdk.services.ec2.model.DeleteSnapshotRequest;
+import software.amazon.awssdk.services.ec2.model.DescribeSnapshotsRequest;
+import software.amazon.awssdk.services.ec2.model.Filter;
+import software.amazon.awssdk.services.ec2.model.Snapshot;
 import software.amazon.awssdk.services.iam.IamClient;
 import software.amazon.awssdk.services.iam.model.AttachRolePolicyRequest;
 import software.amazon.awssdk.services.iam.model.CreateRoleRequest;
+import software.amazon.awssdk.services.iam.model.DeleteRoleRequest;
+import software.amazon.awssdk.services.iam.model.DetachRolePolicyRequest;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
 
-import jakarta.inject.Inject;
 import java.util.List;
-import java.util.Map;
 
 /**
- * Creates a DLM lifecycle policy for automated daily etcd volume snapshots.
+ * Creates and deletes DLM lifecycle policies for automated daily etcd volume snapshots.
  * Targets EBS volumes tagged with Purpose=etcd and Name={clusterName}-etcd.
  */
 @ApplicationScoped
 public class TenantDlmService {
 
     private static final Logger LOG = Logger.getLogger(TenantDlmService.class);
+    private static final String DLM_MANAGED_POLICY = "arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole";
 
     @Inject IamClient iam;
+    @Inject Ec2Client ec2;
+    @Inject StsClient sts;
     private final DlmClient dlm = DlmClient.create();
 
     public String createEtcdBackupPolicy(String tenantId, String clusterName, String region) {
-        // DLM execution role
         String roleName = "eks-dx-t-" + tenantId + "-dlm";
         try {
             iam.createRole(CreateRoleRequest.builder()
@@ -54,16 +66,20 @@ public class TenantDlmService {
         }
         iam.attachRolePolicy(AttachRolePolicyRequest.builder()
             .roleName(roleName)
-            .policyArn("arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole")
+            .policyArn(DLM_MANAGED_POLICY)
             .build());
 
-        // Wait briefly for role propagation
-        String roleArn = "arn:aws:iam::" + getAccountId() + ":role/" + roleName;
+        String accountId = sts.getCallerIdentity(GetCallerIdentityRequest.builder().build()).account();
+        String roleArn = "arn:aws:iam::" + accountId + ":role/" + roleName;
 
         String policyId = dlm.createLifecyclePolicy(CreateLifecyclePolicyRequest.builder()
             .description("Daily etcd volume snapshot for " + clusterName)
             .executionRoleArn(roleArn)
             .state(SettablePolicyStateValues.ENABLED)
+            .tags(java.util.Map.of(
+                "eks-dx-tenant", tenantId,
+                "eks-dx-cluster", clusterName,
+                "Platform", "eks-dx"))
             .policyDetails(PolicyDetails.builder()
                 .resourceTypes(ResourceTypeValues.VOLUME)
                 .targetTags(List.of(
@@ -79,7 +95,7 @@ public class TenantDlmService {
                     .retainRule(RetainRule.builder().count(3).build())
                     .tagsToAdd(List.of(
                         Tag.builder().key("SnapshotCreator").value("DLM").build(),
-                        Tag.builder().key("Cluster").value(clusterName).build(),
+                        Tag.builder().key("eks-dx-cluster").value(clusterName).build(),
                         Tag.builder().key("Platform").value("eks-dx").build()))
                     .build()))
                 .build())
@@ -89,26 +105,54 @@ public class TenantDlmService {
         return policyId;
     }
 
-    private String getAccountId() {
-        // Extract from IAM role ARN via GetUser or caller identity
-        return software.amazon.awssdk.services.sts.StsClient.create()
-            .getCallerIdentity(software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest.builder().build())
-            .account();
-    }
-
     /**
-     * Best-effort cleanup of DLM policy for a tenant.
+     * Delete DLM policy, associated snapshots, and execution role.
+     * Order: snapshots → policy → IAM role.
      */
     public void deleteEtcdBackupPolicy(String tenantId, String clusterName) {
-        var policies = dlm.getLifecyclePolicies(
-            software.amazon.awssdk.services.dlm.model.GetLifecyclePoliciesRequest.builder()
-                .tagsToAdd("Tenant=" + tenantId)
+        // 1. Delete snapshots created by this policy
+        deleteSnapshots(clusterName);
+
+        // 2. Delete the DLM policy (lookup by tag)
+        try {
+            var policies = dlm.getLifecyclePolicies(GetLifecyclePoliciesRequest.builder()
+                .tagsToAdd(List.of("eks-dx-tenant=" + tenantId))
                 .build()).policies();
-        for (var summary : policies) {
-            dlm.deleteLifecyclePolicy(
-                software.amazon.awssdk.services.dlm.model.DeleteLifecyclePolicyRequest.builder()
+            for (var summary : policies) {
+                dlm.deleteLifecyclePolicy(DeleteLifecyclePolicyRequest.builder()
                     .policyId(summary.policyId()).build());
-            LOG.infof("Deleted DLM policy %s for tenant %s", summary.policyId(), tenantId);
+                LOG.infof("Deleted DLM policy %s for tenant %s", summary.policyId(), tenantId);
+            }
+        } catch (Exception e) {
+            LOG.warnf("Failed to delete DLM policy for tenant %s: %s", tenantId, e.getMessage());
+        }
+
+        // 3. Delete the DLM execution IAM role
+        String roleName = "eks-dx-t-" + tenantId + "-dlm";
+        try {
+            iam.detachRolePolicy(DetachRolePolicyRequest.builder()
+                .roleName(roleName).policyArn(DLM_MANAGED_POLICY).build());
+            iam.deleteRole(DeleteRoleRequest.builder().roleName(roleName).build());
+            LOG.infof("Deleted DLM role %s", roleName);
+        } catch (Exception e) {
+            LOG.warnf("Failed to delete DLM role %s: %s", roleName, e.getMessage());
+        }
+    }
+
+    private void deleteSnapshots(String clusterName) {
+        try {
+            var snapshots = ec2.describeSnapshots(DescribeSnapshotsRequest.builder()
+                .ownerIds("self")
+                .filters(
+                    Filter.builder().name("tag:eks-dx-cluster").values(clusterName).build(),
+                    Filter.builder().name("tag:Platform").values("eks-dx").build())
+                .build()).snapshots();
+            for (Snapshot snap : snapshots) {
+                ec2.deleteSnapshot(DeleteSnapshotRequest.builder().snapshotId(snap.snapshotId()).build());
+                LOG.infof("Deleted snapshot %s for cluster %s", snap.snapshotId(), clusterName);
+            }
+        } catch (Exception e) {
+            LOG.warnf("Failed to delete snapshots for cluster %s: %s", clusterName, e.getMessage());
         }
     }
 }
