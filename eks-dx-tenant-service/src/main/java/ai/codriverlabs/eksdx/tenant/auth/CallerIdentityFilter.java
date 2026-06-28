@@ -7,12 +7,18 @@ import org.jboss.logging.Logger;
 
 /**
  * Extracts caller identity from Lambda Web Adapter's x-amzn-request-context header.
- * Sets "callerArn" and "sourceIp" as request properties for downstream use.
+ * Sets "callerArn", "idcUserId", and "sourceIp" as request properties for downstream use.
+ *
+ * For IAM Identity Center users, extracts the IDC user UUID from the
+ * sts:identity-context (principalId) or falls back to the session name in the
+ * assumed-role ARN.
  */
 @Provider
 public class CallerIdentityFilter implements ContainerRequestFilter {
 
     private static final Logger LOG = Logger.getLogger(CallerIdentityFilter.class);
+    private static final java.util.regex.Pattern IDC_USER_ID_PATTERN =
+        java.util.regex.Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
 
     @Override
     public void filter(ContainerRequestContext ctx) {
@@ -24,12 +30,48 @@ public class CallerIdentityFilter implements ContainerRequestFilter {
             ctx.setProperty("callerArn", normalize(userArn));
         }
 
+        // Extract IDC user ID: principalId field contains "AROAXXXX:<session-name>"
+        // For IDC users, session name is typically the email or IDC user UUID
+        String principalId = extractField(requestContext, "principalId");
+        String idcUserId = extractIdcUserId(principalId, userArn);
+        if (idcUserId != null) {
+            ctx.setProperty("idcUserId", idcUserId);
+        }
+
         String sourceIp = extractField(requestContext, "sourceIp");
         if (sourceIp != null) {
             ctx.setProperty("sourceIp", sourceIp);
         }
 
-        LOG.debugf("Caller: %s (source: %s)", userArn, sourceIp);
+        LOG.debugf("Caller: %s (source: %s, idcUserId: %s)", userArn, sourceIp, idcUserId);
+    }
+
+    /**
+     * Extracts the IAM Identity Center user ID from the principal context.
+     *
+     * Resolution order:
+     * 1. If principalId contains a UUID-format session name → use it (IDC passes user UUID as session)
+     * 2. If assumed-role ARN has a session name that looks like an email → use as stable identity
+     * 3. Fallback to the full session name (whatever it is)
+     */
+    static String extractIdcUserId(String principalId, String userArn) {
+        // Try session name from principalId ("AROAXXXX:session-name")
+        String sessionName = null;
+        if (principalId != null && principalId.contains(":")) {
+            sessionName = principalId.substring(principalId.indexOf(":") + 1);
+        }
+        // If session name is a UUID, it's likely the IDC user ID
+        if (sessionName != null && IDC_USER_ID_PATTERN.matcher(sessionName).matches()) {
+            return sessionName;
+        }
+        // Fallback: extract session name from assumed-role ARN
+        if (userArn != null && userArn.contains(":assumed-role/")) {
+            String afterRole = userArn.split(":assumed-role/")[1];
+            if (afterRole.contains("/")) {
+                return afterRole.substring(afterRole.lastIndexOf("/") + 1);
+            }
+        }
+        return sessionName;
     }
 
     /**
