@@ -1,61 +1,70 @@
 # EKS-DX Integration: EKS-D-Xpress (kubeadm + EKS-D on EC2)
 
-EKS-D-Xpress clusters are provisioned automatically via the `eks-dx create-tenant` command.
-The provisioner Lambda handles EC2 launch, kubeadm init, and cluster registration.
-This guide covers what happens automatically and what you need to do after the cluster is ready.
+EKS-D-Xpress clusters are provisioned automatically via the `eks-dx create-cluster` command.
+The control plane generates all PKI material (CA + SA signing key), pre-registers the cluster
+JWKS in DynamoDB, and launches EC2. The instance is a stateless consumer — it fetches
+pre-generated keys from Secrets Manager during boot.
 
 ## Prerequisites
 
 - AWS account with CDK stack deployed (see [deployment.md](deployment.md))
-- Terraform infra applied (VPC, subnets, Launch Template, AMI — see `infra/`)
+- Shared infra applied (VPC, subnets, Launch Template, AMI — see `infra/`)
 - `eks-dx` CLI installed
 - `ENDPOINT` env var set to your API Gateway URL
 
 ---
 
-## 1. Provision a tenant cluster
+## 1. Provision a cluster
 
 ```bash
 eks-dx configure --endpoint $ENDPOINT --region us-east-1
 
 # Provision and wait for completion (~5-8 minutes)
-eks-dx create-tenant acme-staging --wait
+eks-dx create-cluster --name acme-staging --wait
+
+# With options
+eks-dx create-cluster --name acme-staging --arch arm64 --pricing spot --wait
 
 # With JSON output for CI/CD
-RESULT=$(eks-dx create-tenant acme-staging --wait --output json)
+RESULT=$(eks-dx create-cluster --name acme-staging --wait --output json)
 PUBLIC_IP=$(echo $RESULT | jq -r .publicIp)
 ```
 
 Progress is streamed in real time:
 
 ```
-Provisioning tenant acme-staging...
-  ✓ EC2 instance launched (i-0abc1234567890)
-  ✓ Instance booting
-  ✓ Signing key fetched from Secrets Manager
-  ⠸ kubeadm init running... [3m 12s]
-  ✓ kubeadm init completed
-  ✓ Registering cluster with eks-dx
-  ✓ Ready
+Created cluster "acme-staging" (tenant: t-abc123, managed)
+  [  5%] Starting cluster setup  (+2s)
+  [ 20%] Initialising control plane  (+15s)
+  [ 40%] Control plane ready  (+180s)
+  [ 55%] VPC CNI installed  (+200s)
+  [ 80%] Metrics server installed  (+240s)
+  [ 98%] eks-dx-karpenter-support installed  (+280s)
 
-Tenant ready. Public IP: 54.12.34.56
-SSH key: aws secretsmanager get-secret-value --secret-id eks-dx/tenant/acme-staging/ssh-key
+✓ Cluster ready.
+  Public IP: 54.12.34.56
+  SSH key: ~/.eks-d-xpress/tenants/us-east-1/t-abc123.pem
 ```
 
-### What happens automatically on first boot
+### What happens automatically
 
-The AMI's first-boot script (bundled at AMI build time) runs as `ec2-user`:
+1. **Control plane (Lambda, before EC2 launch):**
+   - Generates per-tenant CA key pair, signs CA cert via shared KMS key
+   - Generates SA signing key pair, derives JWKS
+   - Stores CA key, CA cert, SA key in Secrets Manager (`eks-dx/tenant/<id>/`)
+   - Pre-registers cluster in DynamoDB (JWKS + issuer known immediately)
+   - Launches EC2 with Golden AMI
 
-1. Fetches SA signing key from `eks-dx/tenant/{tenantId}/signing-key` (Secrets Manager)
-2. Writes `/etc/kubernetes/pki/sa.key` + `sa.pub`
-3. Runs `kubeadm init --service-account-signing-key-file sa.key --service-account-issuer https://{publicIp}`
-4. Derives JWKS from `sa.pub`
-5. Calls `eks-dx register-cluster {tenantId} --issuer https://{publicIp} --jwks-file /tmp/jwks.json`
-   — authenticated via the instance profile IAM role, scoped to `POST /clusters/{tenantId}` only
-6. Installs `eks-dx-auth-proxy` and `eks-dx-pod-identity-webhook` via Helm (images pre-baked in AMI)
-7. Updates DynamoDB state to `ready`
+2. **EC2 first-boot (Golden AMI, `07-install-eks-d.sh`):**
+   - Fetches CA key, CA cert, SA key from Secrets Manager
+   - Derives `sa.pub` from `sa.key` via `openssl rsa -pubout`
+   - Writes all to `/etc/kubernetes/pki/` — kubeadm does not regenerate
+   - Runs `kubeadm init` with deterministic `service-account-issuer`
+   - Installs VPC CNI, cloud-provider, cert-manager, EBS CSI, Karpenter
+   - Installs `eks-dx-auth-proxy` and `eks-dx-pod-identity-webhook` via Helm
+   - Updates DynamoDB state to `ready`
 
-No manual cluster registration is needed.
+No manual cluster registration is needed — JWKS is pre-registered before boot.
 
 ---
 
@@ -120,7 +129,7 @@ kubectl --kubeconfig acme-staging.kubeconfig logs aws-test -n my-app
 ## 5. Deprovision
 
 ```bash
-eks-dx delete-tenant acme-staging
+eks-dx delete-cluster acme-staging
 ```
 
 This terminates the EC2 instance, deletes both Secrets Manager secrets, removes the cluster
@@ -134,7 +143,7 @@ registration from DynamoDB, deletes the per-tenant IAM role, and removes the EC2
   any other cluster name (IAM resource ARN scoped to the exact path)
 - The SA signing key persists in Secrets Manager for the cluster lifetime — required for
   disaster recovery and re-provisioning
-- Delete the tenant via `eks-dx delete-tenant` rather than terminating the EC2 instance
+- Delete the tenant via `eks-dx delete-cluster` rather than terminating the EC2 instance
   directly, to ensure all secrets and IAM resources are cleaned up
 
 ---
@@ -143,8 +152,8 @@ registration from DynamoDB, deletes the per-tenant IAM role, and removes the EC2
 
 | | k3s | EKS-D-Xpress |
 |---|---|---|
-| Cluster registration | Manual (`eks-dx register-cluster`) | Automatic (first-boot script) |
+| Cluster registration | Manual (`eks-dx create-cluster --oidc-mode self-managed`) | Automatic (first-boot script) |
 | OIDC issuer | Set via `--kube-apiserver-arg` | Set by `kubeadm init` |
 | SA signing key | Generated by k3s | Pre-generated by provisioner Lambda, stored in SM |
 | In-cluster components | Installed manually via Helm | Pre-baked in AMI, installed on first boot |
-| Deprovisioning | Manual | `eks-dx delete-tenant` |
+| Deprovisioning | Manual | `eks-dx delete-cluster` |

@@ -224,11 +224,11 @@ aws cloudformation deploy --parameter-overrides OidcMode=self-managed
 
 ## CLI Unified `create-cluster` Command
 
-The CLI exposes a single `eks-dx create-cluster` command. Behaviour depends on `--oidc-mode`:
+The CLI exposes a single `eks-dx create-cluster` command. Both modes route through **tenant-service** (Function URL). The tenant-service owns the clusters table and handles both managed provisioning and self-managed registration.
 
 ### `--oidc-mode=managed` (default)
 
-Full tenant provisioning: generates PKI via TenantService, launches EC2 with Golden AMI, pre-registers JWKS.
+Full tenant provisioning: generates PKI via TenantCryptoService, launches EC2 with Golden AMI, pre-registers JWKS.
 
 ```bash
 eks-dx create-cluster \
@@ -247,7 +247,7 @@ Error: --jwks-uri, --ca-cert, and --issuer cannot be specified in managed mode.
 
 ### `--oidc-mode=self-managed`
 
-Registers an externally-managed cluster. No EC2 provisioning. User must provide JWKS and issuer information.
+Registers an externally-managed cluster. No EC2 provisioning, no PKI generation. User must provide JWKS and issuer information. Tenant-service stores the cluster record directly in DynamoDB.
 
 ```bash
 eks-dx create-cluster \
@@ -269,12 +269,26 @@ Error: Self-managed mode requires the following parameters:
          --ca-cert <path>                             (cluster CA certificate for audit)
 ```
 
-**Server-side enforcement**: If the CDK stack was deployed with `oidc-mode=managed`, the mgmt-service rejects `create-cluster` requests with self-managed parameters (HTTP 400):
+**Server-side enforcement**: If the CDK stack was deployed with `oidc-mode=managed`, the tenant-service rejects self-managed cluster registrations (HTTP 400):
 ```json
 {
   "error": "This control plane is deployed in managed mode. Self-managed cluster registration is not supported."
 }
 ```
+
+### Routing
+
+Both modes call the **tenant-service Function URL** (`POST /clusters`). The request body includes `oidcMode` to signal which path to take:
+
+```json
+// Managed
+{"clusterName": "my-tenant", "oidcMode": "managed", "arch": "arm64", "ec2PricingModel": "spot"}
+
+// Self-managed
+{"clusterName": "my-k3s", "oidcMode": "self-managed", "jwks": "...", "issuer": "https://..."}
+```
+
+The mgmt-service `POST /clusters` remains available as a lower-level API (used by `install-eks-dx-pod-identity.sh --oidc-mode self-managed`) but the CLI routes exclusively through tenant-service.
 
 ### Decision matrix
 
@@ -284,7 +298,7 @@ Error: Self-managed mode requires the following parameters:
 | `managed` | `--jwks-uri`, `--issuer` | ❌ Reject: cannot override managed PKI |
 | `self-managed` | `--jwks-uri`, `--issuer` | ✅ Register cluster record in DynamoDB |
 | `self-managed` | (none extra) | ❌ Error: required parameters missing |
-| `self-managed` | (server in managed mode) | ❌ Server rejects: mode mismatch |
+| `self-managed` | (server in managed-only mode) | ❌ Server rejects: mode mismatch |
 
 ## Affected Modules
 
@@ -294,9 +308,49 @@ Error: Self-managed mode requires the following parameters:
 |--------|--------|
 | `eks-dx-tenant-service` | New `TenantCryptoService`: generates CA + SA key pairs, calls `kms:Sign` for CA cert, stores in Secrets Manager |
 | `eks-dx-tenant-service` | `TenantProvisioningService`: add step 1–6 before EC2 launch, rollback deletes secrets + cluster record |
-| `eks-dx-mgmt-service` | Accept `jwks` + `issuer` on `POST /clusters` (currently populated by CLI post-boot) |
+| `eks-dx-tenant-service` | `TenantResource`: new `POST /clusters` (both modes) and `DELETE /clusters/{name}` (teardown or deregister based on record) |
+| `eks-dx-mgmt-service` | Remove `POST /clusters` (moved to tenant-service). Keep: `GET /clusters`, `GET /clusters/{name}`, `PUT /clusters/{name}/jwks`, association CRUD |
 | `eks-dx-credential-service` | No changes — already reads JWKS from DynamoDB |
-| `infra/` (CDK) | Add KMS key + IAM grant in `centrally-managed` mode |
+| `eks-dx-cli` | Unified `create-cluster` and `delete-cluster` commands, both routed through tenant-service. Deprecate `create-tenant`, `delete-tenant`, `register-cluster`, `deregister-cluster` |
+| `infra/` (CDK) | Add KMS key + IAM grant in managed mode |
+
+### CLI Command Rename
+
+| Old command | New command | Notes |
+|-------------|-------------|-------|
+| `create-tenant` | `create-cluster --oidc-mode=managed` | Default mode |
+| `register-cluster` | `create-cluster --oidc-mode=self-managed` | Explicit mode |
+| `delete-tenant` | `delete-cluster` | Server detects managed → full teardown |
+| `deregister-cluster` | `delete-cluster` | Server detects self-managed → remove record only |
+| `stop-tenant` | `stop-cluster` | Hibernate EC2 (managed only) |
+| `resume-tenant` | `resume-cluster` | Resume EC2 (managed only) |
+
+Old commands remain as deprecated aliases during the transition period.
+
+### `delete-cluster` Server-Side Logic
+
+Tenant-service `DELETE /clusters/{name}`:
+1. Look up cluster record in DynamoDB
+2. If `managed=true` → full teardown: terminate EC2, release EIP, delete IAM role, delete subnets/SG, delete secrets, delete DLM policy, delete DynamoDB records (tenants + clusters tables)
+3. If `managed=false` (self-managed) → delete cluster record from DynamoDB only
+4. Return 204 on success
+
+This unifies what was previously two separate flows (`delete-tenant` + `deregister-cluster`) into a single operation where the server determines the teardown scope from the stored record.
+
+### mgmt-service Remaining API Surface
+
+After removing `POST /clusters`, mgmt-service exposes:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/clusters` | List clusters (owner-filtered) |
+| GET | `/clusters/{name}` | Describe cluster |
+| PUT | `/clusters/{name}/jwks` | Refresh JWKS |
+| DELETE | `/clusters/{name}` | Remove from mgmt-service side (kept for backward compat with install scripts; eventually deprecated in favor of tenant-service `DELETE /clusters/{name}`) |
+| POST | `/clusters/{name}/pod-identity-associations` | Create association |
+| GET | `/clusters/{name}/pod-identity-associations` | List associations |
+| GET | `/clusters/{name}/pod-identity-associations/{id}` | Describe association |
+| DELETE | `/clusters/{name}/pod-identity-associations/{id}` | Delete association |
 
 ### eks-d-xpress (AMI/setup project)
 
@@ -307,6 +361,24 @@ Error: Self-managed mode requires the following parameters:
 | `eks-d-setup/12-install-eks-dx-pod-identity.sh` | Pass `--oidc-mode managed` when invoking `install-eks-dx-pod-identity.sh` (Golden AMI always runs in managed mode) |
 
 ## Implementation Notes
+
+### Documentation update status: ✅ Complete
+
+All user-facing documents have been updated to the new CLI commands:
+
+| File | Changes applied |
+|------|----------------|
+| `docs/user-guides/integration-eks-d-xpress.md` | Rewritten: provisioning flow updated to reflect centrally-managed PKI (no manual registration), `create-tenant` → `create-cluster`, `delete-tenant` → `delete-cluster` |
+| `docs/user-guides/integration-eks-d-xpress-ce.md` | `create-tenant` → `create-cluster`, `register-cluster` → `create-cluster --oidc-mode self-managed`, `delete-tenant` → `delete-cluster` |
+| `docs/user-guides/integration-k3s.md` | `register-cluster` → `create-cluster --oidc-mode self-managed` |
+| `docs/user-guides/deployment.md` | Architecture diagram updated (tenant-service owns `/clusters`), all CLI examples updated |
+| `docs/user-guides/ec2-k3s-pod-identity/README.md` | `register-cluster` → `create-cluster --oidc-mode self-managed`, `deregister-cluster` → `delete-cluster` |
+| `docs/user-guides/ec2-k3s-pod-identity/setup.sh` | `register-cluster` → `create-cluster --oidc-mode self-managed` |
+| `docs/user-guides/iam/iam-role-setup.md` | `register-cluster` → `create-cluster` |
+
+Zero references to deprecated commands remain in `docs/user-guides/`.
+
+### Technical notes
 
 **Key generation** — Use Bouncy Castle (`org.bouncycastle:bcpkix-jdk18on`, already compatible with GraalVM native) for RSA key pair generation and X.509 cert construction. The CA cert is self-signed in the sense that it's a root cert, but the signature comes from the KMS key (via `kms:Sign` with `RSASSA_PKCS1_V1_5_SHA_256`).
 
@@ -321,7 +393,50 @@ Error: Self-managed mode requires the following parameters:
 
 **GraalVM native compatibility** — Bouncy Castle works with GraalVM native if registered via `reflect-config.json`. The tenant-service already builds as native arm64.
 
-## Enterprise Positioning
+## Documentation Updates Required
+
+The CLI rename (`create-tenant` → `create-cluster`, etc.) and the new OIDC mode concept require updates to the following user-facing documents:
+
+| File | Current state | Required changes |
+|------|---------------|-----------------|
+| `docs/user-guides/integration-eks-d-xpress.md` | References `create-tenant`, `register-cluster`, `delete-tenant` (8 occurrences) | Rewrite around `create-cluster --oidc-mode=managed` / `delete-cluster`. Remove mention of manual cluster registration — it's now automatic (pre-registered before boot). |
+| `docs/user-guides/integration-eks-d-xpress-ce.md` | References `create-tenant`, `register-cluster`, `delete-tenant` (6 occurrences). Describes the "CE" variant where kubeadm generates keys. | Rewrite as the `--oidc-mode=self-managed` guide. CE concept = self-managed mode. Clarify that user must provide JWKS/issuer or use kubeconfig discovery. |
+| `docs/user-guides/integration-k3s.md` | References `register-cluster` (2 occurrences) | Replace with `create-cluster --oidc-mode=self-managed --name ... --issuer ... --jwks-file ...` |
+| `docs/user-guides/deployment.md` | References `create-tenant`, `delete-tenant`, `register-cluster` (7 occurrences). Architecture diagram shows tenant-service at `/tenants`. | Update CLI examples. Update diagram: tenant-service now owns `/clusters` + `/tenants`. Add "Choosing managed vs self-managed" section. |
+| `docs/user-guides/ec2-k3s-pod-identity/README.md` | References `register-cluster` (2 occurrences) | Replace with `create-cluster --oidc-mode=self-managed` |
+| `docs/user-guides/iam/iam-role-setup.md` | 1 reference to old command | Update to new command name |
+
+### New section: "Choosing managed vs self-managed"
+
+Add to `deployment.md` (or as a standalone `docs/user-guides/choosing-oidc-mode.md`):
+
+| Question | Managed | Self-managed |
+|----------|---------|--------------|
+| Who provisions the cluster? | eks-dx (EC2 + Golden AMI) | You (k3s, microk8s, kubeadm, etc.) |
+| Who generates the SA signing key? | Control plane (KMS-backed) | kubeadm / k3s / you |
+| Who registers JWKS? | Automatic (before boot) | You (via CLI or install script) |
+| Key custody | Secrets Manager (recoverable) | Your responsibility |
+| Key rotation | Built-in (future) | Manual |
+| Use case | Production EKS-D tenants | Existing clusters, dev/test, BYO-cluster |
+
+### CLI command quick reference (for all guides)
+
+```bash
+# Managed cluster (EKS-D-Xpress — full provisioning)
+eks-dx create-cluster --name my-cluster --arch arm64 --pricing spot --wait
+eks-dx delete-cluster --name my-cluster
+eks-dx stop-cluster --name my-cluster
+eks-dx resume-cluster --name my-cluster
+
+# Self-managed cluster (k3s, microk8s, existing kubeadm)
+eks-dx create-cluster --name my-k3s --oidc-mode self-managed \
+  --issuer https://my-node:6443 --jwks-file /tmp/jwks.json
+eks-dx delete-cluster --name my-k3s
+
+# Associations (same for both modes)
+eks-dx create-association --cluster my-cluster --namespace default \
+  --service-account app-sa --role-arn arn:aws:iam::123456789012:role/app-role
+```
 
 - **Default**: KMS-backed shared signing key + per-tenant self-signed CA stored in Secrets Manager. Auditable via CloudTrail, HSM-backed, near-zero cost.
 - **Enterprise add-on**: ACM PCA deployed in the customer's own account. Customer bears the PCA cost. Integrate via `aws-privateca-issuer`.

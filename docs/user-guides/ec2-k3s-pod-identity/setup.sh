@@ -203,7 +203,7 @@ ${GREEN}════════════════════════
   1. Register the cluster:
        export KUBECONFIG=$KUBECONFIG_PATH
        eks-dx configure --endpoint ${EKS_DX_ENDPOINT} --region ${REGION}
-       eks-dx register-cluster --name ${CLUSTER_NAME} --region ${REGION}
+       eks-dx create-cluster --oidc-mode self-managed --name ${CLUSTER_NAME} --region ${REGION}
 
   2. Create associations:
        eks-dx create-association \\

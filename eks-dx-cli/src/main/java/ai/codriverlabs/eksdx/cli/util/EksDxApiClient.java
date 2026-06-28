@@ -63,6 +63,26 @@ public class EksDxApiClient {
         }
     }
 
+    public void deleteFunctionUrl(String url, String region) {
+        try {
+            URI uri = URI.create(url);
+            var builder = HttpRequest.newBuilder().uri(uri).DELETE();
+            AwsSigV4Signer fnSigner = AwsSigV4Signer.create(region);
+            if (fnSigner != null) fnSigner.sign(builder, "DELETE", uri, null, "lambda");
+            var response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 400) {
+                String b = response.body();
+                try { var n = new com.fasterxml.jackson.databind.ObjectMapper().readTree(b);
+                    System.err.println(n.has("message") ? n.get("message").asText() : b);
+                } catch (Exception ignored) { System.err.println(b); }
+                System.exit(1);
+            }
+        } catch (Exception e) {
+            System.err.printf("Failed to reach Function URL: %s%n", e.getMessage());
+            System.exit(1);
+        }
+    }
+
     public String get(String path) {
         return send("GET", path, null);
     }

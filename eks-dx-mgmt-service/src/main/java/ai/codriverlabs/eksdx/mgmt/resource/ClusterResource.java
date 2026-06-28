@@ -28,23 +28,8 @@ public class ClusterResource {
         @JsonProperty("jwks") public String jwks;
     }
 
-    @POST
-    public Response registerCluster(RegisterClusterRequest request, @Context ContainerRequestContext ctx) {
-        try {
-            if (request == null) return error(400, "InvalidParameterException", "Request body is required");
-            String callerArn = (String) ctx.getProperty("callerArn");
-            Map<String, String> result = clusterService.registerCluster(
-                request.name, request.issuer, request.jwks, callerArn);
-            return Response.status(201).entity(result).build();
-        } catch (IllegalArgumentException e) {
-            return error(400, "InvalidParameterException", e.getMessage());
-        } catch (IllegalStateException e) {
-            return error(409, "ConflictException", e.getMessage());
-        } catch (Exception e) {
-            LOG.errorf("Register cluster error: %s", e.getMessage());
-            return error(500, "InternalServerException", "Internal server error");
-        }
-    }
+    // POST /clusters removed — cluster creation is now handled by tenant-service.
+    // Kept: GET, PUT /jwks, DELETE for backward compatibility.
 
     @GET
     @Path("/{name}")
