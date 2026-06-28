@@ -375,6 +375,51 @@ After removing `POST /clusters`, mgmt-service exposes:
 
 **GraalVM native compatibility** — Bouncy Castle works with GraalVM native if registered via `reflect-config.json`. The tenant-service already builds as native arm64.
 
+## Documentation Updates Required
+
+The CLI rename (`create-tenant` → `create-cluster`, etc.) and the new OIDC mode concept require updates to the following user-facing documents:
+
+| File | Current state | Required changes |
+|------|---------------|-----------------|
+| `docs/user-guides/integration-eks-d-xpress.md` | References `create-tenant`, `register-cluster`, `delete-tenant` (8 occurrences) | Rewrite around `create-cluster --oidc-mode=managed` / `delete-cluster`. Remove mention of manual cluster registration — it's now automatic (pre-registered before boot). |
+| `docs/user-guides/integration-eks-d-xpress-ce.md` | References `create-tenant`, `register-cluster`, `delete-tenant` (6 occurrences). Describes the "CE" variant where kubeadm generates keys. | Rewrite as the `--oidc-mode=self-managed` guide. CE concept = self-managed mode. Clarify that user must provide JWKS/issuer or use kubeconfig discovery. |
+| `docs/user-guides/integration-k3s.md` | References `register-cluster` (2 occurrences) | Replace with `create-cluster --oidc-mode=self-managed --name ... --issuer ... --jwks-file ...` |
+| `docs/user-guides/deployment.md` | References `create-tenant`, `delete-tenant`, `register-cluster` (7 occurrences). Architecture diagram shows tenant-service at `/tenants`. | Update CLI examples. Update diagram: tenant-service now owns `/clusters` + `/tenants`. Add "Choosing managed vs self-managed" section. |
+| `docs/user-guides/ec2-k3s-pod-identity/README.md` | References `register-cluster` (2 occurrences) | Replace with `create-cluster --oidc-mode=self-managed` |
+| `docs/user-guides/iam/iam-role-setup.md` | 1 reference to old command | Update to new command name |
+
+### New section: "Choosing managed vs self-managed"
+
+Add to `deployment.md` (or as a standalone `docs/user-guides/choosing-oidc-mode.md`):
+
+| Question | Managed | Self-managed |
+|----------|---------|--------------|
+| Who provisions the cluster? | eks-dx (EC2 + Golden AMI) | You (k3s, microk8s, kubeadm, etc.) |
+| Who generates the SA signing key? | Control plane (KMS-backed) | kubeadm / k3s / you |
+| Who registers JWKS? | Automatic (before boot) | You (via CLI or install script) |
+| Key custody | Secrets Manager (recoverable) | Your responsibility |
+| Key rotation | Built-in (future) | Manual |
+| Use case | Production EKS-D tenants | Existing clusters, dev/test, BYO-cluster |
+
+### CLI command quick reference (for all guides)
+
+```bash
+# Managed cluster (EKS-D-Xpress — full provisioning)
+eks-dx create-cluster --name my-cluster --arch arm64 --pricing spot --wait
+eks-dx delete-cluster --name my-cluster
+eks-dx stop-cluster --name my-cluster
+eks-dx resume-cluster --name my-cluster
+
+# Self-managed cluster (k3s, microk8s, existing kubeadm)
+eks-dx create-cluster --name my-k3s --oidc-mode self-managed \
+  --issuer https://my-node:6443 --jwks-file /tmp/jwks.json
+eks-dx delete-cluster --name my-k3s
+
+# Associations (same for both modes)
+eks-dx create-association --cluster my-cluster --namespace default \
+  --service-account app-sa --role-arn arn:aws:iam::123456789012:role/app-role
+```
+
 ## Enterprise Positioning
 
 - **Default**: KMS-backed shared signing key + per-tenant self-signed CA stored in Secrets Manager. Auditable via CloudTrail, HSM-backed, near-zero cost.
