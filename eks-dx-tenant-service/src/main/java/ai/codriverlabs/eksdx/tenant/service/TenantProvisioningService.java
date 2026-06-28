@@ -162,7 +162,7 @@ public class TenantProvisioningService {
                 .keyName("eks-dx-t-" + tenantId + "-key")
                 .tagSpecifications(software.amazon.awssdk.services.ec2.model.TagSpecification.builder()
                     .resourceType(software.amazon.awssdk.services.ec2.model.ResourceType.KEY_PAIR)
-                    .tags(software.amazon.awssdk.services.ec2.model.Tag.builder().key("project").value("eks-dx").build(),
+                    .tags(software.amazon.awssdk.services.ec2.model.Tag.builder().key("project").value("eks-d-xpress").build(),
                           software.amazon.awssdk.services.ec2.model.Tag.builder().key("eks-dx-tenant").value(tenantId).build())
                     .build())
                 .build());

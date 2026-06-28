@@ -79,7 +79,7 @@ public class TenantDlmService {
             .tags(java.util.Map.of(
                 "eks-dx-tenant", tenantId,
                 "eks-dx-cluster", clusterName,
-                "Platform", "eks-dx"))
+                "Platform", "eks-d-xpress"))
             .policyDetails(PolicyDetails.builder()
                 .resourceTypes(ResourceTypeValues.VOLUME)
                 .targetTags(List.of(
@@ -96,7 +96,7 @@ public class TenantDlmService {
                     .tagsToAdd(List.of(
                         Tag.builder().key("SnapshotCreator").value("DLM").build(),
                         Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
-                        Tag.builder().key("Platform").value("eks-dx").build()))
+                        Tag.builder().key("Platform").value("eks-d-xpress").build()))
                     .build()))
                 .build())
             .build()).policyId();
@@ -145,7 +145,7 @@ public class TenantDlmService {
                 .ownerIds("self")
                 .filters(
                     Filter.builder().name("tag:eks-dx-tenant").values(tenantId).build(),
-                    Filter.builder().name("tag:Platform").values("eks-dx").build())
+                    Filter.builder().name("tag:Platform").values("eks-d-xpress").build())
                 .build()).snapshots();
             for (Snapshot snap : snapshots) {
                 ec2.deleteSnapshot(DeleteSnapshotRequest.builder().snapshotId(snap.snapshotId()).build());

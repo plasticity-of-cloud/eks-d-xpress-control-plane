@@ -76,7 +76,7 @@ public class TenantEc2Service {
                     Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
                     Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
                     Tag.builder().key("ebs.csi.aws.com/cluster-name").value(clusterName).build(),
-                    Tag.builder().key("Platform").value("eks-dx").build())
+                    Tag.builder().key("Platform").value("eks-d-xpress").build())
                 .build())
             .build();
 
@@ -107,7 +107,7 @@ public class TenantEc2Service {
                 .tags(Tag.builder().key("Name").value(clusterName).build(),
                       Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
                       Tag.builder().key("eks-dx-eip-persistent").value(String.valueOf(assignElasticIp)).build(),
-                      Tag.builder().key("project").value("eks-dx").build())
+                      Tag.builder().key("project").value("eks-d-xpress").build())
                 .build())
             .build());
         if (created != null) created.eipAllocationId = allocResp.allocationId();

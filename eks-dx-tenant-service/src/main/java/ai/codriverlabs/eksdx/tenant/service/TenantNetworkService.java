@@ -71,7 +71,7 @@ public class TenantNetworkService {
                     Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
                     Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
                     Tag.builder().key("kubernetes.io/role/elb").value("1").build(),
-                    Tag.builder().key("Platform").value("eks-dx").build())
+                    Tag.builder().key("Platform").value("eks-d-xpress").build())
                 .build())
             .build()).subnet().subnetId();
         LOG.infof("Created public subnet %s (%s) for tenant %s", publicSubnetId, publicCidr, tenantId);
@@ -90,7 +90,7 @@ public class TenantNetworkService {
                     Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
                     Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
                     Tag.builder().key("kubernetes.io/role/internal-elb").value("1").build(),
-                    Tag.builder().key("Platform").value("eks-dx").build())
+                    Tag.builder().key("Platform").value("eks-d-xpress").build())
                 .build())
             .build()).subnet().subnetId();
         LOG.infof("Created private subnet %s (%s) for tenant %s", privateSubnetId, privateCidr, tenantId);
@@ -125,7 +125,7 @@ public class TenantNetworkService {
                     Tag.builder().key("Name").value(sgName).build(),
                     Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
                     Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
-                    Tag.builder().key("Platform").value("eks-dx").build())
+                    Tag.builder().key("Platform").value("eks-d-xpress").build())
                 .build())
             .build()).groupId();
 
