@@ -10,6 +10,7 @@ import picocli.CommandLine.Command;
     description = "EKS-DX — Pod Identity for k3s, microk8s, and EKS-D clusters",
     subcommands = {
         ConfigureCommand.class,
+        CreateClusterCmd.class,
         RegisterClusterCmd.class,
         DeregisterClusterCmd.class,
         DescribeClusterCmd.class,
