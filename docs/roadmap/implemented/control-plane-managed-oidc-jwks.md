@@ -1,6 +1,6 @@
 # Security Hardening — Control-Plane-Managed OIDC/JWKS Keys
 
-## Status: Planned
+## Status: Implemented (v1.0.3-rc30)
 
 ## Problem
 
