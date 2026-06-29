@@ -366,7 +366,7 @@ public class EksDXpressControlPlaneStack extends Stack {
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
                 "ec2:DescribeVpcs", "ec2:DescribeSubnets", "ec2:DescribeRouteTables",
-                "ec2:DescribeSecurityGroups", "ec2:DescribeAddresses"))
+                "ec2:DescribeSecurityGroups", "ec2:DescribeAddresses", "ec2:DescribeSnapshots"))
             .resources(List.of("*"))
             .build());
         // EC2: mutating actions scoped to shared VPC
@@ -405,6 +405,13 @@ public class EksDXpressControlPlaneStack extends Stack {
             .resources(List.of(String.format("arn:aws:ec2:%s:%s:key-pair/*",
                 Stack.of(this).getRegion(), Stack.of(this).getAccount())))
             .conditions(Map.of("StringEquals", Map.of("aws:ResourceTag/project", "eks-d-xpress")))
+            .build());
+        // EC2: snapshot deletion — scoped to snapshots tagged Platform=eks-d-xpress
+        tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
+            .actions(List.of("ec2:DeleteSnapshot"))
+            .resources(List.of(String.format("arn:aws:ec2:%s::snapshot/*",
+                Stack.of(this).getRegion())))
+            .conditions(Map.of("StringEquals", Map.of("aws:ResourceTag/Platform", "eks-d-xpress")))
             .build());
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()
             .actions(List.of(
