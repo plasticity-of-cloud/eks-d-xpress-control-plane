@@ -422,7 +422,8 @@ public class EksDXpressControlPlaneStack extends Stack {
             .actions(List.of(
                 "dlm:CreateLifecyclePolicy",
                 "dlm:DeleteLifecyclePolicy",
-                "dlm:GetLifecyclePolicies"))
+                "dlm:GetLifecyclePolicies",
+                "dlm:TagResource"))
             .resources(List.of("*"))
             .build());
         // SQS: Karpenter interruption queue
