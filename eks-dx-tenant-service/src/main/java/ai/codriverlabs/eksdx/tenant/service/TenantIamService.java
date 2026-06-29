@@ -94,7 +94,7 @@ public class TenantIamService {
                   "Sid": "SecretsAccess",
                   "Effect": "Allow",
                   "Action": "secretsmanager:GetSecretValue",
-                  "Resource": "arn:aws:secretsmanager:%s:%s:secret:eks-dx/t/%s/*"
+                  "Resource": "arn:aws:secretsmanager:%s:%s:secret:eks-dx/tenant/%s/*"
                 },
                 {
                   "Sid": "EksDxApiInvoke",

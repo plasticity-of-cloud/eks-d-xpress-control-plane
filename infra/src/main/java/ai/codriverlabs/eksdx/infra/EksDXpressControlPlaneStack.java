@@ -444,8 +444,8 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "secretsmanager:CreateSecret",
                 "secretsmanager:DeleteSecret",
                 "secretsmanager:GetSecretValue"))
-            .resources(List.of("arn:aws:secretsmanager:*:*:secret:eks-dx/tenant/*",
-                "arn:aws:secretsmanager:*:*:secret:eks-dx/t/*"))
+            .resources(List.of(
+                "arn:aws:secretsmanager:*:*:secret:eks-dx/tenant/*"))
             .build());
         // KMS: sign tenant CA certificates
         caSigningKey.grant(tenantFn, "kms:Sign");

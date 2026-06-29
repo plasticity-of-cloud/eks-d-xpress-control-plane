@@ -7,6 +7,7 @@ package ai.codriverlabs.eksdx.tenant;
 public final class TenantNaming {
 
     public static final String RESOURCE_PREFIX = "eks-dx-tenant-";
+    public static final String SECRET_PREFIX = "eks-dx/tenant/";
 
     private TenantNaming() {}
 
@@ -15,4 +16,5 @@ public final class TenantNaming {
     public static String dlmRoleName(String tenantId) { return RESOURCE_PREFIX + tenantId + "-dlm"; }
     public static String securityGroupName(String tenantId) { return RESOURCE_PREFIX + tenantId + "-sg"; }
     public static String keyPairName(String tenantId) { return RESOURCE_PREFIX + tenantId + "-key"; }
+    public static String secretPath(String tenantId, String name) { return SECRET_PREFIX + tenantId + "/" + name; }
 }

@@ -170,9 +170,9 @@ public class TenantProvisioningService {
             created.keyPairName = TenantNaming.keyPairName(tenantId);
 
             String sshKeyArn = secretsManager.createSecret(CreateSecretRequest.builder()
-                .name("eks-dx/t/" + tenantId + "/ssh-key")
+                .name(TenantNaming.secretPath(tenantId, "ssh-key"))
                 .secretString(keyPairResp.keyMaterial()).build()).arn();
-            created.sshKeySecret = "eks-dx/t/" + tenantId + "/ssh-key";
+            created.sshKeySecret = TenantNaming.secretPath(tenantId, "ssh-key");
 
             // 4. Pre-register cluster in DynamoDB (JWKS + issuer known before EC2 boots)
             preRegisterCluster(tenantId, clusterName, crypto);

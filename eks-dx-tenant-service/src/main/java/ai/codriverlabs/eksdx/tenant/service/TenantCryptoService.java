@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.tenant.service;
 
+import ai.codriverlabs.eksdx.tenant.TenantNaming;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -43,7 +44,6 @@ import java.util.Date;
 public class TenantCryptoService {
 
     private static final Logger LOG = Logger.getLogger(TenantCryptoService.class);
-    private static final String SM_PREFIX = "eks-dx/tenant/";
 
     @Inject KmsClient kms;
     @Inject SecretsManagerClient secretsManager;
@@ -80,9 +80,9 @@ public class TenantCryptoService {
             String jwks = deriveJwks((RSAPublicKey) saKeyPair.getPublic());
 
             // 5. Store in Secrets Manager
-            String caKeySecretName = SM_PREFIX + tenantId + "/ca-key";
-            String caCrtSecretName = SM_PREFIX + tenantId + "/ca-crt";
-            String saKeySecretName = SM_PREFIX + tenantId + "/sa-key";
+            String caKeySecretName = TenantNaming.secretPath(tenantId, "ca-key");
+            String caCrtSecretName = TenantNaming.secretPath(tenantId, "ca-crt");
+            String saKeySecretName = TenantNaming.secretPath(tenantId, "sa-key");
 
             secretsManager.createSecret(CreateSecretRequest.builder()
                 .name(caKeySecretName).secretString(toPem(caKeyPair.getPrivate().getEncoded(), "PRIVATE KEY")).build());
@@ -107,7 +107,7 @@ public class TenantCryptoService {
         for (String suffix : new String[]{"ca-key", "ca-crt", "sa-key"}) {
             try {
                 secretsManager.deleteSecret(DeleteSecretRequest.builder()
-                    .secretId(SM_PREFIX + tenantId + "/" + suffix)
+                    .secretId(TenantNaming.secretPath(tenantId, suffix))
                     .forceDeleteWithoutRecovery(true).build());
             } catch (Exception e) {
                 LOG.warnf("Failed to delete secret %s/%s: %s", tenantId, suffix, e.getMessage());
