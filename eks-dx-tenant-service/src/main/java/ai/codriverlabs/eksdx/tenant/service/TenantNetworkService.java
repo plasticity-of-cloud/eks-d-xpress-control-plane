@@ -49,6 +49,7 @@ public class TenantNetworkService {
 
     /**
      * Creates per-tenant public subnet, private subnet, and security group.
+     * On partial failure, cleans up any resources created before the error.
      */
     public NetworkResult createTenantNetwork(String tenantId, String clusterName, String vpcId, String availabilityZone, String sshCidr) {
         String vpcCidr = ec2.describeVpcs(DescribeVpcsRequest.builder()
@@ -56,61 +57,83 @@ public class TenantNetworkService {
 
         int subnetIndex = nextAvailableSubnetIndex(vpcId);
 
-        // Public subnet
-        String publicCidr = "10.0." + subnetIndex + ".0/24";
-        String publicSubnetId = ec2.createSubnet(CreateSubnetRequest.builder()
-            .vpcId(vpcId)
-            .cidrBlock(publicCidr)
-            .availabilityZone(availabilityZone)
-            .tagSpecifications(software.amazon.awssdk.services.ec2.model.TagSpecification.builder()
-                .resourceType(software.amazon.awssdk.services.ec2.model.ResourceType.SUBNET)
-                .tags(
-                    Tag.builder().key("Name").value(tenantId + "-public-subnet").build(),
-                    Tag.builder().key("SubnetIndex").value(String.valueOf(subnetIndex)).build(),
-                    Tag.builder().key("SubnetType").value("Public").build(),
-                    Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
-                    Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
-                    Tag.builder().key("kubernetes.io/role/elb").value("1").build(),
-                    Tag.builder().key("Platform").value("eks-d-xpress").build())
-                .build())
-            .build()).subnet().subnetId();
-        LOG.infof("Created public subnet %s (%s) for tenant %s", publicSubnetId, publicCidr, tenantId);
+        String publicSubnetId = null;
+        String privateSubnetId = null;
+        String sgId = null;
 
-        // Private subnet
-        String privateCidr = "10.0." + (100 + subnetIndex) + ".0/24";
-        String privateSubnetId = ec2.createSubnet(CreateSubnetRequest.builder()
-            .vpcId(vpcId)
-            .cidrBlock(privateCidr)
-            .availabilityZone(availabilityZone)
-            .tagSpecifications(software.amazon.awssdk.services.ec2.model.TagSpecification.builder()
-                .resourceType(software.amazon.awssdk.services.ec2.model.ResourceType.SUBNET)
-                .tags(
-                    Tag.builder().key("Name").value(tenantId + "-private-subnet").build(),
-                    Tag.builder().key("SubnetType").value("Private").build(),
-                    Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
-                    Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
-                    Tag.builder().key("kubernetes.io/role/internal-elb").value("1").build(),
-                    Tag.builder().key("Platform").value("eks-d-xpress").build())
-                .build())
-            .build()).subnet().subnetId();
-        LOG.infof("Created private subnet %s (%s) for tenant %s", privateSubnetId, privateCidr, tenantId);
+        try {
+            // Public subnet
+            String publicCidr = "10.0." + subnetIndex + ".0/24";
+            publicSubnetId = ec2.createSubnet(CreateSubnetRequest.builder()
+                .vpcId(vpcId)
+                .cidrBlock(publicCidr)
+                .availabilityZone(availabilityZone)
+                .tagSpecifications(software.amazon.awssdk.services.ec2.model.TagSpecification.builder()
+                    .resourceType(software.amazon.awssdk.services.ec2.model.ResourceType.SUBNET)
+                    .tags(
+                        Tag.builder().key("Name").value(tenantId + "-public-subnet").build(),
+                        Tag.builder().key("SubnetIndex").value(String.valueOf(subnetIndex)).build(),
+                        Tag.builder().key("SubnetType").value("Public").build(),
+                        Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
+                        Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
+                        Tag.builder().key("kubernetes.io/role/elb").value("1").build(),
+                        Tag.builder().key("Platform").value("eks-d-xpress").build())
+                    .build())
+                .build()).subnet().subnetId();
+            LOG.infof("Created public subnet %s (%s) for tenant %s", publicSubnetId, publicCidr, tenantId);
 
-        // Route table associations
-        String publicRtId = findRouteTable(vpcId, "eks-dx-infra-public-rt");
-        String privateRtId = findRouteTable(vpcId, "eks-dx-infra-private-rt");
-        ec2.associateRouteTable(AssociateRouteTableRequest.builder()
-            .subnetId(publicSubnetId).routeTableId(publicRtId).build());
-        ec2.associateRouteTable(AssociateRouteTableRequest.builder()
-            .subnetId(privateSubnetId).routeTableId(privateRtId).build());
-        LOG.infof("Associated route tables for tenant %s", tenantId);
+            // Private subnet
+            String privateCidr = "10.0." + (100 + subnetIndex) + ".0/24";
+            privateSubnetId = ec2.createSubnet(CreateSubnetRequest.builder()
+                .vpcId(vpcId)
+                .cidrBlock(privateCidr)
+                .availabilityZone(availabilityZone)
+                .tagSpecifications(software.amazon.awssdk.services.ec2.model.TagSpecification.builder()
+                    .resourceType(software.amazon.awssdk.services.ec2.model.ResourceType.SUBNET)
+                    .tags(
+                        Tag.builder().key("Name").value(tenantId + "-private-subnet").build(),
+                        Tag.builder().key("SubnetType").value("Private").build(),
+                        Tag.builder().key("eks-dx-tenant").value(tenantId).build(),
+                        Tag.builder().key("kubernetes.io/cluster/" + clusterName).value("owned").build(),
+                        Tag.builder().key("kubernetes.io/role/internal-elb").value("1").build(),
+                        Tag.builder().key("Platform").value("eks-d-xpress").build())
+                    .build())
+                .build()).subnet().subnetId();
+            LOG.infof("Created private subnet %s (%s) for tenant %s", privateSubnetId, privateCidr, tenantId);
 
-        // Security group
-        String sgId = createTenantSecurityGroup(tenantId, clusterName, vpcId, vpcCidr, sshCidr);
+            // Route table associations
+            String publicRtId = findRouteTable(vpcId, "eks-dx-infra-public-rt");
+            String privateRtId = findRouteTable(vpcId, "eks-dx-infra-private-rt");
+            ec2.associateRouteTable(AssociateRouteTableRequest.builder()
+                .subnetId(publicSubnetId).routeTableId(publicRtId).build());
+            ec2.associateRouteTable(AssociateRouteTableRequest.builder()
+                .subnetId(privateSubnetId).routeTableId(privateRtId).build());
+            LOG.infof("Associated route tables for tenant %s", tenantId);
 
-        // Static control-plane IP: <subnet-base>.5
-        String controlPlaneIp = "10.0." + subnetIndex + "." + CONTROL_PLANE_HOST_OFFSET;
+            // Security group
+            sgId = createTenantSecurityGroup(tenantId, clusterName, vpcId, vpcCidr, sshCidr);
 
-        return new NetworkResult(publicSubnetId, privateSubnetId, sgId, controlPlaneIp, vpcCidr);
+            // Static control-plane IP: <subnet-base>.5
+            String controlPlaneIp = "10.0." + subnetIndex + "." + CONTROL_PLANE_HOST_OFFSET;
+
+            return new NetworkResult(publicSubnetId, privateSubnetId, sgId, controlPlaneIp, vpcCidr);
+        } catch (Exception e) {
+            // Clean up partially created resources
+            LOG.warnf("Network creation failed for tenant %s, cleaning up: %s", tenantId, e.getMessage());
+            if (sgId != null) {
+                String sg = sgId;
+                try { ec2.deleteSecurityGroup(r -> r.groupId(sg)); } catch (Exception ex) { /* best effort */ }
+            }
+            if (privateSubnetId != null) {
+                String priv = privateSubnetId;
+                try { ec2.deleteSubnet(r -> r.subnetId(priv)); } catch (Exception ex) { /* best effort */ }
+            }
+            if (publicSubnetId != null) {
+                String pub = publicSubnetId;
+                try { ec2.deleteSubnet(r -> r.subnetId(pub)); } catch (Exception ex) { /* best effort */ }
+            }
+            throw e;
+        }
     }
 
     private String createTenantSecurityGroup(String tenantId, String clusterName, String vpcId, String vpcCidr, String sshCidr) {
