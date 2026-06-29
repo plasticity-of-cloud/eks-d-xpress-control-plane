@@ -9,8 +9,8 @@ EKS-DX uses a role-based authorization model to control who can provision cluste
 | Role | Tag Value | Description | Quota | Visibility |
 |------|-----------|-------------|-------|------------|
 | `EksDXpressUser` | `user` | Engineer self-service — one personal cluster | 1 | Own only |
-| `EksDXpressOperator` | `operator` | Platform team — multiple clusters, provision for others | Configurable (default: 50) | Own + provisioned-for-others |
-| `EksDXpressAdministrator` | `administrator` | Full access — all clusters, provisioning, management | Unlimited | All |
+| `EksDXpressOperator` | `operator` | CI/CD or M2M accounts — multiple own clusters (limit set in CDK) | Configurable (CDK parameter) | Own only |
+| `EksDXpressAdministrator` | `administrator` | Full access — all clusters, provisioning for others, management | Unlimited | All |
 
 ### Permission Matrix
 
@@ -20,17 +20,17 @@ EKS-DX uses a role-based authorization model to control who can provision cluste
 | Delete own cluster | ✓ | ✓ | ✓ |
 | Describe own cluster | ✓ | ✓ | ✓ |
 | List own clusters | ✓ | ✓ | ✓ |
-| Create cluster for others | ✗ | ✓ | ✓ |
-| Delete cluster provisioned for others | ✗ | ✓ | ✓ |
+| Create cluster for others | ✗ | ✗ | ✓ |
+| Delete cluster provisioned for others | ✗ | ✗ | ✓ |
 | List all clusters | ✗ | ✗ | ✓ |
 | Delete any cluster | ✗ | ✗ | ✓ |
-| Manage pod identity associations | ✓ (own) | ✓ (own + provisioned) | ✓ (all) |
+| Manage pod identity associations | ✓ (own) | ✓ (own) | ✓ (all) |
 
 ### Key Distinctions
 
 - **User** — single developer, one personal cluster. Self-service provisioning and lifecycle.
-- **Operator** — platform team member. Provisions and manages clusters on behalf of users. Sees own + provisioned-for-others.
-- **Administrator** — full visibility and control over all clusters, tenants, and associations.
+- **Operator** — CI/CD pipeline or M2M service account. Provisions multiple clusters **for itself** (e.g., ephemeral test environments). Limit is set as a CDK parameter. Cannot provision for other identities.
+- **Administrator** — platform team. Full visibility and control, including provisioning on behalf of other users.
 
 ## Identity Resolution
 
@@ -110,13 +110,20 @@ String callerRole = resolveRole(callerArn);
 
 int maxClusters = switch (callerRole) {
     case "administrator" -> Integer.MAX_VALUE;
-    case "operator"      -> config.getOperatorMax();   // default: 50
+    case "operator"      -> config.getOperatorMax();   // CDK parameter, default: 10
     case "user"          -> 1;
     default              -> 0;  // deny
 };
 
-String effectiveOwner = (targetOwner != null && isOperatorOrAdmin(callerRole))
-    ? targetOwner : callerArn;
+// Operators provision for themselves only; only administrators can use targetOwner
+String effectiveOwner;
+if (targetOwner != null) {
+    if (!"administrator".equals(callerRole))
+        throw new AccessDeniedException("Only administrator can provision for others");
+    effectiveOwner = targetOwner;
+} else {
+    effectiveOwner = callerArn;
+}
 
 int existing = countActiveClustersByOwner(effectiveOwner);
 if (existing >= maxClusters) throw new QuotaExceededException(...);
@@ -127,9 +134,8 @@ if (existing >= maxClusters) throw new QuotaExceededException(...);
 ```java
 boolean allowed = switch (callerRole) {
     case "administrator" -> true;
-    case "operator"      -> cluster.ownerArn.equals(callerArn) || callerArn.equals(cluster.provisionedBy);
-    case "user"          -> cluster.ownerArn.equals(callerArn);
-    default              -> false;
+    case "operator", "user" -> cluster.ownerArn.equals(callerArn);  // own only
+    default -> false;
 };
 ```
 
@@ -293,7 +299,7 @@ Extracted by `CallerIdentityFilter`:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `eks-dx.auth.user-max` | 1 | Max clusters for user role |
-| `eks-dx.auth.operator-max` | 50 | Max clusters for operator role |
+| `eks-dx.auth.operator-max` | 10 | Max clusters for operator role (CDK parameter) |
 | `eks-dx.auth.tag-cache-ttl-minutes` | 15 | IAM tag lookup cache TTL |
 | `eks-dx.auth.enable-role-name-fallback` | true | Use SSO role name pattern when tag missing |
 
