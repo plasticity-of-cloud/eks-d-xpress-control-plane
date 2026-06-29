@@ -1,56 +1,73 @@
 # Interfaces
 
-## REST API
+## CLI Commands
 
-### Credential Exchange (no API Gateway auth)
-```
-POST /clusters/{name}/assets    # Token in body → AWS credentials
-```
+All commands use positional cluster name (AWS CLI style):
 
-### Cluster Management (IAM SigV4)
 ```
-POST   /clusters
-GET    /clusters
-GET    /clusters/{name}
-DELETE /clusters/{name}
-```
-
-### Association Management (IAM SigV4 for write, open for read)
-```
-POST   /clusters/{name}/pod-identity-associations
-GET    /clusters/{name}/pod-identity-associations
-GET    /clusters/{name}/pod-identity-associations/{id}
-DELETE /clusters/{name}/pod-identity-associations/{id}
+eks-dx create-cluster <name> [--arch arm64|x86_64] [--pricing spot|ondemand] [--wait]
+eks-dx create-cluster <name> --jwks-file <path> --issuer <url>   (self-managed)
+eks-dx delete-cluster <name>
+eks-dx stop-cluster <name>
+eks-dx resume-cluster <name>
+eks-dx describe-cluster <name>
+eks-dx list-clusters
+eks-dx create-association --cluster-name <c> --namespace <ns> --service-account <sa> --role-arn <arn>
+eks-dx delete-association --cluster-name <c> --association-id <id>
+eks-dx describe-association --cluster-name <c> --association-id <id>
+eks-dx list-associations --cluster-name <c>
+eks-dx configure [--endpoint <url>] [--region <r>]
 ```
 
-### Tenant Provisioning (IAM SigV4)
+## Tenant Service REST API (Function URL)
+
+| Method | Path | Mode | Description |
+|--------|------|------|-------------|
+| POST | `/clusters` | Both | Create cluster (server infers mode from `jwks` field presence) |
+| DELETE | `/clusters/{name}` | Both | Delete cluster (managed=full teardown, self-managed=remove record) |
+| POST | `/tenants` | Managed | Legacy: provision tenant (still supported) |
+| GET | `/tenants/{id}` | — | Get tenant state |
+| DELETE | `/tenants/{id}` | — | Deprovision tenant |
+| POST | `/tenants/{id}/stop` | — | Hibernate instance |
+| POST | `/tenants/{id}/resume` | — | Resume instance |
+| GET | `/tenants/{id}/stream` | — | SSE progress stream |
+
+### POST /clusters Request Body
+
+```json
+// Managed (no jwks → full provisioning)
+{"clusterName": "my-cluster", "arch": "arm64", "ec2PricingModel": "spot", "diskSizeGb": 20}
+
+// Self-managed (jwks present → register only)
+{"clusterName": "my-k3s", "jwks": "{\"keys\":[...]}", "issuer": "https://..."}
 ```
-POST   /tenants              # Create tenant
-GET    /tenants/{id}         # Get state
-DELETE /tenants/{id}         # Deprovision
-GET    /tenants/{id}/stream  # SSE progress (Function URL)
-```
 
-## Authentication Model
+## Mgmt Service REST API (API Gateway, IAM auth)
 
-| Endpoint | Auth Method | Validated By |
-|----------|-------------|--------------|
-| `POST /clusters/{name}/assets` | Pod SA token in body | Lambda JWKS validation |
-| Management endpoints | IAM SigV4 | API Gateway |
-| Association GET | Open (optional Bearer) | `WebhookAuthFilter` |
-| Webhook → Lambda | Bearer SA token | `WebhookAuthFilter` (audience: `eks-dx.codriverlabs.ai`) |
-| Pod SA tokens | Projected volume | Audience: `pods.eks.amazonaws.com` |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/clusters` | List clusters |
+| GET | `/clusters/{name}` | Describe cluster |
+| PUT | `/clusters/{name}/jwks` | Refresh JWKS |
+| DELETE | `/clusters/{name}` | Deregister cluster |
+| POST | `/clusters/{name}/pod-identity-associations` | Create association |
+| GET | `/clusters/{name}/pod-identity-associations` | List associations |
+| GET | `/clusters/{name}/pod-identity-associations/{id}` | Describe association |
+| DELETE | `/clusters/{name}/pod-identity-associations/{id}` | Delete association |
 
-## Internal Interfaces
+## Credential Service REST API (API Gateway, no auth)
 
-### Auth Proxy → Lambda
-HTTP POST to API Gateway with pod token in JSON body.
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/clusters/{name}/assets` | Exchange token for AWS credentials |
 
-### Webhook → Lambda
-HTTP GET to `/clusters/{name}/pod-identity-associations?namespace=X&serviceAccount=Y` with Bearer SA token.
+## SSM Parameter Contract
 
-### CLI → API Gateway
-All requests signed with AWS SigV4 using caller's credentials.
-
-### Tenant SSE Stream
-Function URL with `RESPONSE_STREAM` invoke mode. Returns newline-delimited JSON events with `phase`, `progress`, `publicIp` fields.
+| Parameter | Written by | Read by |
+|-----------|-----------|---------|
+| `/eks-d-xpress/infra/launch-template/{arch}/{pricing}` | Shared infra CDK | tenant-service |
+| `/eks-d-xpress/infra/ami/{arch}/{k8s-version}` | AMI pipeline | tenant-service |
+| `/eks-d-xpress/infra/network/vpc-id` | Shared infra CDK | tenant-service |
+| `/eks-d-xpress/control-plane/api/endpoint` | Control plane CDK | CLI, EC2 boot |
+| `/eks-d-xpress/control-plane/api/stream-url` | Control plane CDK | CLI |
+| `/eks-d-xpress/control-plane/api/provisioning-url` | Control plane CDK | CLI |
