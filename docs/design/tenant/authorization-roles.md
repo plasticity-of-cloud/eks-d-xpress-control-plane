@@ -109,7 +109,7 @@ This is a **migration convenience only** — disable via config once all roles a
 String callerRole = resolveRole(callerArn);
 
 int maxClusters = switch (callerRole) {
-    case "administrator" -> config.getAdminMax();      // CDK parameter, default: 100
+    case "administrator" -> config.getAdminMax();      // CDK parameter, default: 10
     case "operator"      -> config.getOperatorMax();   // CDK parameter, default: 10
     case "user"          -> 1;
     default              -> 0;  // deny
@@ -300,7 +300,7 @@ Extracted by `CallerIdentityFilter`:
 |-----------|---------|-------------|
 | `eks-dx.auth.user-max` | 1 | Max clusters for user role |
 | `eks-dx.auth.operator-max` | 10 | Max clusters for operator role (CDK parameter) |
-| `eks-dx.auth.admin-max` | 100 | Max clusters for administrator role (CDK parameter) |
+| `eks-dx.auth.admin-max` | 10 | Max clusters for administrator role (CDK parameter) |
 | `eks-dx.auth.tag-cache-ttl-minutes` | 15 | IAM tag lookup cache TTL |
 | `eks-dx.auth.enable-role-name-fallback` | true | Use SSO role name pattern when tag missing |
 
