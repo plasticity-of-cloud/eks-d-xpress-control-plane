@@ -10,7 +10,7 @@ EKS-DX uses a role-based authorization model to control who can provision cluste
 |------|-----------|-------------|-------|------------|
 | `EksDXpressUser` | `user` | Engineer self-service — one personal cluster | 1 | Own only |
 | `EksDXpressOperator` | `operator` | CI/CD or M2M accounts — multiple own clusters (limit set in CDK) | Configurable (CDK parameter) | Own only |
-| `EksDXpressAdministrator` | `administrator` | Full access — all clusters, provisioning for others, management | Unlimited | All |
+| `EksDXpressAdministrator` | `administrator` | Full access — all clusters, provisioning for others, management | Configurable (CDK parameter) | All |
 
 ### Permission Matrix
 
@@ -109,7 +109,7 @@ This is a **migration convenience only** — disable via config once all roles a
 String callerRole = resolveRole(callerArn);
 
 int maxClusters = switch (callerRole) {
-    case "administrator" -> Integer.MAX_VALUE;
+    case "administrator" -> config.getAdminMax();      // CDK parameter, default: 100
     case "operator"      -> config.getOperatorMax();   // CDK parameter, default: 10
     case "user"          -> 1;
     default              -> 0;  // deny
@@ -300,6 +300,7 @@ Extracted by `CallerIdentityFilter`:
 |-----------|---------|-------------|
 | `eks-dx.auth.user-max` | 1 | Max clusters for user role |
 | `eks-dx.auth.operator-max` | 10 | Max clusters for operator role (CDK parameter) |
+| `eks-dx.auth.admin-max` | 100 | Max clusters for administrator role (CDK parameter) |
 | `eks-dx.auth.tag-cache-ttl-minutes` | 15 | IAM tag lookup cache TTL |
 | `eks-dx.auth.enable-role-name-fallback` | true | Use SSO role name pattern when tag missing |
 
