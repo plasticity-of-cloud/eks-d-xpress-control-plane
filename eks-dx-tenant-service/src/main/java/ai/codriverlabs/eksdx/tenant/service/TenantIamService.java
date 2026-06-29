@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.tenant.service;
 
+import ai.codriverlabs.eksdx.tenant.TenantNaming;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -36,7 +37,7 @@ public class TenantIamService {
     public record IamResult(String roleName, String instanceProfileName) {}
 
     public IamResult createTenantRole(String tenantId, String clusterName, String region, String accountId) {
-        String roleName = "eks-dx-t-" + tenantId + "-ir";
+        String roleName = TenantNaming.roleName(tenantId);
 
         try {
             iam.createRole(CreateRoleRequest.builder()
@@ -271,7 +272,7 @@ public class TenantIamService {
                   "Sid": "KarpenterPassRole",
                   "Effect": "Allow",
                   "Action": "iam:PassRole",
-                  "Resource": "arn:aws:iam::%s:role/eks-dx-t-%s-ir",
+                  "Resource": "arn:aws:iam::%s:role/eks-dx-tenant-%s-ir",
                   "Condition": { "StringEquals": { "iam:PassedToService": "ec2.amazonaws.com" } }
                 },
                 {

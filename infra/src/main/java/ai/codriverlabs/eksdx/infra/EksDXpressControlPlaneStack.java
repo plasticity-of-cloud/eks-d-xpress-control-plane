@@ -414,8 +414,8 @@ public class EksDXpressControlPlaneStack extends Stack {
                 "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
                 "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
                 "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile"))
-            .resources(List.of("arn:aws:iam::*:role/eks-dx-t-*",
-                "arn:aws:iam::*:instance-profile/eks-dx-t-*"))
+            .resources(List.of("arn:aws:iam::*:role/eks-dx-tenant-*",
+                "arn:aws:iam::*:instance-profile/eks-dx-tenant-*"))
             .build());
         // DLM: etcd backup lifecycle policies
         tenantFn.addToRolePolicy(PolicyStatement.Builder.create()

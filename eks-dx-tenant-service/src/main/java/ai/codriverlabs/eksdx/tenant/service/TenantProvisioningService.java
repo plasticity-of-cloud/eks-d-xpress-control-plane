@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.tenant.service;
 
+import ai.codriverlabs.eksdx.tenant.TenantNaming;
 import ai.codriverlabs.eksdx.tenant.model.TenantItem;
 import ai.codriverlabs.eksdx.tenant.model.TenantProgress;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -159,14 +160,14 @@ public class TenantProvisioningService {
 
             // 3. SSH key pair
             CreateKeyPairResponse keyPairResp = ec2.createKeyPair(CreateKeyPairRequest.builder()
-                .keyName("eks-dx-t-" + tenantId + "-key")
+                .keyName(TenantNaming.keyPairName(tenantId))
                 .tagSpecifications(software.amazon.awssdk.services.ec2.model.TagSpecification.builder()
                     .resourceType(software.amazon.awssdk.services.ec2.model.ResourceType.KEY_PAIR)
                     .tags(software.amazon.awssdk.services.ec2.model.Tag.builder().key("project").value("eks-d-xpress").build(),
                           software.amazon.awssdk.services.ec2.model.Tag.builder().key("eks-dx-tenant").value(tenantId).build())
                     .build())
                 .build());
-            created.keyPairName = "eks-dx-t-" + tenantId + "-key";
+            created.keyPairName = TenantNaming.keyPairName(tenantId);
 
             String sshKeyArn = secretsManager.createSecret(CreateSecretRequest.builder()
                 .name("eks-dx/t/" + tenantId + "/ssh-key")
@@ -197,7 +198,7 @@ public class TenantProvisioningService {
             TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
                 tenantId, clusterName, launchTemplateId,
                 network.publicSubnetId(), network.securityGroupId(),
-                iamResult.instanceProfileName(), "eks-dx-t-" + tenantId + "-key",
+                iamResult.instanceProfileName(), TenantNaming.keyPairName(tenantId),
                 region, k8sVersion, assignElasticIp, diskSizeGb, arch,
                 network.controlPlaneIp(), accountId, network.vpcCidr(),
                 network.publicSubnetId(), network.privateSubnetId(), created);

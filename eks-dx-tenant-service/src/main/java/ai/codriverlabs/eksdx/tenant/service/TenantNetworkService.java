@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.tenant.service;
 
+import ai.codriverlabs.eksdx.tenant.TenantNaming;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.ec2.Ec2Client;
@@ -137,7 +138,7 @@ public class TenantNetworkService {
     }
 
     private String createTenantSecurityGroup(String tenantId, String clusterName, String vpcId, String vpcCidr, String sshCidr) {
-        String sgName = "eks-dx-t-" + tenantId + "-sg";
+        String sgName = TenantNaming.securityGroupName(tenantId);
         String sgId = ec2.createSecurityGroup(CreateSecurityGroupRequest.builder()
             .groupName(sgName)
             .description("EKS-D tenant: SSH, Kubernetes API, kubelet, pod networking")

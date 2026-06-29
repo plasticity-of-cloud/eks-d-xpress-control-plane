@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.tenant.service;
 
+import ai.codriverlabs.eksdx.tenant.TenantNaming;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.jboss.logging.Logger;
 import software.amazon.awssdk.services.ec2.Ec2Client;
@@ -132,7 +133,7 @@ public class TenantEc2Service {
                                   String accountId, String arch, String vpcCidr,
                                   String publicSubnetId, String privateSubnetId,
                                   String securityGroupId) {
-        String nodeRoleArn = "arn:aws:iam::" + accountId + ":role/eks-dx-t-" + tenantId + "-ir";
+        String nodeRoleArn = "arn:aws:iam::" + accountId + ":role/" + TenantNaming.roleName(tenantId);
         return """
             #!/bin/bash
             mkdir -p /opt/eks-d

@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.tenant.service;
 
+import ai.codriverlabs.eksdx.tenant.TenantNaming;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
@@ -46,7 +47,7 @@ public class TenantDlmService {
     private final DlmClient dlm = DlmClient.create();
 
     public String createEtcdBackupPolicy(String tenantId, String clusterName, String region) {
-        String roleName = "eks-dx-t-" + tenantId + "-dlm";
+        String roleName = TenantNaming.dlmRoleName(tenantId);
         try {
             iam.createRole(CreateRoleRequest.builder()
                 .roleName(roleName)
@@ -128,7 +129,7 @@ public class TenantDlmService {
         }
 
         // 3. Delete the DLM execution IAM role
-        String roleName = "eks-dx-t-" + tenantId + "-dlm";
+        String roleName = TenantNaming.dlmRoleName(tenantId);
         try {
             iam.detachRolePolicy(DetachRolePolicyRequest.builder()
                 .roleName(roleName).policyArn(DLM_MANAGED_POLICY).build());
