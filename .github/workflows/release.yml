@@ -197,13 +197,13 @@ jobs:
         run: npm install -g aws-cdk
 
       - name: Download arm64 build artifacts (contains tenant zip)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-arm64
           path: /tmp/release-arm64
 
       - name: Download package artifacts (credential + mgmt zips)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-packages
           path: /tmp/release-packages
@@ -255,7 +255,7 @@ jobs:
     needs: [build, multiarch-manifest-build, build-jvm-based-lambdas, package-cdk]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
