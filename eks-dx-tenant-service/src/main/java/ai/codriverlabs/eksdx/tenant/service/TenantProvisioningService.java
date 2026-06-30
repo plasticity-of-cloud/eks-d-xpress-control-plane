@@ -703,6 +703,7 @@ public class TenantProvisioningService {
             "jwks", AttributeValue.fromS(crypto.jwks()),
             "issuer", AttributeValue.fromS(crypto.issuer()),
             "tenantId", AttributeValue.fromS(tenantId),
+            "managed", AttributeValue.fromS("true"),
             "createdAt", AttributeValue.fromS(Instant.now().toString())
         );
         dynamoDb.putItem(PutItemRequest.builder().tableName(clustersTable).item(item).build());
