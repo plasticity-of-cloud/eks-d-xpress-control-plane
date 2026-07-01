@@ -3,14 +3,14 @@ package ai.codriverlabs.eksdx.cli.cluster;
 import ai.codriverlabs.eksdx.cli.util.EksDxApiClient;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 
 @Command(name = "cluster", description = "Delete a cluster")
 public class DeleteClusterCommand implements Runnable {
 
     @Inject EksDxApiClient apiClient;
 
-    @Option(names = "--name", required = true) String name;
+    @Parameters(index = "0", description = "Cluster name") String name;
 
     @Override
     public void run() {

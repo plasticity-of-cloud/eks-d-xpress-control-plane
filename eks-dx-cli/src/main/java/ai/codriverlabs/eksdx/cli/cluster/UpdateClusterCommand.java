@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 
 @Command(name = "cluster", description = "Update a cluster")
 public class UpdateClusterCommand implements Runnable {
@@ -18,7 +19,7 @@ public class UpdateClusterCommand implements Runnable {
     // package-private for testing
     KubeApiClient kubeApiClient;
 
-    @Option(names = "--name", required = true) String name;
+    @Parameters(index = "0", description = "Cluster name") String name;
     @Option(names = "--refresh-jwks", description = "Re-read and push JWKS from cluster") boolean refreshJwks;
     @Option(names = "--kubeconfig", description = "Path to kubeconfig (default: ~/.kube/config)") String kubeconfig;
 
