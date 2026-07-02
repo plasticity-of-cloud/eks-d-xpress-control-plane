@@ -164,7 +164,7 @@ public class ClusterResource {
         try {
             String callerArn = (String) ctx.getProperty("callerArn");
             provisioningService.stopByClusterName(name, callerArn);
-            return Response.accepted().build();
+            return Response.accepted(Map.of("clusterName", name, "status", "stopping")).build();
         } catch (IllegalArgumentException e) {
             return error(404, "NotFoundException", e.getMessage());
         } catch (SecurityException e) {
@@ -181,7 +181,7 @@ public class ClusterResource {
         try {
             String callerArn = (String) ctx.getProperty("callerArn");
             provisioningService.resumeByClusterName(name, callerArn);
-            return Response.accepted().build();
+            return Response.accepted(Map.of("clusterName", name, "status", "resuming")).build();
         } catch (IllegalArgumentException e) {
             return error(404, "NotFoundException", e.getMessage());
         } catch (SecurityException e) {

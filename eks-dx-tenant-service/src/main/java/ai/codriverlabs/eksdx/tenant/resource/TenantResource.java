@@ -153,7 +153,7 @@ public class TenantResource {
     public Response stopTenant(@PathParam("id") String id) {
         try {
             provisioningService.stop(id);
-            return Response.accepted().build();
+            return Response.accepted(Map.of("tenantId", id, "status", "stopping")).build();
         } catch (IllegalArgumentException e) {
             return error(404, "NotFoundException", e.getMessage());
         } catch (Exception e) {
@@ -167,7 +167,7 @@ public class TenantResource {
     public Response resumeTenant(@PathParam("id") String id) {
         try {
             provisioningService.resume(id);
-            return Response.accepted().build();
+            return Response.accepted(Map.of("tenantId", id, "status", "resuming")).build();
         } catch (IllegalArgumentException e) {
             return error(404, "NotFoundException", e.getMessage());
         } catch (Exception e) {
