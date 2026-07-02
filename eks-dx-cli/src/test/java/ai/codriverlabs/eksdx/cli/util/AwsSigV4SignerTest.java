@@ -2,7 +2,6 @@ package ai.codriverlabs.eksdx.cli.util;
 
 import org.junit.jupiter.api.Test;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
 
 import java.net.URI;
@@ -13,9 +12,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class AwsSigV4SignerTest {
 
     private static AwsSigV4Signer testSigner(String region) {
-        var provider = StaticCredentialsProvider.create(
-            AwsBasicCredentials.create("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
-        return new AwsSigV4Signer(provider, Region.of(region), provider.resolveCredentials());
+        return new AwsSigV4Signer(
+            AwsBasicCredentials.create("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+            Region.of(region));
     }
 
     @Test

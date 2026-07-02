@@ -17,7 +17,9 @@ import java.net.http.HttpResponse;
 @ApplicationScoped
 public class EksDxApiClient {
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(10))
+            .build();
 
     String endpoint;
     String region;
