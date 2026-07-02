@@ -13,10 +13,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class AwsSigV4SignerTest {
 
     private static AwsSigV4Signer testSigner(String region) {
-        return new AwsSigV4Signer(
-            StaticCredentialsProvider.create(
-                AwsBasicCredentials.create("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")),
-            Region.of(region));
+        var provider = StaticCredentialsProvider.create(
+            AwsBasicCredentials.create("AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"));
+        return new AwsSigV4Signer(provider, Region.of(region), provider.resolveCredentials());
     }
 
     @Test

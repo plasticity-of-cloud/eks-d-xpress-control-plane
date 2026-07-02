@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.cli.util;
 
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.signer.Aws4Signer;
@@ -12,27 +13,43 @@ import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.net.http.HttpRequest;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * AWS SigV4 signer backed by the AWS SDK DefaultCredentialsProvider.
  * Handles env vars, ~/.aws/credentials, EC2 instance profile (IMDS), ECS, SSO, etc.
+ *
+ * Credentials are resolved with a 10s deadline to prevent indefinite hangs when
+ * the credential chain includes a slow/unavailable source (IMDS, STS, SSO).
+ * Resolved credentials are cached and reused across requests.
  */
 public class AwsSigV4Signer {
+
+    private static final int CREDENTIAL_TIMEOUT_SECONDS = 10;
 
     private final AwsCredentialsProvider credentialsProvider;
     private final Region region;
     private final Aws4Signer signer = Aws4Signer.create();
 
-    AwsSigV4Signer(AwsCredentialsProvider credentialsProvider, Region region) {
+    /** Cached credentials — refreshed lazily when null or expired. */
+    private final AtomicReference<AwsCredentials> cachedCredentials = new AtomicReference<>();
+
+    AwsSigV4Signer(AwsCredentialsProvider credentialsProvider, Region region,
+                   AwsCredentials initialCredentials) {
         this.credentialsProvider = credentialsProvider;
         this.region = region;
+        this.cachedCredentials.set(initialCredentials);
     }
 
     public static AwsSigV4Signer create(String region) {
         try {
             var provider = DefaultCredentialsProvider.create();
-            provider.resolveCredentials(); // fail fast if no credentials
-            return new AwsSigV4Signer(provider, Region.of(region));
+            // Resolve once at startup with a hard deadline — fails fast if unavailable
+            AwsCredentials creds = resolveWithTimeout(provider, CREDENTIAL_TIMEOUT_SECONDS);
+            if (creds == null) return null;
+            return new AwsSigV4Signer(provider, Region.of(region), creds);
         } catch (Exception e) {
             return null;
         }
@@ -70,7 +87,7 @@ public class AwsSigV4Signer {
 
         var signed = signer.sign(sdkRequestBuilder.build(),
             Aws4SignerParams.builder()
-                .awsCredentials(credentialsProvider.resolveCredentials())
+                .awsCredentials(credentials())
                 .signingRegion(region)
                 .signingName(service)
                 .build());
@@ -80,5 +97,28 @@ public class AwsSigV4Signer {
                 values.forEach(value -> builder.setHeader(name, value));
             }
         });
+    }
+
+    /**
+     * Returns cached credentials, refreshing with a timeout if they may be expiring.
+     * Falls back to the cached value on timeout rather than blocking the caller.
+     */
+    private AwsCredentials credentials() {
+        // Try a non-blocking refresh; if it times out, use the cached credentials
+        AwsCredentials fresh = resolveWithTimeout(credentialsProvider, CREDENTIAL_TIMEOUT_SECONDS);
+        if (fresh != null) {
+            cachedCredentials.set(fresh);
+        }
+        return cachedCredentials.get();
+    }
+
+    private static AwsCredentials resolveWithTimeout(AwsCredentialsProvider provider, int timeoutSeconds) {
+        try {
+            return CompletableFuture
+                .supplyAsync(provider::resolveCredentials)
+                .get(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }
