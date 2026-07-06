@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.inject.Inject;
 import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 
 @Command(name = "cluster", description = "Describe a cluster")
 public class DescribeClusterCommand implements Runnable {
@@ -14,7 +14,7 @@ public class DescribeClusterCommand implements Runnable {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
-    @Option(names = "--name", required = true) String name;
+    @Parameters(index = "0", description = "Cluster name") String name;
 
     @Override
     public void run() {

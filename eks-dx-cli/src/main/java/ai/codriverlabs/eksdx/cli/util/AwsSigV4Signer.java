@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.cli.util;
 
+import software.amazon.awssdk.auth.credentials.AwsCredentials;
 import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.signer.Aws4Signer;
@@ -16,23 +17,32 @@ import java.nio.charset.StandardCharsets;
 /**
  * AWS SigV4 signer backed by the AWS SDK DefaultCredentialsProvider.
  * Handles env vars, ~/.aws/credentials, EC2 instance profile (IMDS), ECS, SSO, etc.
+ *
+ * Credentials are resolved once at create() time. Per-call refresh is not needed
+ * for short-lived CLI sessions.
  */
 public class AwsSigV4Signer {
 
-    private final AwsCredentialsProvider credentialsProvider;
+    private final AwsCredentials credentials;
     private final Region region;
     private final Aws4Signer signer = Aws4Signer.create();
 
-    AwsSigV4Signer(AwsCredentialsProvider credentialsProvider, Region region) {
-        this.credentialsProvider = credentialsProvider;
+    AwsSigV4Signer(AwsCredentials credentials, Region region) {
+        this.credentials = credentials;
         this.region = region;
     }
 
+    /**
+     * Creates a signer by resolving credentials synchronously.
+     * Returns null if no credentials are available.
+     */
     public static AwsSigV4Signer create(String region) {
         try {
-            var provider = DefaultCredentialsProvider.create();
-            provider.resolveCredentials(); // fail fast if no credentials
-            return new AwsSigV4Signer(provider, Region.of(region));
+            AwsCredentialsProvider provider = DefaultCredentialsProvider.builder()
+                    .reuseLastProviderEnabled(true)
+                    .build();
+            AwsCredentials creds = provider.resolveCredentials();
+            return new AwsSigV4Signer(creds, Region.of(region));
         } catch (Exception e) {
             return null;
         }
@@ -70,7 +80,7 @@ public class AwsSigV4Signer {
 
         var signed = signer.sign(sdkRequestBuilder.build(),
             Aws4SignerParams.builder()
-                .awsCredentials(credentialsProvider.resolveCredentials())
+                .awsCredentials(credentials)
                 .signingRegion(region)
                 .signingName(service)
                 .build());
