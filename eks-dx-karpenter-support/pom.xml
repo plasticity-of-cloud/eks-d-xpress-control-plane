@@ -15,7 +15,7 @@
 
   <properties>
     <skipITs>true</skipITs>
-    <josdk-webhooks.version>3.0.3</josdk-webhooks.version>
+    <josdk-webhooks.version>3.0.4</josdk-webhooks.version>
   </properties>
 
   <dependencyManagement>
@@ -66,7 +66,7 @@
     <dependency>
       <groupId>io.quarkiverse.helm</groupId>
       <artifactId>quarkus-helm</artifactId>
-      <version>1.4.0</version>
+      <version>1.4.1</version>
     </dependency>
     <!-- AWS SSM — for EKS optimized AMI alias resolution -->
     <dependency>
