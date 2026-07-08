@@ -112,13 +112,10 @@ public class TenantIamService {
                   ]
                 },
                 {
-                  "Sid": "TenantStateUpdate",
+                  "Sid": "ProgressQueueWrite",
                   "Effect": "Allow",
-                  "Action": "dynamodb:UpdateItem",
-                  "Resource": "arn:aws:dynamodb:%s:%s:table/eks-d-xpress-tenants",
-                  "Condition": {
-                    "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["%s"] }
-                  }
+                  "Action": "sqs:SendMessage",
+                  "Resource": "arn:aws:sqs:%s:%s:%s"
                 },
                 {
                   "Sid": "SSMAndECRAndCloudWatch",
@@ -318,7 +315,7 @@ public class TenantIamService {
                 region, accountId, clusterName,    // EksDxApiInvoke GET /clusters/{name}/pod-identity-associations
                 region, accountId, clusterName,    // EksDxApiInvoke POST /clusters/{name}/pod-identity-associations
                 region, accountId, clusterName,    // EksDxApiInvoke DELETE /clusters/{name}/pod-identity-associations/*
-                region, accountId, tenantId,       // TenantStateUpdate
+                region, accountId, TenantNaming.progressQueueName(tenantId), // ProgressQueueWrite
                 region,                            // KarpenterResourceDiscovery
                 accountId, clusterName,            // KarpenterIAMInstanceProfile
                 region, region, region, region, region, region, // KarpenterInstanceAccessActions
