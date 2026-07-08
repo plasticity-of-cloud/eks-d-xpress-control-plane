@@ -45,3 +45,13 @@ Thumbs.db
 infra/cdk.out/
 cdk.out/
 assets/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Robot Framework UAT output
+tests/uat/output/
