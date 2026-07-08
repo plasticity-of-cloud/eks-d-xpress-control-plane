@@ -223,8 +223,19 @@ EKS-D-Xpress clusters are provisioned via `eks-dx create-cluster --name`, which:
 No manual cluster registration step is needed — the EC2 instance self-registers. After the tenant reaches `state: ready`:
 
 ```bash
-# Watch provisioning progress
-eks-dx create-cluster --name acme-staging --wait
+# Provision and stream progress; SSH key saved to ~/.eks-d-xpress/tenants/ on completion
+eks-dx create-cluster acme-staging --wait
+
+# Retrieve connection details at any time (including future sessions / other machines)
+eks-dx get-cluster-access acme-staging
+#   Cluster:    acme-staging
+#   Public IP:  54.12.34.56
+#   SSH key:    ~/.eks-d-xpress/tenants/us-east-1/a1b2c3d4.pem
+#   Connect:
+#   ssh -i ~/.eks-d-xpress/tenants/us-east-1/a1b2c3d4.pem ec2-user@54.12.34.56
+
+# If the .pem file was lost, re-fetch from Secrets Manager:
+eks-dx get-cluster-access acme-staging --save-key
 
 # Install in-cluster components on the new cluster
 KUBECONFIG=/path/to/acme-staging.kubeconfig \
