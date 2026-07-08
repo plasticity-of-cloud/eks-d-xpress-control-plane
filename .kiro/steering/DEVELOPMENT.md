@@ -287,7 +287,13 @@ All changes — whether features or bug fixes — follow the same lifecycle:
    ```
    A PR to `main` is only considered when both commands exit 0. No merge is permitted if any test fails or the build does not compile cleanly.
 
-6. **Merge to `main`** via PR (no direct push to `main`). The implementation branch is **never** merged until the build gate in step 5 passes.
+6. **Push the feature branch to origin before merging**:
+   ```bash
+   git push origin fix/<short-description>
+   ```
+   The remote branch is the audit trail — it links to PR comments, CI runs, and review history. Never delete it from origin. Local deletion is fine.
+
+7. **Merge to `main`** via PR (no direct push to `main`). The implementation branch is **never** merged until the build gate in step 5 passes.
 
 ### Doc naming conventions
 
