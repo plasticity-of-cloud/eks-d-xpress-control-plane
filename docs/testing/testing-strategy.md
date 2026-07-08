@@ -194,4 +194,5 @@ For full IAM context testing (role resolution, `eks-dx-role` tag), mock `iam:Lis
 2. **Integration tests for DynamoDB key design** — credential exchange hot path
 3. **Unit tests for JWT validation** — security-critical
 4. **SSE stream tests** — verify terminal event emission and 8-minute timeout
-5. **E2E with CDK deploy** — lower priority, covered by layers 1-2
+5. **CLI UAT (Robot Framework)** — end-user acceptance, mock + live mode (see `docs/design/testing/cli-uat.md`)
+6. **E2E with CDK deploy** — lower priority, covered by layers 1-2
