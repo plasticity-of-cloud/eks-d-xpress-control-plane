@@ -134,6 +134,8 @@ public class TenantEc2Service {
                                   String publicSubnetId, String privateSubnetId,
                                   String securityGroupId) {
         String nodeRoleArn = "arn:aws:iam::" + accountId + ":role/" + TenantNaming.roleName(tenantId);
+        String progressQueueUrl = "https://sqs." + region + ".amazonaws.com/" + accountId + "/"
+            + TenantNaming.progressQueueName(tenantId);
         return """
             #!/bin/bash
             mkdir -p /opt/eks-d
@@ -157,9 +159,10 @@ public class TenantEc2Service {
             EKS_DX_ENDPOINT="${EKS_DX_ENDPOINT}"
             EKS_DX_API_URL="${EKS_DX_ENDPOINT}/clusters/%s/assets"
             K8S_VERSION="%s"
+            PROGRESS_QUEUE_URL="%s"
             CONF
             """.formatted(region, tenantId, clusterName, nodeIp, accountId, region,
                          nodeRoleArn, nodeIp, vpcCidr, publicSubnetId, privateSubnetId,
-                         securityGroupId, clusterName, k8sVersion);
+                         securityGroupId, clusterName, k8sVersion, progressQueueUrl);
     }
 }
