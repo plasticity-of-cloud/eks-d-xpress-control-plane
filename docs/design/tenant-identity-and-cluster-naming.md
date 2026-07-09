@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — supersedes naming section in `docs/roadmap/multi-tenancy-handling.md`
+Implemented — supersedes naming section in `docs/roadmap/multi-tenancy-handling.md`
 
 ## Overview
 
@@ -64,35 +64,25 @@ Pattern: ^[a-zA-Z][a-zA-Z0-9-]{0,99}$
 
 ### Scope
 
-The cluster name is **scoped to a region**. The same name can be reused across regions (e.g. a CI/CD pipeline creating `ci-pipeline` in `us-east-1` and `eu-west-1`). Uniqueness is not enforced globally — only within the `eks-dx-clusters` DynamoDB table in each deployment region.
+The cluster name is **scoped to a region**. The same name can be reused across regions (e.g. a CI/CD pipeline creating `ci-pipeline` in `us-east-1` and `eu-west-1`). Uniqueness is enforced within the `eks-d-xpress-clusters` DynamoDB table in each deployment region.
 
 ### Registration
 
-The cluster name is what gets registered in `eks-dx-clusters` (for pod identity associations) and is visible to workloads via the credential exchange flow. It serves the same purpose as an EKS cluster name — it's how pods and operators reference the cluster.
+The cluster name is what gets registered in `eks-d-xpress-clusters` (for pod identity associations) and is visible to workloads via the credential exchange flow. It serves the same purpose as an EKS cluster name — it's how pods and operators reference the cluster.
 
-**For EKS-D-Xpress tenants (current implementation):** the first-boot script calls `eks-dx register-cluster` after `kubeadm init` completes, reading the JWKS from the live cluster API. This is reactive — the cluster must be publicly reachable before it can be registered.
+**For managed tenants:** The `tenant-service` Lambda pre-registers the cluster before EC2 boots. `TenantCryptoService` generates KMS-signed CA + SA signing keys, derives JWKS, and `preRegisterCluster()` writes the cluster record (with JWKS and issuer) to DynamoDB. No `register-cluster` CLI call is needed from the boot script.
 
-**For standalone clusters** (k3s, microk8s, EKS-D self-managed, etc.): a tenant record is still created, but with `managed: false`. Users call `register-cluster` manually after their cluster is up.
+**For self-managed clusters** (k3s, microk8s, EKS-D self-managed, etc.): Users call `create-cluster` with `--jwks` to register their cluster directly.
 
 ```bash
-eks-dx create-tenant --cluster-name my-k3s --unmanaged
-# → Created tenant a7f3b2c1 (cluster: my-k3s, unmanaged)
+# Managed (provisions EC2 + EKS-D, pre-registers JWKS automatically):
+eks-dx create-cluster my-dev-cluster --wait
 
-eks-dx register-cluster my-k3s \
+# Self-managed (register with user-provided JWKS):
+eks-dx create-cluster my-k3s \
   --issuer https://my-k3s-host \
   --jwks-file /path/to/jwks.json
 ```
-
-### Registration Tradeoff (current vs. planned)
-
-| | Current (this branch) | Planned (`feature/control-plane-managed-oidc`) |
-|---|---|---|
-| Managed tenant registration | First-boot script calls `register-cluster` after cluster is up | `tenant-service` pre-registers before EC2 boots (KMS-generated SA key pair) |
-| Unmanaged tenant registration | User calls `register-cluster` after cluster is up | Same |
-| Race condition risk | Yes — network hiccup at boot causes silent failure | Eliminated |
-| `register-cluster` CLI needed for managed path | Yes (interim) | No |
-
-See `docs/roadmap/security-hardening/control-plane-managed-oidc-jwks.md` for the full pre-registration design.
 
 ### Relationship to Tenant
 
@@ -102,6 +92,7 @@ See `docs/roadmap/security-hardening/control-plane-managed-oidc-jwks.md` for the
 ├─────────────────────────────────────────────────┤
 │ PK: tenantId = "a7f3b2c1"                       │
 │ clusterName = "my-dev-cluster"                  │
+│ managed = "true"                                │
 │ idcUserId = "d-906714.../user@example.com"      │
 │ ownerArn = "arn:aws:iam::...:role/..."          │
 │ createdAt = "2026-06-26T10:00:00Z"              │
@@ -109,12 +100,14 @@ See `docs/roadmap/security-hardening/control-plane-managed-oidc-jwks.md` for the
 └─────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────┐
-│ DynamoDB: eks-dx-clusters                        │
+│ DynamoDB: eks-d-xpress-clusters                  │
 ├─────────────────────────────────────────────────┤
 │ PK: clusterName = "my-dev-cluster"              │
+│ tenantId = "a7f3b2c1"                           │
+│ managed = "true"                                │
 │ jwks = "..."                                    │
 │ issuer = "https://..."                          │
-│ ...                                             │
+│ createdAt = "2026-06-26T10:00:00Z"              │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -128,7 +121,7 @@ A single tenant owns one virtual cluster. The cluster name is user-chosen and va
 |---|---|---|
 | `tenantId` | String (PK) | System-derived 8-char hex hash |
 | `clusterName` | String | User-provided, validated |
-| `managed` | Boolean | `true` = EKS-D-Xpress provisioned EC2; `false` = standalone cluster |
+| `managed` | String | `"true"` = EKS-D-Xpress provisioned EC2; `"false"` = standalone cluster |
 | `idcUserId` | String | Identity Center user ID (audit trail, input to hash) |
 | `ownerArn` | String | Caller IAM ARN |
 | `createdAt` | String | ISO-8601, immutable |
@@ -143,38 +136,61 @@ A single tenant owns one virtual cluster. The cluster name is user-chosen and va
 | `ec2PricingModel` | String | `spot` or `ondemand` (managed only) |
 | `error` | String | Set on provisioning failure (managed only) |
 
-**GSI: `clusterName-index`** (PK: `clusterName`) — enables `delete-tenant` / `get-tenant` by cluster name as a convenience lookup.
+**Table: `eks-d-xpress-clusters`** (PK: `clusterName`)
 
+| Attribute | Type | Notes |
+|---|---|---|
+| `clusterName` | String (PK) | User-provided, unique within region |
+| `tenantId` | String | Back-reference to owning tenant |
+| `managed` | String | `"true"` or `"false"` — determines teardown behavior on delete |
+| `ownerArn` | String | Caller IAM ARN (authorization on delete) |
+| `jwks` | String | JSON Web Key Set for token validation |
+| `issuer` | String | OIDC issuer URL |
+| `createdAt` | String | ISO-8601 |
 
+## Resource Naming Convention
 
 All AWS resources use the **tenant ID** (not the cluster name) to stay within IAM's 64-char limit and avoid user-input in resource ARNs.
 
-### Naming Convention
+### Naming Constants (`TenantNaming.java`)
 
+```java
+public static final String RESOURCE_PREFIX = "eks-dx-tenant-";
+public static final String SECRET_PREFIX = "eks-dx/tenant/";
 ```
-eks-dx-t-{tenantId}-{suffix}
-```
-
-Prefix `eks-dx-t-` (8 chars) + tenant ID (8 chars) + `-` + suffix = 17 chars overhead.
 
 ### Resource Table
 
-| Resource | Current | Proposed | Chars |
-|----------|---------|----------|-------|
-| Instance role | `eks-d-xpress-tenant-karolpiatek-us-east-1-instance-role` | `eks-dx-t-a7f3b2c1-ir` | 21 |
-| DLM role | `eks-d-xpress-tenant-karolpiatek-us-east-1-dlm` | `eks-dx-t-a7f3b2c1-dlm` | 22 |
-| Key pair | `eks-d-xpress-tenant-karolpiatek` | `eks-dx-t-a7f3b2c1-key` | 22 |
-| SQS queue | `eks-d-xpress-karolpiatek` | `eks-dx-t-a7f3b2c1-q` | 20 |
-| Security group | `karolpiatek-eks-d-xpress` | `eks-dx-t-a7f3b2c1-sg` | 21 |
-| Secrets | `eks-d-xpress/tenant/karolpiatek/ssh-key` | `eks-dx/t/a7f3b2c1/ssh-key` | 26 |
-| Tag value | `eks-d-xpress-tenant: karolpiatek` | `eks-dx-tenant: a7f3b2c1` | — |
+| Resource | Name | Example |
+|----------|------|---------|
+| Instance role | `eks-dx-tenant-{tenantId}-ir` | `eks-dx-tenant-a7f3b2c1-ir` |
+| Instance profile | `eks-dx-tenant-{tenantId}-ir` | (same as role) |
+| DLM role | `eks-dx-tenant-{tenantId}-dlm` | `eks-dx-tenant-a7f3b2c1-dlm` |
+| Key pair | `eks-dx-tenant-{tenantId}-key` | `eks-dx-tenant-a7f3b2c1-key` |
+| Security group | `eks-dx-tenant-{tenantId}-sg` | `eks-dx-tenant-a7f3b2c1-sg` |
+| Interruption queue | `eks-dx-tenant-{clusterName}` | `eks-dx-tenant-my-dev-cluster` |
+| Progress queue | `eks-dx-tenant-{tenantId}-progress.fifo` | `eks-dx-tenant-a7f3b2c1-progress.fifo` |
+| EventBridge rules | `eks-dx-tenant-{clusterName}-{suffix}` | `eks-dx-tenant-my-dev-cluster-spot` |
+| Secrets (SSH) | `eks-dx/tenant/{tenantId}/ssh-key` | `eks-dx/tenant/a7f3b2c1/ssh-key` |
+| Secrets (CA key) | `eks-dx/tenant/{tenantId}/ca-key` | `eks-dx/tenant/a7f3b2c1/ca-key` |
+| Secrets (CA cert) | `eks-dx/tenant/{tenantId}/ca-crt` | `eks-dx/tenant/a7f3b2c1/ca-crt` |
+| Secrets (SA key) | `eks-dx/tenant/{tenantId}/sa-key` | `eks-dx/tenant/a7f3b2c1/sa-key` |
+| EC2 tag | `eks-dx-tenant: {tenantId}` | `eks-dx-tenant: a7f3b2c1` |
+| Platform tag | `Platform: eks-d-xpress` | (all resources) |
 
-### Benefits
+### Factory Methods
 
-- No region in role name — IAM roles are global, region was redundant
-- Shortened suffixes (`-ir` instead of `-instance-role`)
-- Consistent `eks-dx-t-` prefix for IAM policy scoping: `arn:aws:iam::*:role/eks-dx-t-*`
-- Maximum resource name length: ~25 chars (well within all AWS limits)
+```java
+TenantNaming.roleName(tenantId)           // eks-dx-tenant-{id}-ir
+TenantNaming.instanceProfileName(tenantId) // eks-dx-tenant-{id}-ir
+TenantNaming.dlmRoleName(tenantId)        // eks-dx-tenant-{id}-dlm
+TenantNaming.securityGroupName(tenantId)  // eks-dx-tenant-{id}-sg
+TenantNaming.keyPairName(tenantId)        // eks-dx-tenant-{id}-key
+TenantNaming.secretPath(tenantId, name)   // eks-dx/tenant/{id}/{name}
+TenantNaming.queueName(clusterName)       // eks-dx-tenant-{clusterName}
+TenantNaming.progressQueueName(tenantId)  // eks-dx-tenant-{id}-progress.fifo
+TenantNaming.eventRuleName(clusterName, suffix)  // eks-dx-tenant-{clusterName}-{suffix}
+```
 
 ## Local CLI Paths
 
@@ -188,33 +204,36 @@ Using `tenantId` (not `clusterName`) because the same cluster name can exist in 
 
 ## First Boot Script
 
-The boot script receives both `TENANT_ID` and `CLUSTER_NAME` via `/opt/eks-d/cluster.env` (written by `TenantEc2Service` at instance launch). Key usage:
+The boot script lives in the **`eks-d-xpress`** project (Golden AMI build). It receives both `TENANT_ID` and `CLUSTER_NAME` via `/opt/eks-d/cluster.env` (written by `TenantEc2Service` at instance launch).
 
 | Variable | Used for |
 |----------|----------|
-| `TENANT_ID` | (informational only in boot script — AWS resources already named before boot) |
-| `CLUSTER_NAME` | `eks-dx register-cluster` call, `EKS_CLUSTER_NAME` Helm value, `EKS_DX_API_URL` path |
+| `TENANT_ID` | Progress reporting (SQS MessageGroupId), resource tag lookups |
+| `CLUSTER_NAME` | `EKS_CLUSTER_NAME` Helm value, `EKS_DX_API_URL` path |
+| `PROGRESS_QUEUE_URL` | SQS FIFO queue for boot progress events |
+
+The boot script does **not** call `register-cluster` — the cluster is pre-registered by the provisioning Lambda (with JWKS derived from KMS-generated SA keys) before the EC2 instance launches.
+
+Progress reporting uses a per-tenant SQS FIFO queue (see `docs/roadmap/security-hardening/sqs-progress-reporting.md`):
 
 ```bash
-# Boot script — register cluster using CLUSTER_NAME
-eks-dx register-cluster "${CLUSTER_NAME}" \
-  --issuer "https://${PUBLIC_IP}" \
-  --jwks-file /tmp/jwks.json
+source /opt/eks-d/cluster.env
+source /opt/eks-d-setup/progress.sh
 
-helm install eks-dx-auth-proxy ... \
-  --set app.envs.EKS_CLUSTER_NAME="${CLUSTER_NAME}"
-
-helm install eks-dx-pod-identity-webhook ... \
-  --set app.envs.EKS_CLUSTER_NAME="${CLUSTER_NAME}"
+update_progress "booting" "Starting cluster setup" 5
+# ... setup steps ...
+report_ready
 ```
 
-## API Changes
+## API
 
-### Create Tenant Request
+### Unified Cluster Lifecycle (`POST /clusters` on tenant-service)
 
-**Managed (EKS-D-Xpress provisioned):**
+The server infers managed vs. self-managed from the request body:
+
+**Managed** (no `jwks` field — triggers full provisioning):
 ```json
-POST /tenants
+POST /clusters
 {
   "clusterName": "my-dev-cluster",
   "arch": "arm64",
@@ -223,12 +242,13 @@ POST /tenants
 }
 ```
 
-**Unmanaged (standalone cluster):**
+**Self-managed** (`jwks` present — register only):
 ```json
-POST /tenants
+POST /clusters
 {
   "clusterName": "my-k3s",
-  "managed": false
+  "issuer": "https://my-k3s-host",
+  "jwks": "{ ... }"
 }
 ```
 
@@ -241,45 +261,31 @@ Response (both):
 }
 ```
 
+### Delete (`DELETE /clusters/{name}`)
+
+Determines teardown scope from the `managed` field in `eks-d-xpress-clusters`:
+- `managed=true` → full deprovision (EC2, EIP, IAM, network, secrets, SQS, DLM, DynamoDB)
+- `managed=false` → remove DynamoDB records only
+
 ### CLI
 
 ```bash
-# Managed (provisions EC2 + EKS-D):
-eks-dx create-tenant --cluster-name my-dev-cluster
-# → Created tenant a7f3b2c1 (cluster: my-dev-cluster, managed)
+# Managed (provisions EC2 + EKS-D, pre-registers JWKS):
+eks-dx create-cluster my-dev-cluster --wait
+# → Streams progress via SSE until ready
 
-# Unmanaged (standalone — k3s, microk8s, self-managed EKS-D):
-eks-dx create-tenant --cluster-name my-k3s --unmanaged
-# → Created tenant b9e1f4a2 (cluster: my-k3s, unmanaged)
-# Then separately:
-eks-dx register-cluster my-k3s --issuer https://... --jwks-file jwks.json
+# Self-managed (register with user-provided JWKS):
+eks-dx create-cluster my-k3s --issuer https://... --jwks-file jwks.json
 
-# Delete/get always by tenantId (unambiguous across regions):
-eks-dx delete-tenant a7f3b2c1
-eks-dx get-tenant a7f3b2c1
+# Delete (full teardown for managed, deregister for self-managed):
+eks-dx delete-cluster my-dev-cluster
+
+# Describe:
+eks-dx describe-cluster my-dev-cluster
+
+# List all:
+eks-dx list-clusters
 ```
-
-## Migration
-
-No migration needed — no existing tenants. Implement directly with new naming convention.
-
-## Implementation Scope (this branch)
-
-What is implemented here:
-
-1. **`TenantItem`** — add `clusterName`, `managed`, `idcUserId`, `createdAt` fields
-2. **`TenantProvisioningService`** — generate `tenantId` server-side (SHA256 hash); accept `clusterName` separately; store `managed: true`
-3. **`TenantResource`** — remove `tenantId` from request body; add `clusterName`, `managed` fields; create unmanaged tenant path
-4. **`TenantEc2Service.userDataScript`** — resource names use `eks-dx-t-{tenantId}-{suffix}`; Helm + register-cluster use `CLUSTER_NAME`
-5. **`TenantIamService` / `TenantNetworkService` / `TenantDlmService`** — rename resources to `eks-dx-t-{tenantId}-{suffix}`
-6. **`CreateTenantCommand`** — replace positional `tenantId` with `--cluster-name`; add `--unmanaged` flag
-7. **CDK** — add `clusterName-index` GSI to tenants table
-8. **`docs/design/tenant/first-boot-script.md`** — update to use `CLUSTER_NAME` for register-cluster and Helm values
-
-What is **not** implemented here (deferred to `feature/control-plane-managed-oidc`):
-- Pre-registration of cluster JWKS before EC2 boots
-- KMS-backed SA key generation in tenant-service
-- Elimination of `register-cluster` from the managed boot path
 
 ## Validation Implementation
 
@@ -297,11 +303,12 @@ private void validateClusterName(String name) {
 ## Decisions
 
 1. **`tenantId` is system-derived** — never user-provided, eliminates naming collisions and injection risks
-2. **Every cluster has a tenant record** — managed and unmanaged; `managed: false` for standalone clusters (k3s, microk8s, self-managed EKS-D)
+2. **Every cluster has a tenant record** — managed and unmanaged; `managed: false` for standalone clusters
 3. **`clusterName` is region-scoped, not globally unique** — same name allowed in different regions
 4. **AWS resources and SSH key paths use `tenantId`** — stable, unique, short, no user input
-5. **Boot script uses `CLUSTER_NAME`** for register-cluster and in-cluster components — workloads reference the cluster by name
-6. **CLI `delete-tenant` / `get-tenant` take `tenantId`** — unambiguous across regions
-7. **GSI on `clusterName`** — convenience lookup; secondary to `tenantId`
+5. **Boot script uses `CLUSTER_NAME`** for in-cluster components — workloads reference the cluster by name
+6. **CLI commands use cluster name** — `eks-dx create-cluster <name>`, `eks-dx delete-cluster <name>`
+7. **`managed` field in clusters table** — determines delete behavior (full teardown vs deregister)
 8. **8-char hex hash** — 32 bits of entropy, ~4 billion unique values
-9. **No migration needed** — no existing tenants; implement directly with new naming
+9. **Pre-registration** — JWKS written to DynamoDB before EC2 boots (KMS-backed PKI)
+10. **Progress via SQS** — boot script writes to per-tenant FIFO queue, not DynamoDB directly
