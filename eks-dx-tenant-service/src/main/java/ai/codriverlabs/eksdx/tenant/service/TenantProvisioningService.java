@@ -64,11 +64,14 @@ import java.util.Map;
  *   1. Generate RSA-2048 SA signing key → Secrets Manager
  *   2. ec2:CreateKeyPair (SSH) → Secrets Manager
  *   3. iam:CreateRole with least-privilege inline policy
- *   4. ec2:RunInstances via Launch Template
- *   5. DynamoDB.put initial state
+ *   4. Create per-tenant SQS FIFO progress queue
+ *   5. ec2:RunInstances via Launch Template
+ *   6. DynamoDB.put initial state
  *
- * The EC2 instance user data drives the rest of the state machine
- * and writes progress directly to DynamoDB via its instance profile.
+ * The EC2 instance user data drives the rest of the state machine.
+ * Boot scripts write progress to the per-tenant SQS FIFO queue;
+ * the SSE Lambda (TenantStreamResource) polls SQS, validates,
+ * persists to DynamoDB, and deletes the queue on terminal state.
  */
 @ApplicationScoped
 public class TenantProvisioningService {
@@ -192,17 +195,21 @@ public class TenantProvisioningService {
             created.iamRoleName = iamResult.roleName();
             created.instanceProfileName = iamResult.instanceProfileName();
 
-            // 6. SQS + EventBridge (Karpenter interruption handling)
+            // 6. Progress queue (per-tenant FIFO, ephemeral — deleted on provisioning completion)
+            String progressQueueUrl = createProgressQueue(tenantId);
+            created.progressQueueUrl = progressQueueUrl;
+
+            // 7. SQS + EventBridge (Karpenter interruption handling)
             String queueArn = createInterruptionQueue(clusterName, region, accountId);
             created.queueUrl = queueArn;
             createEventBridgeRules(clusterName, queueArn);
             created.eventBridgeRulePrefix = clusterName;
 
-            // 7. DLM (daily etcd backup)
+            // 8. DLM (daily etcd backup)
             dlmService.createEtcdBackupPolicy(tenantId, clusterName, region);
             created.dlmPolicyCreated = true;
 
-            // 8. EC2 instance launch
+            // 9. EC2 instance launch
             TenantEc2Service.Ec2Result ec2Result = ec2Service.launchInstance(
                 tenantId, clusterName, launchTemplateId,
                 network.publicSubnetId(), network.securityGroupId(),
@@ -279,6 +286,14 @@ public class TenantProvisioningService {
                     .allocationId(created.eipAllocationId).build());
                 LOG.infof("Rollback: released EIP %s", created.eipAllocationId);
             } catch (Exception ex) { LOG.warnf("Rollback: failed to release EIP: %s", ex.getMessage()); }
+        }
+
+        if (created.progressQueueUrl != null) {
+            try {
+                sqs.deleteQueue(software.amazon.awssdk.services.sqs.model.DeleteQueueRequest.builder()
+                    .queueUrl(created.progressQueueUrl).build());
+                LOG.infof("Rollback: deleted progress queue for %s", tenantId);
+            } catch (Exception ex) { LOG.warnf("Rollback: failed to delete progress queue: %s", ex.getMessage()); }
         }
 
         if (created.dlmPolicyCreated) {
@@ -360,6 +375,7 @@ public class TenantProvisioningService {
         String keyPairName;
         String iamRoleName;
         String instanceProfileName;
+        String progressQueueUrl;
         String queueUrl;
         String eventBridgeRulePrefix;
         boolean dlmPolicyCreated;
@@ -394,6 +410,24 @@ public class TenantProvisioningService {
         }
         return new TenantProgress(item.state(), item.phase(), item.progress(),
             item.publicIp(), elapsed, item.error(), sshPrivateKey);
+    }
+
+    /**
+     * Persists a validated progress update from SQS to DynamoDB.
+     * Called by TenantStreamResource after message validation.
+     */
+    public void updateProgressFromSqs(String tenantId, String state, String phase, int progress) {
+        dynamoDb.updateItem(UpdateItemRequest.builder()
+            .tableName(tenantsTable)
+            .key(Map.of("tenantId", AttributeValue.fromS(tenantId)))
+            .updateExpression("SET #s = :s, phase = :p, progress = :n, updatedAt = :t")
+            .expressionAttributeNames(Map.of("#s", "state"))
+            .expressionAttributeValues(Map.of(
+                ":s", AttributeValue.fromS(state),
+                ":p", AttributeValue.fromS(phase),
+                ":n", AttributeValue.fromN(String.valueOf(progress)),
+                ":t", AttributeValue.fromS(Instant.now().toString())))
+            .build());
     }
 
     /**
@@ -633,7 +667,7 @@ public class TenantProvisioningService {
             LOG.warnf("Could not delete DLM role %s: %s", dlmRoleName, e.getMessage());
         }
 
-        // 6. Delete EventBridge rules + SQS queue
+        // 6. Delete EventBridge rules + SQS queues (interruption + progress)
         String clusterName = "eks-d-xpress-" + tenantId;
         try { deleteEventBridgeRules(clusterName); } catch (Exception e) {
             LOG.warnf("Could not delete EventBridge rules for %s: %s", tenantId, e.getMessage());
@@ -641,6 +675,8 @@ public class TenantProvisioningService {
         try { deleteInterruptionQueue(clusterName); } catch (Exception e) {
             LOG.warnf("Could not delete SQS queue for %s: %s", tenantId, e.getMessage());
         }
+        // Progress queue — normally deleted by SSE Lambda on completion, but defensive cleanup here
+        deleteProgressQueue(tenantId);
 
         // 6b. Delete subnets (look up by tenant tag)
         try {
@@ -711,6 +747,55 @@ public class TenantProvisioningService {
         String queueArn = "arn:aws:sqs:" + region + ":" + accountId + ":" + queueName;
         LOG.infof("Created SQS queue %s", queueName);
         return queueArn;
+    }
+
+    /**
+     * Creates a per-tenant FIFO queue for boot progress reporting.
+     * Delete-first for idempotency: if a prior attempt crashed, the stale queue is removed first.
+     * Queue is ephemeral — deleted by SSE Lambda on terminal state (ready/failed).
+     */
+    private String createProgressQueue(String tenantId) {
+        String queueName = TenantNaming.progressQueueName(tenantId);
+        // Delete-first: handle crash recovery / retry (stale messages from prior attempt)
+        try {
+            String existingUrl = sqs.getQueueUrl(software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest.builder()
+                .queueName(queueName).build()).queueUrl();
+            sqs.deleteQueue(software.amazon.awssdk.services.sqs.model.DeleteQueueRequest.builder()
+                .queueUrl(existingUrl).build());
+            LOG.infof("Deleted stale progress queue %s (crash recovery)", queueName);
+            // SQS requires ~60s after deletion before recreating with same name
+            try { Thread.sleep(1_000); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+        } catch (software.amazon.awssdk.services.sqs.model.QueueDoesNotExistException e) {
+            // Expected on first attempt — no stale queue
+        }
+
+        var resp = sqs.createQueue(software.amazon.awssdk.services.sqs.model.CreateQueueRequest.builder()
+            .queueName(queueName)
+            .attributes(Map.of(
+                software.amazon.awssdk.services.sqs.model.QueueAttributeName.FIFO_QUEUE, "true",
+                software.amazon.awssdk.services.sqs.model.QueueAttributeName.CONTENT_BASED_DEDUPLICATION, "false",
+                software.amazon.awssdk.services.sqs.model.QueueAttributeName.MESSAGE_RETENTION_PERIOD, "3600",
+                software.amazon.awssdk.services.sqs.model.QueueAttributeName.VISIBILITY_TIMEOUT, "10"))
+            .tags(Map.of(
+                "eks-dx-tenant", tenantId,
+                "createdAt", Instant.now().toString(),
+                "purpose", "progress-reporting"))
+            .build());
+        LOG.infof("Created progress queue %s", queueName);
+        return resp.queueUrl();
+    }
+
+    private void deleteProgressQueue(String tenantId) {
+        try {
+            String queueName = TenantNaming.progressQueueName(tenantId);
+            String queueUrl = sqs.getQueueUrl(software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest.builder()
+                .queueName(queueName).build()).queueUrl();
+            sqs.deleteQueue(software.amazon.awssdk.services.sqs.model.DeleteQueueRequest.builder()
+                .queueUrl(queueUrl).build());
+            LOG.infof("Deleted progress queue %s", queueName);
+        } catch (software.amazon.awssdk.services.sqs.model.QueueDoesNotExistException e) {
+            // Already deleted (normal — SSE Lambda deletes on completion)
+        }
     }
 
     private void createEventBridgeRules(String clusterName, String queueArn) {
