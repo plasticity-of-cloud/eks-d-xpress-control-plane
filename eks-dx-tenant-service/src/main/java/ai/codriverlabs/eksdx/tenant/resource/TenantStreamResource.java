@@ -123,7 +123,7 @@ public class TenantStreamResource {
         var messages = sqs.receiveMessage(ReceiveMessageRequest.builder()
             .queueUrl(queueUrl)
             .maxNumberOfMessages(10)
-            .waitTimeSeconds(5)
+            .waitTimeSeconds(0)
             .build()).messages();
 
         if (messages.isEmpty()) {
@@ -218,7 +218,7 @@ public class TenantStreamResource {
     private TenantProgress gapFill(TenantProgress p) {
         if (p == null || (p.progress() == 0 && "provisioning".equals(p.state()))) {
             String publicIp = p != null ? p.publicIp() : null;
-            return new TenantProgress("provisioning", "Instance booting...", 25,
+            return new TenantProgress("provisioning", "Waiting for boot script...", 25,
                 publicIp, 0, null, null);
         }
         return p;

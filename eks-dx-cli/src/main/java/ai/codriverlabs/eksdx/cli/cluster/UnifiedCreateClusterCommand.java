@@ -212,6 +212,8 @@ public class UnifiedCreateClusterCommand implements Runnable {
             }
 
             long startTime = System.currentTimeMillis();
+            String lastPhase = "";
+            int lastProgress = -1;
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -223,6 +225,10 @@ public class UnifiedCreateClusterCommand implements Runnable {
                     int progress = event.path("progress").asInt();
 
                     if ("text".equals(output)) {
+                        // Deduplicate consecutive identical events (gap-fill repeats)
+                        if (phase.equals(lastPhase) && progress == lastProgress) continue;
+                        lastPhase = phase;
+                        lastProgress = progress;
                         long elapsed = (System.currentTimeMillis() - startTime) / 1000;
                         System.out.printf("  [%3d%%] %s  (+%ds)%n", progress, phase, elapsed);
                     }
