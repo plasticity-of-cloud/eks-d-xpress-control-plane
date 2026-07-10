@@ -142,6 +142,7 @@ public class TenantStreamResource {
                     if (isTerminal(validated)) {
                         emittedTerminal.set(true);
                         deleteQueueQuietly(queueUrl, tenantId);
+                        break; // queue is gone — don't touch it again
                     }
                 }
             } catch (Exception e) {
