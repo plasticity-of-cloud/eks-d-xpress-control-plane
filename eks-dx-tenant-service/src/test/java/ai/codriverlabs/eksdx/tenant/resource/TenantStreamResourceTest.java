@@ -175,7 +175,7 @@ class TenantStreamResourceTest {
 
         assertFalse(emittedTerminal.get());
         assertEquals(1, results.size());
-        assertEquals("Instance booting...", results.getFirst().phase());
+        assertEquals("Waiting for boot script...", results.getFirst().phase());
         assertEquals(25, results.getFirst().progress());
     }
 
