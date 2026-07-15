@@ -2,10 +2,10 @@ package ai.codriverlabs.eksdx.mgmt.spi;
 
 import ai.codriverlabs.eksdx.mgmt.service.DynamoDbClusterService;
 import ai.codriverlabs.eksdx.model.ClusterType;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -31,13 +31,11 @@ class EksManagedProviderTest {
     @InjectMocks
     EksManagedProvider provider;
 
-    @BeforeEach
-    void setUp() {
-        // Cluster "eks-production" maps to real EKS cluster "production"
-        when(clusterService.describeCluster("eks-production"))
+    private void stubClusterResolution(String clusterName, String eksClusterName) {
+        when(clusterService.describeCluster(clusterName))
             .thenReturn(Map.of(
-                "clusterName", "eks-production",
-                "eksClusterName", "production",
+                "clusterName", clusterName,
+                "eksClusterName", eksClusterName,
                 "clusterType", "EKS_MANAGED"
             ));
     }
@@ -49,6 +47,7 @@ class EksManagedProviderTest {
 
     @Test
     void shouldCreateAssociationViaNativeEksApi() {
+        stubClusterResolution("eks-production", "production");
         var mockAssociation = PodIdentityAssociation.builder()
             .associationId("a-12345")
             .associationArn("arn:aws:eks:us-east-1:123456789012:podidentityassociation/production/a-12345")
@@ -82,6 +81,7 @@ class EksManagedProviderTest {
 
     @Test
     void shouldListAssociationsViaNativeEksApi() {
+        stubClusterResolution("eks-production", "production");
         var mockSummary = PodIdentityAssociationSummary.builder()
             .associationId("a-12345")
             .namespace("payment")
@@ -103,6 +103,7 @@ class EksManagedProviderTest {
 
     @Test
     void shouldDeleteAssociationViaNativeEksApi() {
+        stubClusterResolution("eks-production", "production");
         when(eksClient.deletePodIdentityAssociation(any(DeletePodIdentityAssociationRequest.class)))
             .thenReturn(DeletePodIdentityAssociationResponse.builder().build());
 
@@ -125,6 +126,7 @@ class EksManagedProviderTest {
 
     @Test
     void shouldReturnNullForNotFoundAssociation() {
+        stubClusterResolution("eks-production", "production");
         when(eksClient.describePodIdentityAssociation(any(DescribePodIdentityAssociationRequest.class)))
             .thenThrow(NotFoundException.builder().message("not found").build());
 

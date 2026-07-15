@@ -9,5 +9,23 @@
     <version>1.0.0-SNAPSHOT</version>
   </parent>
   <artifactId>eks-dx-model</artifactId>
-  <description>EKS-DX shared model — TokenClaims and DTOs</description>
+  <description>EKS-DX shared model — TokenClaims, ClusterType, and DTOs</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>5.11.4</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${surefire-plugin.version}</version>
+      </plugin>
+    </plugins>
+  </build>
 </project>
