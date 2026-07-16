@@ -33,4 +33,11 @@
 
     <quarkus.native.builder-image>quay.io/quarkus/ubi-quarkus-mandrel-builder-image:jdk-25</quarkus.native.builder-image>
   </properties>
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/plasticity-of-cloud/eks-d-xpress-control-plane</url>
+    </repository>
+  </distributionManagement>
 </project>
