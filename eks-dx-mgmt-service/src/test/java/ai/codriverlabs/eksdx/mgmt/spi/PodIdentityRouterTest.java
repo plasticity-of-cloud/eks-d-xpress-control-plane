@@ -2,41 +2,50 @@ package ai.codriverlabs.eksdx.mgmt.spi;
 
 import ai.codriverlabs.eksdx.mgmt.service.DynamoDbClusterService;
 import ai.codriverlabs.eksdx.model.ClusterType;
+import jakarta.enterprise.inject.Instance;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-import jakarta.inject.Named;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class PodIdentityRouterTest {
 
     @Mock
     DynamoDbClusterService clusterService;
 
     @Mock
-    @Named("EKS_DX")
     PodIdentityProvider eksDxProvider;
 
     @Mock
-    @Named("EKS_MANAGED")
     PodIdentityProvider eksManagedProvider;
+
+    @Mock
+    Instance<PodIdentityProvider> providers;
 
     PodIdentityRouter router;
 
     @BeforeEach
     void setUp() {
+        when(eksDxProvider.type()).thenReturn(ClusterType.EKS_DX);
+        when(eksManagedProvider.type()).thenReturn(ClusterType.EKS_MANAGED);
+
+        // Simulate CDI Instance<> iteration
+        when(providers.iterator()).thenAnswer(inv ->
+            List.of(eksDxProvider, eksManagedProvider).iterator());
+
         router = new PodIdentityRouter();
-        // Manual inject for test (CDI not available in unit test)
         setField(router, "clusterService", clusterService);
-        setField(router, "eksDxProvider", eksDxProvider);
-        setField(router, "eksManagedProvider", eksManagedProvider);
+        setField(router, "providers", providers);
     }
 
     @Test
@@ -58,11 +67,35 @@ class PodIdentityRouterTest {
     }
 
     @Test
-    void shouldRouteToEksDxProviderForEcsOverlay() {
-        // ECS_OVERLAY uses same DynamoDB storage as EKS_DX for now
-        when(clusterService.getClusterType("ecs-production")).thenReturn(ClusterType.ECS_OVERLAY);
+    void shouldFallBackToEksDxForUnknownType() {
+        // ECS_OVERLAY not registered — should fall back to EKS_DX
+        when(clusterService.getClusterType("ecs-cluster")).thenReturn(ClusterType.ECS_OVERLAY);
 
-        var provider = router.resolve("ecs-production");
+        var provider = router.resolve("ecs-cluster");
+
+        assertSame(eksDxProvider, provider);
+    }
+
+    @Test
+    void shouldRouteWithOnlyEksDxProvider() {
+        // Community mode: only EKS_DX provider available
+        when(providers.iterator()).thenAnswer(inv ->
+            List.of(eksDxProvider).iterator());
+        when(clusterService.getClusterType("my-cluster")).thenReturn(ClusterType.EKS_DX);
+
+        var provider = router.resolve("my-cluster");
+
+        assertSame(eksDxProvider, provider);
+    }
+
+    @Test
+    void shouldFallBackWhenRequestedProviderNotAvailable() {
+        // Community mode: only EKS_DX, but cluster claims EKS_MANAGED → fallback
+        when(providers.iterator()).thenAnswer(inv ->
+            List.of(eksDxProvider).iterator());
+        when(clusterService.getClusterType("eks-cluster")).thenReturn(ClusterType.EKS_MANAGED);
+
+        var provider = router.resolve("eks-cluster");
 
         assertSame(eksDxProvider, provider);
     }
