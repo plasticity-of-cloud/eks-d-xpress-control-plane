@@ -1,0 +1,39 @@
+name: Publish Packages
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'LICENSE'
+      - '.gitignore'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build and test
+        env:
+          AWS_REGION: us-east-1
+        run: mvn -B verify -DskipITs
+
+      - name: Publish to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mvn -B deploy -DskipTests \
+            -pl eks-dx-model,eks-dx-cli \
+            -DaltDeploymentRepository=github::default::https://maven.pkg.github.com/${{ github.repository }}
