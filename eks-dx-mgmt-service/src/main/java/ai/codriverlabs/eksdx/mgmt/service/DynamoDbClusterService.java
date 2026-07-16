@@ -1,5 +1,6 @@
 package ai.codriverlabs.eksdx.mgmt.service;
 
+import ai.codriverlabs.eksdx.model.ClusterType;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -134,6 +135,18 @@ public class DynamoDbClusterService {
             if (item.containsKey(key)) result.put(key, item.get(key).s());
         }
         return result;
+    }
+
+    /**
+     * Get the cluster type for routing to the correct SPI provider.
+     * Defaults to EKS_DX for clusters registered before type was added (backward compatible).
+     */
+    public ClusterType getClusterType(String clusterName) {
+        Map<String, AttributeValue> item = getClusterItem(clusterName);
+        if (item.containsKey("clusterType")) {
+            return ClusterType.fromString(item.get("clusterType").s());
+        }
+        return ClusterType.EKS_DX; // backward compatible default
     }
 
     private Map<String, AttributeValue> getClusterItem(String clusterName) {

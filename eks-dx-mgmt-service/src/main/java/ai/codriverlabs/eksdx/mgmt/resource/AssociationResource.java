@@ -2,6 +2,7 @@ package ai.codriverlabs.eksdx.mgmt.resource;
 
 import ai.codriverlabs.eksdx.mgmt.service.DynamoDbAssociationService;
 import ai.codriverlabs.eksdx.mgmt.service.DynamoDbClusterService;
+import ai.codriverlabs.eksdx.mgmt.spi.PodIdentityRouter;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.inject.Inject;
 import jakarta.ws.rs.*;
@@ -23,6 +24,7 @@ public class AssociationResource {
 
     @Inject DynamoDbAssociationService associationService;
     @Inject DynamoDbClusterService clusterService;
+    @Inject PodIdentityRouter router;
 
     public static class CreateAssociationRequest {
         @JsonProperty("namespace") public String namespace;
@@ -38,7 +40,7 @@ public class AssociationResource {
             if (!verifyClusterOwnership(clusterName, ctx))
                 return error(404, "NotFoundException", "Cluster not found: " + clusterName);
             if (request == null) return error(400, "InvalidParameterException", "Request body is required");
-            Map<String, String> result = associationService.createAssociation(
+            Map<String, String> result = router.resolve(clusterName).createAssociation(
                 clusterName, request.namespace, request.serviceAccount, request.roleArn);
             return Response.status(201).entity(result).build();
         } catch (IllegalArgumentException e) {
@@ -59,7 +61,7 @@ public class AssociationResource {
         try {
             if (!verifyClusterOwnership(clusterName, ctx))
                 return error(404, "NotFoundException", "Cluster not found: " + clusterName);
-            List<Map<String, String>> result = associationService.listAssociations(
+            List<Map<String, String>> result = router.resolve(clusterName).listAssociations(
                 clusterName, namespace, serviceAccount);
             return Response.ok(Map.of("associations", result)).build();
         } catch (Exception e) {
@@ -76,7 +78,7 @@ public class AssociationResource {
         try {
             if (!verifyClusterOwnership(clusterName, ctx))
                 return error(404, "NotFoundException", "Cluster not found: " + clusterName);
-            Map<String, String> result = associationService.describeAssociation(clusterName, associationId);
+            Map<String, String> result = router.resolve(clusterName).describeAssociation(clusterName, associationId);
             if (result == null) return error(404, "NotFoundException", "Association not found: " + associationId);
             return Response.ok(result).build();
         } catch (Exception e) {
@@ -93,7 +95,7 @@ public class AssociationResource {
         try {
             if (!verifyClusterOwnership(clusterName, ctx))
                 return error(404, "NotFoundException", "Cluster not found: " + clusterName);
-            associationService.deleteAssociation(clusterName, associationId);
+            router.resolve(clusterName).deleteAssociation(clusterName, associationId);
             return Response.noContent().build();
         } catch (IllegalArgumentException e) {
             return error(404, "NotFoundException", e.getMessage());
