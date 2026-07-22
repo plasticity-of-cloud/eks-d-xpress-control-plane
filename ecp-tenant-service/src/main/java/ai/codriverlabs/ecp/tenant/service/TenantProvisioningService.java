@@ -621,9 +621,25 @@ public class TenantProvisioningService {
         LOG.infof("Deprovisioning tenant: %s", tenantId);
         TenantItem tenant = getState(tenantId);
 
-        // 1. Terminate EC2 instance and wait for full termination before cleaning up
+        // 1. Cancel spot request (if persistent) then terminate EC2 instance
         if (tenant.instanceId() != null) {
             try {
+                // For persistent spot instances, we must cancel the spot request BEFORE
+                // terminating — otherwise AWS re-fulfills it and launches a replacement.
+                var descResp = ec2.describeInstances(software.amazon.awssdk.services.ec2.model.DescribeInstancesRequest.builder()
+                    .instanceIds(tenant.instanceId()).build());
+                var instances = descResp.reservations().stream()
+                    .flatMap(r -> r.instances().stream()).toList();
+                if (!instances.isEmpty()) {
+                    var instance = instances.getFirst();
+                    String spotRequestId = instance.spotInstanceRequestId();
+                    if (spotRequestId != null && !spotRequestId.isBlank()) {
+                        LOG.infof("Cancelling spot request %s before terminating instance %s", spotRequestId, tenant.instanceId());
+                        ec2.cancelSpotInstanceRequests(software.amazon.awssdk.services.ec2.model.CancelSpotInstanceRequestsRequest.builder()
+                            .spotInstanceRequestIds(spotRequestId).build());
+                    }
+                }
+
                 ec2.terminateInstances(TerminateInstancesRequest.builder()
                     .instanceIds(tenant.instanceId()).build());
                 LOG.infof("Terminating instance %s — waiting for terminated state...", tenant.instanceId());

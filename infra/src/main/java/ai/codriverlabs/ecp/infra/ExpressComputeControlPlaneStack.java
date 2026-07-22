@@ -418,7 +418,8 @@ public class ExpressComputeControlPlaneStack extends Stack {
                     "ec2:StopInstances", "ec2:StartInstances",
                     "ec2:CreateKeyPair",
                     "ec2:DescribeInstances", "ec2:CreateTags",
-                    "ec2:AllocateAddress", "ec2:AssociateAddress"))
+                    "ec2:AllocateAddress", "ec2:AssociateAddress",
+                    "ec2:CancelSpotInstanceRequests", "ec2:DescribeSpotInstanceRequests"))
                 .resources(List.of("*"))
                 .build());
             // EC2: EIP release/disassociate — scoped to EIPs tagged project=express-compute
